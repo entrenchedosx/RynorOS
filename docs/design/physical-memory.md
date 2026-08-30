@@ -5,9 +5,10 @@
 Stage 4 implements original physical frame allocation from the actual BIOS E820
 map, not a static RAM-size assumption or an array pretending to be physical RAM.
 The page size is **4096 bytes**. It allocates physical addresses, not C buffers.
-No virtual-memory manager, heap, userspace isolation, reclamation of firmware
-memory, scheduler, DMA subsystem, NUMA or SMP is implemented. Stage 1's three
-static page tables still identity-map only 0..2 MiB; Stage 4 does not modify them.
+The PMM provides no mappings, heap, userspace isolation, reclamation of firmware
+memory, scheduler, DMA subsystem, NUMA or SMP. During PMM initialization, Stage 1's
+three static tables identity-map only 0..2 MiB. Stage 5 subsequently replaces
+them using the separate [VM subsystem](virtual-memory.md).
 
 ## Firmware acquisition and handoff
 
@@ -95,10 +96,10 @@ holes remain unavailable. There is no low-memory reclamation API yet.
 
 The kernel checks that every linked live range is valid, below 1 MiB and covered
 by firmware usable RAM before applying reservations. The linker still restricts
-the **loaded** payload to 32 KiB (0x8000..0x10000). BSS, zeroed by entry rather
-than loaded from disk, may extend to 0x70000 without overlapping the stack.
-Separating the load-size and BSS limits accommodates bounded PMM map/test metadata
-without changing disk loading or virtual mappings. No allocation guesses BSS size.
+the loaded payload and BSS below 0x70000 without overlapping the stack. The
+original Stage 4 load limit was 32 KiB; Stage 5 added bounded sector reads and
+page-aligned section boundaries. BSS is still zeroed by entry, not loaded from
+disk. Reservations derive from actual linker symbols, never a guessed BSS size.
 
 Bitmap size derives from the count of discovered usable frames after low-memory
 reservation: one allocation bit per frame, rounded up to bytes and then pages.
@@ -140,7 +141,7 @@ Allocation bits express the ownership boundary (free vs held by a caller), not
 process IDs. The caller must release only its own live allocation. There is no
 generation tag to detect a stale address after reuse, userspace isolation, frame
 zeroing or virtual-address guarantee. In particular, physical addresses above
-2 MiB must not be dereferenced until a future mapping layer explicitly maps them.
+2 MiB must not be dereferenced without the Stage 5 VM API explicitly mapping them.
 
 Invariants: only normalized usable frames enter indexing; reservations/holes
 cannot be allocated; no allocated bit can be allocated again; double free cannot
@@ -185,4 +186,5 @@ no ACPI/boot-memory reclamation, no concurrent callers, no ownership tags or
 security boundary, and bitmap placement constrained by the existing mapping.
 The exhaustive boot self-test scales with discovered frames; it is intended for
 bounded bring-up runs, not a claim of a production boot-time performance budget.
-Stage 5 virtual-memory management is **not implemented**.
+Stage 5 virtual-memory management is implemented separately in `vm.c`; it does
+not alter PMM allocation semantics or add user-space isolation.

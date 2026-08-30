@@ -3,25 +3,25 @@
 ## Purpose
 
 One Python entry point extends the foundation with a minimal native image build
-and real QEMU boot/CPU-exception/PMM/timer verification plus deterministic icon packaging.
+and real QEMU boot/CPU-exception/PMM/VM/timer verification plus deterministic icon packaging.
 Host tools are not guest RynorOS functionality.
 
 ## Public interfaces
 
 `python tools/build/build.py COMMAND`:
 
-- `validate`: required paths, nonempty files, exact Stage 4/schema-5 metadata,
+- `validate`: required paths, nonempty files, exact Stage 5/schema-6 metadata,
   canonical icon header/hash and `.rl` recognition. Python only; not execution proof.
 - `build`: validate, compile all host/test Python to temporary bytecode, assemble
   NASM sources, compile freestanding C with Clang, link ELF and flat payload with
   LLD, assemble the BIOS sector, construct a zero-padded 1 MiB raw image, and
   publish a separate `rynoros-resources.zip` icon package.
-- `test`: 46 repository/layout/parser/CLI/resource tests, including real build failures; requires
+- `test`: 51 repository/layout/parser/CLI/resource tests, including real build failures; requires
   native build tools but not QEMU.
 - `boot-test`: build then verify boot prefix, breakpoint diagnostics, real E820/PMM
-  tests and three real timer ticks with post-IRQ PMM checking; `--timeout SECONDS` defaults
+  and VM tests and three real timer ticks with post-IRQ PMM/VM checking; `--timeout SECONDS` defaults
   to 10, must be finite and greater than zero and at most 60.
-- `integration-test`: build, 18 QEMU/ELF/reproducibility tests including all six required exceptions, real IRQ0, real PMM and independent
+- `integration-test`: build, 24 QEMU/ELF/reproducibility tests including all six required exceptions, real IRQ0, real PMM/VM and independent
   byte-for-byte rebuild; requires all bootstrap dependencies.
 - `check`: build, test, integration-test; short-circuits on failure.
 
@@ -48,7 +48,7 @@ tool versions and artifact hashes; it is not an OS runtime component.
 QEMU has no display, VGA, network, or parallel port, uses a snapshot disk, and
 has serial output separate from monitor stdio. Each run truncates old logs,
 requires the exact legacy boot prefix, complete ordered Stage 2 diagnostics and
-Stage 4 E820/PMM and Stage 3 IRQ/timer markers (fatal CPU variants stop before PMM),
+Stage 4 E820/PMM, Stage 5 VM and Stage 3 IRQ/timer markers (fatal CPU variants stop before PMM),
 checks register/error/flag values and completion state, and sends monitor `quit` in `finally`, with
 3-second normal shutdown then 2-second terminate/kill fallbacks. The owned PID is
 always waited for; forced cleanup fails a successful-boot claim. Interrupting the
@@ -57,10 +57,10 @@ guaranteed to do so. `run.json` records PID, command, exit, and cleanup.
 
 ## Implementation status and tests
 
-Implemented through Stage 4. `host/repository.py` owns the schema; `host/image.py` the
+Implemented through Stage 5. `host/repository.py` owns the schema; `host/image.py` the
 fixed-layout image build; `host/qemu.py` the execution harness and
-`host/exception_output.py`, `host/timer_output.py`, `host/pmm_output.py` and
-`host/boot_output.py` the captured-output validators. The PMM parser independently
+`host/exception_output.py`, `host/timer_output.py`, `host/pmm_output.py`,
+`host/vm_output.py` and `host/boot_output.py` the captured-output validators. The PMM parser independently
 reconstructs normalized/reserved regions and verifies address/accounting records
 against the raw firmware records, without supplying memory values to the guest.
 `host/resources.py` checks the original icon and writes its fixed-metadata,
@@ -71,11 +71,11 @@ asset corruption, and actual masked-IRQ/missing-EOI failures.
 
 The internal builder's keyword-only `test_vector` selects 0/1/3/6/13/14 and
 defaults to breakpoint (3). `test_armed=False` is a negative integration fixture.
-Only the test suite uses variant images; each triggers exactly one exception and
-is retained under ignored `build/cpu-tests/` with logs. `cpu_self_test` in the
+Only the test suite uses variant images; fatal variants trigger exactly one exception
+and are retained under ignored `build/cpu-tests/` with logs. `cpu_self_test` in the
 build manifest records the variant. The public build always uses the returning
 breakpoint. `EXPECTED_OUTPUT` in the QEMU module is the Stage 1 prefix for
-regression compatibility, not a complete Stage 4 success criterion.
+regression compatibility, not a complete Stage 5 success criterion.
 
 Timer failure tests mutate temporary source copies, not the normal kernel or
 tool flags: mask IRQ0, or omit master EOI. Logs persist in `build/timer-tests/`;
@@ -88,6 +88,13 @@ the same binary at 16/64/128/256 MiB. Four negative handoff copies corrupt actua
 E820 completion, returned size, range length or kernel RAM classification and
 must fail initialization. Their sources/images are temporary; logs persist in
 `build/pmm-tests/`. No corrupted-map switch is in production kernel code.
+
+Stage 5 VM checks validate hardware fault fields and mapping/PMM accounting.
+Real negative copies skip CR3 loading, permission INVLPG, post-bootstrap table
+zeroing, or alter the fault arm/address. All must fail without VM success.
+Logs persist in `build/vm-tests/`. No VM failure switches enter normal sources.
+The loader reads a real payload larger than the original 32 KiB bound using
+one-sector BIOS requests; raw disk format and separate icon packaging are unchanged.
 
 ## Known limitations
 

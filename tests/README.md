@@ -25,14 +25,14 @@ Real QEMU runs are bounded and each owned process is stopped and waited for.
 
 ## Implementation status and tests
 
-Implemented: 46 `repository/` tests for paths, metadata, extension, image layout,
+Implemented: 51 `repository/` tests for paths, metadata, extension, image layout,
 command exits, native compile/link failures, strict diagnostic/timer parsing,
 canonical PNG integrity, deterministic resource package contents and PMM map/
 accounting/ownership transcript validation.
 Parser fixtures are explicitly synthetic test data, never kernel execution evidence.
-The original 26 tests remain with the metadata assertion advanced to Stage 4.
+The original 26 tests remain with the metadata assertion advanced to Stage 5.
 
-The 18-test `integration/` suite retains the five Stage 1 regression cases and adds
+The 24-test `integration/` suite retains the five Stage 1 regression cases and adds
 real #DE/#DB/#UD/#GP/#PF execution and an unarmed-breakpoint negative case.
 The normal boot covers #BP and verifies IRETQ restoration, then requires PIC/PIT
 initialization and three actual IRQ0 counter samples/returns. All six saved RIPs
@@ -64,9 +64,15 @@ never provide the map or backing storage used by the real allocator tests.
 cross-pass language conformance. Local language fixtures can live in
 `../rynorlang/tests/`; none are executable today.
 
+Stage 5 adds five strict VM parser tests and six real integration tests. The
+normal VM case compares hardware fault RIPs against ELF symbols and PMM totals;
+five broken builds test skipped CR3, stale permission TLB, omitted post-bootstrap
+table zeroing, unarmed faults and wrong expected fault addresses. Logs are under
+`build/vm-tests/`. The same-image RAM-size tests now exercise VM as well as PMM.
+
 ## Known limitations
 
-No physical-hardware tests or coverage of virtual-memory management, device IRQs beyond IRQ0, scheduling,
+No physical-hardware tests or coverage of user-mode isolation, device IRQs beyond IRQ0, scheduling,
 filesystem, graphics, userspace, or RynorLang execution. Serial success proves
 only this milestone. Other exception vectors, nested faults, TSS/IST, SIMD state,
 privilege transitions, BIOS disk-read error injection and forced-QEMU-cleanup fallbacks are

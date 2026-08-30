@@ -1,5 +1,6 @@
 #include "cpu.h"
 #include "serial.h"
+#include "vm.h"
 
 extern int cpu_test_trigger(void);
 extern const char cpu_test_fault[], cpu_test_after[];
@@ -81,7 +82,7 @@ static int expected_test_frame(const struct exception_frame *f, cpu_u64 cr2)
            (RYNOR_TEST_VECTOR != 14 || cr2 == 0x200000);
 }
 
-void exception_dispatch(const struct exception_frame *frame, cpu_u64 cr2)
+void exception_dispatch(struct exception_frame *frame, cpu_u64 cr2)
 {
     /* Best-effort recursion guard, not a substitute for an IST emergency stack. */
     if (diagnostic_active) {
@@ -89,6 +90,10 @@ void exception_dispatch(const struct exception_frame *frame, cpu_u64 cr2)
         cpu_halt();
     }
     diagnostic_active = 1;
+    if (frame->vector == 14 && vm_fault_dispatch(frame, cr2)) {
+        diagnostic_active = 0;
+        return;
+    }
     diagnose(frame, cr2);
     if (!test_armed || handled_count != 0 || !expected_test_frame(frame, cr2)) {
         emit("[EXCEPTION] action=halt reason=unexpected\r\n");

@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "version": "0.1.0",
   "os": "RynorOS",
   "kernel": "Rynorkernel",
@@ -9,8 +9,8 @@
     "status": "experimental-design"
   },
   "license": "MIT",
-  "stage": 4,
-  "status": "physical-memory-management",
+  "stage": 5,
+  "status": "virtual-memory-management",
   "assets": {
     "official_icon": "assets/branding/icon.png",
     "status": "packaged-not-rendered",
@@ -28,6 +28,6 @@
     "build_tools": ["clang", "ld.lld", "nasm"],
     "test_tools": ["qemu-system-x86_64", "SeaBIOS"]
   },
-  "implemented_components": ["repository-validator", "host-build-check", "repository-tests", "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test", "kernel-gdt", "exception-idt", "exception-diagnostics", "controlled-cpu-self-test", "pic-irq-dispatch", "pit-timer", "timer-irq-self-test", "os-resource-package", "bios-e820-map", "physical-frame-allocator", "pmm-self-test"],
+  "implemented_components": ["repository-validator", "host-build-check", "repository-tests", "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test", "kernel-gdt", "exception-idt", "exception-diagnostics", "controlled-cpu-self-test", "pic-irq-dispatch", "pit-timer", "timer-irq-self-test", "os-resource-package", "bios-e820-map", "physical-frame-allocator", "pmm-self-test", "four-level-paging", "vm-map-unmap", "vm-permissions", "vm-page-fault-tests"],
   "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"]
 }

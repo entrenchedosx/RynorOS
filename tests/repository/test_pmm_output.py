@@ -11,6 +11,7 @@ from boot_output import validate_boot_output, POST_IRQ
 from timer_output import TIMER_OUTPUT
 from test_exception_output import parser_fixture
 from qemu import boot_image
+from test_vm_output import fixture as vm_fixture
 
 
 def fixture():
@@ -35,7 +36,8 @@ def fixture():
 class PmmOutputTests(unittest.TestCase):
     def test_valid_fixture_and_complete_boot(self):
         self.assertEqual(validate_pmm_output(fixture()), [])
-        self.assertEqual(validate_boot_output(parser_fixture() + fixture() + TIMER_OUTPUT + POST_IRQ), [])
+        self.assertEqual(validate_boot_output(parser_fixture() + fixture() + vm_fixture() + TIMER_OUTPUT + POST_IRQ), [])
+        self.assertTrue(validate_boot_output(parser_fixture() + fixture() + TIMER_OUTPUT + POST_IRQ))
         self.assertTrue(validate_boot_output(parser_fixture() + TIMER_OUTPUT))
 
     def test_every_pmm_line_is_required(self):

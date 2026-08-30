@@ -11,7 +11,7 @@ from resources import package_resources
 
 
 IMAGE_SIZE = 1024 * 1024
-MAX_PAYLOAD = 32 * 1024
+MAX_PAYLOAD = 0x70000 - 0x8000
 ARTIFACTS = ("boot.bin", "rynorkernel.elf", "rynorkernel.bin", "rynoros.img", "rynoros-resources.zip")
 
 
@@ -41,7 +41,7 @@ def make_image(boot: bytes, payload: bytes) -> bytes:
     if len(boot) != 512 or boot[510:] != b"\x55\xaa":
         raise ValueError("Boot sector must be 512 bytes with the BIOS 55aa signature")
     if not 0 < len(payload) <= MAX_PAYLOAD:
-        raise ValueError("Payload must occupy 1..32768 bytes")
+        raise ValueError(f"Payload must occupy 1..{MAX_PAYLOAD} bytes")
     return (boot + payload).ljust(IMAGE_SIZE, b"\0")
 
 
@@ -72,6 +72,7 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/arch/x86_64/descriptors.asm", "descriptors.o"),
             ("kernel/arch/x86_64/exceptions.asm", "exceptions.o"),
             ("kernel/arch/x86_64/selftest.asm", "selftest.o"),
+            ("kernel/arch/x86_64/vm-test.asm", "vm-test-entry.o"),
         ):
             target = output / name
             # Use NASM's default warning set as errors. Its optional -Wall
@@ -91,6 +92,8 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/mm/map.c", "memory-map.o"),
             ("kernel/mm/pmm.c", "pmm.o"),
             ("kernel/mm/selftest.c", "pmm-selftest.o"),
+            ("kernel/mm/vm.c", "vm.o"),
+            ("kernel/mm/vm-test.c", "vm-selftest.o"),
         ):
             target = output / name
             run_tool([
