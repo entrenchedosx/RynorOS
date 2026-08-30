@@ -9,17 +9,20 @@ import time
 
 from image import find_tool
 from exception_output import BOOT_PREFIX, VECTOR_NAMES
-from timer_output import validate_boot_output
+from boot_output import validate_boot_output
 
 
-EXPECTED_OUTPUT = BOOT_PREFIX  # Stage 1 compatibility prefix, not the full Stage 3 log.
+EXPECTED_OUTPUT = BOOT_PREFIX  # Stage 1 compatibility prefix, not the full Stage 4 log.
 
 
-def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: int = 3) -> bytes:
+def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: int = 3,
+               memory_mib: int = 64) -> bytes:
     if not math.isfinite(timeout) or not 0 < timeout <= 60:
         raise ValueError("Boot timeout must be finite and in (0, 60] seconds")
     if type(test_vector) is not int or test_vector not in VECTOR_NAMES:
         raise ValueError("Unsupported expected exception vector")
+    if type(memory_mib) is not int or not 8 <= memory_mib <= 4096:
+        raise ValueError("QEMU test RAM must be an integer in [8, 4096] MiB")
     if not image.is_file():
         raise FileNotFoundError(f"Boot image missing: {image}")
     qemu = find_tool("qemu-system-x86_64", "RYNOR_QEMU")
@@ -32,7 +35,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     debug.write_bytes(b"")
     command = [
         qemu, "-machine", "pc-i440fx-10.0", "-accel", "tcg", "-cpu", "qemu64",
-        "-m", "64M", "-smp", "1", "-bios", "bios-256k.bin", "-display", "none", "-vga", "none",
+        "-m", f"{memory_mib}M", "-smp", "1", "-bios", "bios-256k.bin", "-display", "none", "-vga", "none",
         "-nic", "none", "-parallel", "none", "-boot", "order=c,strict=on",
         "-drive", f"file={str(image.resolve()).replace(',', ',,')},format=raw,if=ide,snapshot=on",
         "-serial", f"file:{serial}", "-monitor", "stdio", "-no-reboot",

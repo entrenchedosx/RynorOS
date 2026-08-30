@@ -1,5 +1,8 @@
 # Stage 3 — external interrupts and hardware timer
 
+Historical snapshot of commit `726180c0559a64f46616e7944f73a9d542732b6a`.
+Stage 4 supersedes current-status/next-milestone statements below; see `stage4.md`.
+
 Implementation and verification report, 2026-08-30. Stage 3 builds on Stage 2
 commit `c6a353e`; no Stage 4 work is included. The source and this report are
 committed together as the Stage 3 milestone.

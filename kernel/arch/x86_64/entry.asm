@@ -5,11 +5,12 @@ global rynorkernel_entry
 extern kernel_main
 extern __bss_start
 extern __bss_end
+extern __kernel_stack_end
 
 rynorkernel_entry:
     cli
     cld
-    mov rsp, 0x80000           ; Fixed 16 KiB stack below this address.
+    mov rsp, __kernel_stack_end ; Linker-owned fixed kernel stack.
     xor ebp, ebp
     lea rdi, [__bss_start]
     lea rcx, [__bss_end]

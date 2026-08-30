@@ -88,6 +88,9 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/interrupts/irq.c", "irq.o"),
             ("kernel/arch/x86_64/pic.c", "pic.o"),
             ("kernel/arch/x86_64/timer.c", "timer.o"),
+            ("kernel/mm/map.c", "memory-map.o"),
+            ("kernel/mm/pmm.c", "pmm.o"),
+            ("kernel/mm/selftest.c", "pmm-selftest.o"),
         ):
             target = output / name
             run_tool([

@@ -1,26 +1,30 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exception diagnostics and Stage 3 PIC/PIT IRQs under QEMU.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs and Stage 4 physical frame allocation under QEMU.
 Implemented details are explicitly labeled below; **planned** sections are future
-work and **experimental** items are unresolved proposals. Stage 4 has not begun.
+work and **experimental** items are unresolved proposals. Stage 5 has not begun.
 
 ## 1. Boot process
 
 Implemented: SeaBIOS starts the original 512-byte `boot/sector.asm` from an IDE
 raw image. BIOS extended reads load the fixed payload from LBA 1 at physical
-0x8000. Original `boot/transition.asm` establishes minimal GDT/PAE paging/long
+0x8000. Original `boot/transition.asm` collects the real BIOS E820 map, establishes minimal GDT/PAE paging/long
 mode and jumps to `rynorkernel_entry`, which owns the stack, clears BSS, and
 calls `kernel_main`. It prints the preserved boot prefix, initializes/verifies
-the kernel GDT/IDT, performs one controlled breakpoint self-test, then initializes
-the PIC/PIT and verifies three real IRQ0 ticks before masking IRQs and halting.
+the kernel GDT/IDT, performs one controlled breakpoint self-test, initializes/tests
+the physical frame allocator from the handoff map, then initializes
+the PIC/PIT and verifies three real IRQ0 ticks before masking IRQs, rechecking
+PMM integrity and halting.
 The image contains no third-party loader or OS. SeaBIOS is external emulator
 firmware, not RynorOS code; host tools never execute as guest OS services.
 
 The small BIOS approach avoids UEFI packaging, ISO tools, and a separate loader
 dependency, at the cost of a QEMU-only fixed low-memory layout and 32 KiB payload
-limit. See `boot/README.md` for the exact contract. Planned: validated memory-map
-handoff, resource lifetime/reclamation, and more capable loading when needed.
-No memory map, framebuffer handoff, or versioned handoff structure exists yet.
+limit. BSS is zeroed separately and bounded below the fixed stack, not read from
+disk. See `boot/README.md` for the exact contract. Stage 4 adds a bounded/versioned
+E820 handoff at linker-owned 0x4000..0x5000, with actual returned entry lengths
+and completion status. Planned: reclamation and more capable loading when needed.
+No framebuffer handoff or general boot-argument protocol exists yet.
 
 ## 2. CPU architecture
 
@@ -42,7 +46,7 @@ Synchronous exceptions do not require IF.
 See `docs/design/cpu.md` for frame and recovery contracts. Broader CPU hardening,
 emergency stacks, and unsupported feature-specific exceptions remain future work.
 
-Plan: retain the initial single-CPU scope while developing memory management.
+Plan: retain the initial single-CPU scope while developing virtual-memory management.
 Architecture-specific startup, registers, page tables, interrupt entry, and
 context switching belong under `kernel/arch/`. Portable policy belongs elsewhere.
 SMP, other architectures, floating-point task state, and broad hardware support
@@ -52,7 +56,8 @@ baseline. Changes to compiler flags and CPU assumptions require boot-test eviden
 ## 3. Kernel responsibilities
 
 Implemented: original freestanding C/assembly boot, serial, kernel descriptors,
-shared exception diagnostics, PIC IRQ dispatch and bounded PIT self-test. It has no allocator,
+shared exception diagnostics, PIC IRQ dispatch, bounded PIT self-test and physical
+frame allocation. It has no virtual-memory manager, heap,
 scheduler, privilege transitions, or OS service layer.
 
 Plan: an original, small monolithic Rynorkernel owns CPU state, memory,
@@ -64,18 +69,42 @@ this is a language/toolchain dependency, not an imported OS implementation.
 
 ## 4. Memory management
 
-Implemented only as required boot state: three zeroed page-table pages at
+Unchanged required boot state: three zeroed page-table pages at
 0x1000–0x3fff identity-map the first 2 MiB using one writable/executable 2 MiB
-page; the fixed kernel stack spans 0x7c000–0x7ffff. This is not a physical or
-virtual memory manager and offers no isolation, allocation, or permission policy.
+page; the fixed kernel stack spans 0x7c000–0x7ffff. Stage 4 inspects/reserves these
+tables but adds no mappings, permission policy, or user-space isolation.
 
-Plan: first normalize and validate the boot memory map; exclude kernel,
-firmware, device, page-table, and handoff regions. A physical page allocator
-precedes virtual-memory policy and a kernel heap. Page accounting must prevent
-double allocation, reject invalid frees, and handle exhaustion explicitly.
+Implemented PMM: real INT 15h/E820 records are collected before long mode into a
+versioned 4 KiB handoff page (64 entries maximum). The kernel checks storage/header,
+20/24-byte record sizes, enabled attributes, zero lengths, overflow and CPUID
+physical-address limits. Usable intervals round inward; partial pages/nonusable
+intervals reserve touched pages. A bounded sweep resolves overlaps with restrictive
+types winning, merges adjacent equal intervals and never allocates holes.
+ACPI reclaim/NVS, persistent and bad memory stay classified and unavailable;
+no reclamation protocol exists yet. Unknown types/attributes are reserved.
+
+All current kernel, boot, handoff, page-table and stack ranges come from linker
+symbols and must be covered by firmware usable RAM. A conservative first-MiB
+policy retains these and legacy BIOS/ROM/device regions. One allocation bit per
+remaining usable 4096-byte frame is stored in a page-rounded bitmap placed and
+reserved inside a discovered usable interval within the existing 1..2 MiB mapping.
+Compact indices cover usable intervals, not high-address holes/reservations.
+If metadata cannot fit mapped usable RAM, initialization fails rather than
+limiting RAM silently or implementing new paging.
+
+The API allocates/releases individual physical addresses, queries state and totals,
+and detects invalid/double frees and OOM. It requires one CPU and IF=0. A search
+cursor and allocation bits provide deterministic uniqueness/reuse; counters and
+an independent recount check accounting. Full-pool OOM testing uses the real
+allocator and releases every frame afterward. Physical addresses are not mappings,
+zeroed storage or isolated userspace memory. `reserved_bytes` includes explicit
+firmware address-space windows, not only RAM; holes are excluded from described
+totals and unavailable. See `docs/design/physical-memory.md` for all invariants.
+
+Planned Stage 5: virtual-memory policy and later a kernel heap.
 Later address spaces separate kernel and user mappings, with permissions set
 deliberately (including non-executable data where supported). Experimental:
-allocator data structures, virtual address layout, and heap strategy. Kernel
+virtual address layout and heap strategy. Kernel
 allocation failures must not silently continue with invalid pointers.
 
 ## 5. Interrupts
@@ -98,7 +127,9 @@ increments a static 64-bit tick counter and records three samples. Foreground
 IRQ masks the timer line. Completion checks ISR=0, all lines masked, IF=0 and
 three ticks. PIT edges can coalesce, so this is not a wall-clock API. See
 `docs/design/irq-timer.md` for exact controller/IDT/EOI contracts and tests.
-BIOS temporarily permits interrupts for disk services only, before kernel entry.
+BIOS temporarily permits interrupts for disk and E820 services before kernel entry.
+The PMM self-test runs with IF=0; PIT testing follows it and a final PMM integrity
+check follows the IRQs. Interrupt handlers do not allocate frames.
 Stack failure, faults before IDT loading, or faults during diagnostics may still
 triple-fault: there is no TSS/IST/emergency stack or general fault recovery.
 
@@ -190,17 +221,23 @@ Implemented: repository/layout/parser/CLI/resource checks, host Python syntax co
 and real QEMU integration tests. Native code is assembled, compiled, and linked;
 independent output directories yield byte-identical artifacts. QEMU captures
 the original boot prefix plus ordered CPU initialization, real state diagnostics,
-and timer setup/three real ticks/completion within 10 seconds. Six required exception vectors are
+real E820/PMM initialization/full-pool tests, then timer setup/three real ticks and
+post-IRQ accounting within 10 seconds. Six required exception vectors are
 actually triggered in separate images; saved RIP is compared with the linked ELF
 symbol and register/error/flag values are checked. Default breakpoint return also
 verifies GPR/RSP/RFLAGS restoration. Blank/wrong-version/unarmed images must fail.
 Two real mutated kernel builds prove masked IRQ0 yields no ticks and missing
 master EOI stops after one. Both must time out without the timer completion marker.
 The icon package is compared byte-for-byte alongside the executable artifacts.
+PMM runs with 16/64/128/256 MiB use the same kernel image and actual firmware maps;
+host checks independently reconstruct normalization/reservations/totals, compare
+returned frames with usable intervals, and verify linked-object reservations.
+Corrupted real-map handoffs must fail before initialization. Guest map fixtures
+are explicitly synthetic validation tests, never the source of PMM allocations.
 Every launched emulator is stopped/reaped, normally via monitor `quit`. The five
 Stage 1 regression tests remain, with their prefix assertion extended to require
-the appended Stage 2 and Stage 3 output. These checks prove neither general hardware support
-nor language execution, memory management, privilege isolation or a scheduler.
+the appended Stage 2–4 output. These checks prove neither general hardware support
+nor language execution, virtual-memory management, privilege isolation or a scheduler.
 
 Plan: host unit tests for pure algorithms and language passes; emulator tests
 for faults, allocation, interrupts, and native application execution; disposable

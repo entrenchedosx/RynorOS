@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Original x86-64 kernel for RynorOS. Stages 1–3 boot, print serial output, load
-kernel descriptors, diagnose one controlled exception, verify three PIC/PIT
+Original x86-64 kernel for RynorOS. Stages 1–4 boot, print serial output, load
+kernel descriptors, diagnose one controlled exception, initialize and test E820-
+based physical frame allocation, verify three PIC/PIT
 timer IRQs, mask interrupts and halt. It is not
 built on another kernel or existing OS userspace.
 
@@ -27,6 +28,13 @@ mask control, separate IRQ dispatch and `timer_self_test`. See
 and the bounded foreground test. All device IRQs are masked except IRQ0 during
 that test. CPU exceptions remain independent of the PIC and never send EOI.
 
+Stage 4 `include/boot_memory.h` and `include/pmm.h` define the validated firmware
+handoff and physical frame API. `mm/README.md` and
+`../docs/design/physical-memory.md` specify normalization, bitmap ownership,
+linker/firmware reservations, explicit failure codes and statistics. Allocation
+returns 4096-byte physical frames; it does not map or zero them. PMM testing
+precedes IRQ0 testing; accounting is rechecked after the interrupts.
+
 `include/serial.h` declares `serial_init`, `serial_write`, and `serial_flush`.
 Implementation is `arch/x86_64/serial.c`: COM1 at 0x3f8, divisor 1 (115200), 8N1,
 FIFOs enabled/cleared, UART interrupts disabled. Write/flush return zero after
@@ -40,7 +48,8 @@ if complete diagnostics were not delivered. No serial receiver or UART IRQ drive
 No host libc, OS APIs, dynamic loader, compiler runtime library, floating-point,
 SIMD, stack protector runtime, or red zone. Stack alignment is 16 bytes before
 CALL. IF is enabled only in the timer wait, never inside a handler. The linker enforces that
-payload and BSS end at or below 0x10000. Memory is statically reserved, not allocated.
+the loaded payload ends at or below 0x10000 and BSS below 0x70000. Bootstrap state
+is statically reserved; only real E820-usable unreserved frames enter PMM.
 
 ## Implementation status
 
@@ -48,9 +57,9 @@ Implemented: 64-bit entry, BSS initialization, fixed stack, C main, serial outpu
 and fixed-layout linking; kernel GDT/IDT, 32 exception entry stubs, shared C
 diagnostics in `interrupts/exceptions.c`, and an assembly-controlled self-test;
 16 IRQ stubs, `interrupts/irq.c` dispatch, `arch/x86_64/pic.c` and `timer.c`.
-`mm/` and `drivers/` remain reserved;
+`mm/` implements map validation, real frame allocation and self-tests; `drivers/` remains reserved;
 device code is limited to architecture-specific serial, PIC and PIT support.
-No later subsystem or RynorLang implementation has been added.
+No Stage 5 subsystem or RynorLang implementation has been added.
 
 ## Tests
 
@@ -60,13 +69,17 @@ boot output, bounded failure, and QEMU cleanup, plus real #DE/#DB/#BP/#UD/#GP/#P
 and unarmed-breakpoint tests. It also verifies three real IRQ0 returns, and
 negative masked-IRQ/missing-EOI behavior. `test` covers build/link, diagnostic
 parsing and the separate icon resource package, which no kernel code reads.
+PMM integration covers 16/64/128/256 MiB, physical writes, full-pool exhaustion,
+release/reuse, exact accounting and corrupted firmware-map rejection. All live
+linked boot/kernel ranges are checked against the reported final map.
 
 ## Known limitations
 
-Only the documented QEMU PC configuration is verified. No allocator, heap,
+Only the documented QEMU PC configuration is verified. No virtual-memory manager, heap,
 scheduler, filesystem, graphics, userspace, privilege transitions, TSS/IST,
-or general external device support beyond IRQ0. No guard page, stack-overflow detection, memory-map
-validation, or writable/executable separation. Invalid stacks, early boot faults,
+or general external device support beyond IRQ0. No guard page, stack-overflow detection,
+or writable/executable separation. Invalid stacks, early boot faults,
 or faults during diagnosis can still reset the CPU; `-no-reboot` makes the runner
 fail. Other exception stubs are best-effort/unexercised, not feature-enablement
-claims. See `../docs/design/cpu.md` and `../docs/design/irq-timer.md`. Stage 4 remains future work.
+claims. See `../docs/design/cpu.md`, `../docs/design/irq-timer.md` and
+`../docs/design/physical-memory.md`. Stage 5 remains future work.

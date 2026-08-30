@@ -1,4 +1,4 @@
-"""Stage 3 repository/asset contract; this does not check kernel execution."""
+"""Stage 4 repository/asset contract; this does not check kernel execution."""
 
 import json
 from pathlib import Path
@@ -16,7 +16,7 @@ REQUIRED_DIRECTORIES = (
     "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
 RESERVED_DIRECTORIES = (
-    "kernel/mm", "kernel/drivers",
+    "kernel/drivers",
     "rynorlang/lexer", "rynorlang/parser", "rynorlang/ast",
     "rynorlang/compiler", "rynorlang/runtime", "rynorlang/tests", "user/shell",
     "user/lib", "user/apps", "tests/kernel", "tests/rynorlang",
@@ -45,11 +45,16 @@ REQUIRED_FILES = (
     "assets/README.md", "assets/branding/icon.png", "docs/reports/stage3.md",
     "docs/design/irq-timer.md", "tests/repository/test_timer_output.py",
     "tests/repository/test_resources.py",
+    "kernel/include/boot_memory.h", "kernel/include/pmm.h", "kernel/mm/map.c",
+    "kernel/mm/pmm.c", "kernel/mm/selftest.c", "kernel/mm/README.md",
+    "tools/host/boot_output.py", "tools/host/pmm_output.py",
+    "tests/repository/test_pmm_output.py", "tests/integration/test_pmm.py",
+    "docs/design/physical-memory.md", "docs/reports/stage4.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 4 is the exact Stage 3 contract, not a build-target DSL.
+# Version 5 is the exact Stage 4 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 4,
+    "schema_version": 5,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
@@ -59,8 +64,8 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 3,
-    "status": "hardware-timer-interrupts",
+    "stage": 4,
+    "status": "physical-memory-management",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -77,6 +82,7 @@ EXPECTED_METADATA = {
         "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test",
         "kernel-gdt", "exception-idt", "exception-diagnostics", "controlled-cpu-self-test",
         "pic-irq-dispatch", "pit-timer", "timer-irq-self-test", "os-resource-package",
+        "bios-e820-map", "physical-frame-allocator", "pmm-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }
