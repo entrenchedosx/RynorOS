@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Original x86-64 kernel for RynorOS. Stages 1–6 boot, print serial output, load
+Original x86-64 kernel for RynorOS. Stages 1–7 boot, print serial output, load
 kernel descriptors, diagnose one controlled exception, initialize and test E820-
 based physical frame allocation, replace/test kernel paging, run a bounded kernel-
 heap self-test, verify three PIC/PIT
-timer IRQs, mask interrupts and halt. It is not
+timer IRQs, verify kernel threads and preemption, mask interrupts and halt. It is not
 built on another kernel or existing OS userspace.
 
 ## Public interfaces
@@ -71,7 +71,8 @@ if complete diagnostics were not delivered. No serial receiver or UART IRQ drive
 
 No host libc, OS APIs, dynamic loader, compiler runtime library, floating-point,
 SIMD, stack protector runtime, or red zone. Stack alignment is 16 bytes before
-CALL. IF is enabled only in the timer wait, never inside a handler. The linker enforces that
+CALL. IF is enabled in timer waits and running threads, never inside a handler.
+PMM/VM/heap/stack mutation remains foreground IF=0. The linker enforces that
 the loaded payload and BSS end at or below 0x70000. Bootstrap state
 is statically reserved; only real E820-usable unreserved frames enter PMM.
 
@@ -104,7 +105,7 @@ allocation failure, plus broken CR3/TLB/zeroing/fault-arm kernel variants.
 ## Known limitations
 
 Only the documented QEMU PC configuration is verified. No
-scheduler, filesystem, graphics, userspace, privilege transitions, TSS/IST,
+filesystem, graphics, userspace, privilege transitions, TSS/IST,
 or general external device support beyond IRQ0. No reliable stack-overflow recovery,
 process isolation or address-space switching. Invalid stacks, early boot faults,
 or faults during diagnosis can still reset the CPU; `-no-reboot` makes the runner

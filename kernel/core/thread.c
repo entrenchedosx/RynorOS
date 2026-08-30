@@ -1,367 +1,320 @@
 #include "ksched.h"
 #include "irq.h"
-#include "paging.h"
 #include "io.h"
 #include "serial.h"
 
-/* Real, bounded kernel threads and a deterministic round-robin scheduler driven
-   by the PIT IRQ0. Single CPU, ring 0. Threads share the active kernel address
-   space; each worker owns a kstack (payload + faulting guard page). The bootstrap
-   context is a first-class thread (thread[0], has_stack=0) so it can be preempted
-   and resumed exactly like a worker. No user processes or SMP are implied. */
-
-#define SCHED_THREADS KSTACK_MAX_THREADS
-#define SCHED_MAGIC 0x5458435943454c45ULL
-#define SCHED_MAGIC_INV (~SCHED_MAGIC)
-
+/* Single CPU; all transitions are serialized with IF=0. No heap run queue,
+   sleeping joins, alternate CR3, or IRQ-time allocation. */
 struct thread {
-    cpu_u32 id;
+    thread_id id;
     enum thread_state state;
     struct exception_frame saved;
     struct kstack stack;
-    int has_stack;
-    struct vm_space *space;
     thread_fn entry;
     void *arg;
-    cpu_u64 magic, magic_inv;
+    struct thread_statistics statistics;
 };
-
 static struct thread threads[SCHED_THREADS];
 static struct thread *current;
-static int sched_active;
-static cpu_u32 sched_ticks;
-static int sched_stop;
-static int sched_preemptions;
+static thread_id next_id = 1;
+static int initialized;
+static cpu_u64 ticks, switches;
+static unsigned int held_locks;
+extern char __kernel_stack_start[], __kernel_stack_end[], __text_start[], __text_end[];
+extern void thread_switch(struct exception_frame *, struct exception_frame *);
+extern void sched_resume(struct exception_frame *) __attribute__((noreturn));
 
-/* Declared in switch.asm. */
-void thread_switch(struct exception_frame *out, struct exception_frame *next);
-__attribute__((noreturn)) void sched_resume(struct exception_frame *next);
-
-static __attribute__((noreturn)) void panic(const char *reason)
+static void panic(const char *why) __attribute__((noreturn));
+static void panic(const char *why)
 {
-    if (serial_write("[SCHED] failure=")) (void)serial_write(reason);
-    (void)serial_write("\r\n");
-    serial_flush();
-    cpu_halt();
+    __asm__ volatile ("cli" ::: "memory");
+    (void)serial_write("[SCHED] failure="); (void)serial_write(why);
+    (void)serial_write("\r\n"); (void)serial_flush(); cpu_halt();
 }
-static void require(int cond, const char *reason)
-{ if (!cond) panic(reason); }
-
-/* The freestanding kernel has no libc memcpy/memset; copy POD words directly.
-   Both structs are 8-byte-multiple sized. */
-static void copy_words(cpu_u64 *dst, const cpu_u64 *src, unsigned int words)
-{ for (unsigned int i = 0; i < words; ++i) dst[i] = src[i]; }
-static void zero_words(cpu_u64 *dst, unsigned int words)
-{ for (unsigned int i = 0; i < words; ++i) dst[i] = 0; }
-
-/* Deterministic round-robin: scan forward from just after current for the first
-   READY thread. Small fixed array; no dynamic queue. */
+static void require(int ok, const char *why) { if (!ok) panic(why); }
+static void frame_failure(const struct exception_frame *f)
+{
+    const cpu_u64 values[] = {f->rip, f->rsp, f->rflags, f->cs, f->ss, f->vector, f->error};
+    const char *labels[] = {" rip=", " rsp=", " flags=", " cs=", " ss=", " vector=", " error="};
+    (void)serial_write("[SCHED] rejected frame");
+    for (unsigned int i = 0; i < 7; ++i) {
+        char hex[19] = "0x0000000000000000";
+        for (unsigned int n = 0; n < 16; ++n) hex[17-n] = "0123456789abcdef"[(values[i] >> (n*4)) & 15];
+        (void)serial_write(labels[i]); (void)serial_write(hex);
+    }
+    (void)serial_write("\r\n"); panic("irq_frame");
+}
+static int foreground(void) { return cpu_interrupts_disabled() && !irq_in_context(); }
+static int executable(cpu_u64 rip)
+{ return rip >= (cpu_u64)__text_start && rip < (cpu_u64)__text_end; }
+static unsigned int current_slot(void)
+{
+    /* Equality checks before dereference: corrupted current cannot be indexed. */
+    for (unsigned int i = 0; i < SCHED_THREADS; ++i) if (current == &threads[i]) return i;
+    panic("invalid_current");
+}
+static int bounds(struct thread *t, cpu_u64 *lo, cpu_u64 *hi)
+{
+    if (t == &threads[0]) {
+        *lo = (cpu_u64)__kernel_stack_start; *hi = (cpu_u64)__kernel_stack_end;
+        return 1;
+    }
+    return kstack_bounds(&t->stack, lo, hi);
+}
+static int frame_valid(struct thread *t, const struct exception_frame *f)
+{
+    cpu_u64 lo, hi;
+    /* Arithmetic flags, DF, IF and RF are supported; TF/IOPL/NT/VM forbidden.
+       Hardware may save RF=1 for an interrupted instruction; preserve it.
+       Space for an IRQ frame is required, but this is not an IST overflow fix. */
+    return bounds(t, &lo, &hi) && f->rsp >= lo + sizeof(*f) && f->rsp < hi &&
+           executable(f->rip) && f->cs == CPU_CODE_SELECTOR && f->ss == CPU_DATA_SELECTOR &&
+           (f->rflags & 2) && !(f->rflags & ~0x10ed7ULL) &&
+           f->error == 0 && (f->vector == 0 ||
+           (f->vector >= IRQ_BASE && f->vector < IRQ_BASE + IRQ_COUNT));
+}
+int scheduler_check(void)
+{
+    if (!cpu_interrupts_disabled() || !initialized) return 0;
+    unsigned int running = 0;
+    int found = 0;
+    for (unsigned int i = 0; i < SCHED_THREADS; ++i) {
+        struct thread *t = &threads[i];
+        if (t == current) found = 1;
+        if (t->state < THREAD_FREE || t->state > THREAD_EXITED) return 0;
+        if (t->state == THREAD_FREE) {
+            if (t->id || t->stack.generation) return 0;
+            continue;
+        }
+        if (!t->id || t->id >= next_id || (i && (!kstack_valid(&t->stack) || !executable((cpu_u64)t->entry))))
+            return 0;
+        for (unsigned int j = 0; j < i; ++j)
+            if (threads[j].state != THREAD_FREE && t->id == threads[j].id) return 0;
+        if (t->state == THREAD_RUNNING) { ++running; if (t != current) return 0; }
+        if (t->state == THREAD_READY && !frame_valid(t, &t->saved)) return 0;
+    }
+    return found && running == 1 && current->state == THREAD_RUNNING &&
+           threads[0].state != THREAD_FREE && threads[0].state != THREAD_EXITED;
+}
+static void check(void) { require(scheduler_check(), "state_or_context"); }
+static struct thread *find(thread_id id)
+{
+    if (!id) return 0;
+    for (unsigned int i = 0; i < SCHED_THREADS; ++i)
+        if (threads[i].state != THREAD_FREE && threads[i].id == id) return &threads[i];
+    return 0;
+}
 static struct thread *pick_next(void)
 {
-    if (!current) return (void *)0;
-    for (unsigned int i = 1; i < SCHED_THREADS; ++i) {
-        struct thread *t = &threads[(current->id + i) % SCHED_THREADS];
+    unsigned int slot = current_slot();
+    for (unsigned int n = 1; n < SCHED_THREADS; ++n) {
+        struct thread *t = &threads[(slot + n) % SCHED_THREADS];
         if (t->state == THREAD_READY) return t;
     }
-    return (void *)0;
+    return 0;
 }
-
+static void select_thread(struct thread *next, int exiting)
+{
+    require(frame_valid(next, &next->saved), "invalid_resume");
+    current->state = exiting ? THREAD_EXITED : THREAD_READY;
+    next->state = THREAD_RUNNING;
+    current = next;
+}
 static void thread_entry_trampoline(void)
 {
-    struct thread *me = current;
-    me->entry(me->arg);
+    cpu_u64 flags = irq_save();
+    check();
+    thread_fn entry = current->entry;
+    void *arg = current->arg;
+    irq_restore(flags);
+    entry(arg);
     thread_exit();
 }
-
-static void init_fresh_frame(struct exception_frame *saved, const struct kstack *k)
+int scheduler_initialize(void)
 {
-    cpu_u64 payload_top = k->base + KSTACK_GUARD_BYTES + KSTACK_PAYLOAD_BYTES;
-    zero_words((cpu_u64 *)saved, sizeof(struct exception_frame) / sizeof(cpu_u64));
-    *(volatile cpu_u64 *)(payload_top - 8) = 0;   /* dummy return address */
-    saved->rip = (cpu_u64)thread_entry_trampoline;
-    saved->cs = CPU_CODE_SELECTOR;
-    saved->rflags = 0x202;        /* IF set, reserved bit 0x2 fixed set */
-    saved->rsp = payload_top - 8;
-    saved->ss = CPU_DATA_SELECTOR;
+    if (!foreground() || initialized || !vm_kernel_space()) return 0;
+    threads[0].id = next_id++;
+    threads[0].state = THREAD_RUNNING;
+    current = &threads[0];
+    initialized = 1;
+    return scheduler_check();
 }
-
-struct exception_frame *sched_tick(struct exception_frame *frame)
+int thread_create(thread_id *out, thread_fn entry, void *arg)
 {
-    if (!sched_active || !current || current->state != THREAD_RUNNING) return frame;
-    struct thread *next = pick_next();
-    if (!next) return frame;
-    copy_words((cpu_u64 *)&current->saved, (const cpu_u64 *)frame,
-               sizeof(struct exception_frame) / sizeof(cpu_u64)); /* preempted frame */
-    current->state = THREAD_READY;
-    next->state = THREAD_RUNNING;
-    current = next;
-    ++sched_preemptions;
-    return &next->saved;           /* exception_common IRETQs to next->saved */
-}
-
-void thread_yield(void)
-{
-    if (!sched_active || !current) return;
-    struct thread *next = pick_next();
-    if (!next || next == current) return;
-    struct thread *me = current;
-    current->state = THREAD_READY;
-    next->state = THREAD_RUNNING;
-    current = next;
-    thread_switch(&me->saved, &next->saved);
-    current = me;                  /* resumed: our cursor is authoritative */
-    me->state = THREAD_RUNNING;
-}
-
-void thread_exit(void)
-{
-    if (!sched_active || !current) panic("exit_no_scheduler");
-    struct thread *me = current;
-    me->state = THREAD_EXITED;
-    struct thread *next = pick_next();
-    require(next && next != me, "exit_no_run_next");
-    next->state = THREAD_RUNNING;
-    current = next;
-    sched_resume(&next->saved);    /* one-way, never returns */
-    panic("exit_unreachable");
-}
-
-int thread_create(struct thread **out, struct kstack *stack, thread_fn entry,
-                  void *arg, struct vm_space *space)
-{
-    if (!out || !stack || !entry || !kstack_valid(stack) || !cpu_interrupts_disabled())
+    if (!foreground() || !initialized || !out || !executable((cpu_u64)entry) || next_id >= (1ULL << 63))
         return 0;
+    check();
     for (unsigned int i = 1; i < SCHED_THREADS; ++i) {
         struct thread *t = &threads[i];
         if (t->state != THREAD_FREE) continue;
-        zero_words((cpu_u64 *)t, sizeof(struct thread) / sizeof(cpu_u64));
-        t->id = i;
-        t->state = THREAD_READY;
-        copy_words((cpu_u64 *)&t->stack, (const cpu_u64 *)stack,
-                   sizeof(struct kstack) / sizeof(cpu_u64));
-        t->has_stack = 1;
-        t->space = space ? space : vm_kernel_space();
-        t->entry = entry;
-        t->arg = arg;
-        t->magic = SCHED_MAGIC;
-        t->magic_inv = SCHED_MAGIC_INV;
-        init_fresh_frame(&t->saved, &t->stack);
-        *out = t;
+        if (!kstack_alloc(&t->stack)) return 0;
+        cpu_u64 lo, hi;
+        require(kstack_bounds(&t->stack, &lo, &hi), "new_stack_bounds");
+        t->id = next_id++;
+        t->entry = entry; t->arg = arg;
+        t->saved = (struct exception_frame){0};
+        *(cpu_u64 *)(hi - 8) = 0;
+        t->saved.rip = (cpu_u64)thread_entry_trampoline;
+        t->saved.cs = CPU_CODE_SELECTOR; t->saved.ss = CPU_DATA_SELECTOR;
+        t->saved.rsp = hi - 8; t->saved.rflags = 0x202;
+        t->state = THREAD_READY; /* publish only after successful initialization */
+        *out = t->id;
+        check();
         return 1;
     }
     return 0;
 }
-
-int thread_join(struct thread *t, struct vm_space **space_out)
+int thread_join(thread_id id)
 {
-    if (!t || t->id >= SCHED_THREADS || t->magic != SCHED_MAGIC ||
-        t->magic_inv != SCHED_MAGIC_INV || t->state != THREAD_EXITED) return 0;
-    if (t->has_stack) require(kstack_free(&t->stack), "join_free_stack");
-    if (space_out) *space_out = t->space;
-    zero_words((cpu_u64 *)t, sizeof(struct thread) / sizeof(cpu_u64));
+    if (!foreground() || !initialized) return 0;
+    check();
+    struct thread *t = find(id);
+    if (!t || t == current || t == &threads[0] || t->state != THREAD_EXITED) return 0;
+    require(kstack_free(&t->stack), "reap_stack");
+    *t = (struct thread){0};
+    check();
     return 1;
 }
-
-int thread_ready_count(void)
+int thread_state(thread_id id, enum thread_state *out)
 {
-    unsigned int n = 0;
-    for (unsigned int i = 0; i < SCHED_THREADS; ++i)
-        if (threads[i].state == THREAD_READY || threads[i].state == THREAD_RUNNING) ++n;
-    return (int)n;
+    if (!foreground() || !initialized || !out) return 0;
+    check();
+    struct thread *t = find(id);
+    if (!t) return 0;
+    *out = t->state; return 1;
 }
-
-struct thread *thread_current(void) { return current; }
-
+int thread_statistics(thread_id id, struct thread_statistics *out)
+{
+    if (!foreground() || !initialized || !out) return 0;
+    check();
+    struct thread *t = find(id);
+    if (!t) return 0;
+    *out = t->statistics; return 1;
+}
+thread_id thread_current(void)
+{
+    cpu_u64 f = irq_save();
+    thread_id id = 0;
+    if (initialized) { check(); id = current->id; }
+    irq_restore(f); return id;
+}
 int thread_current_stack_base(cpu_u64 *base)
 {
-    if (!current || !current->has_stack) return 0;
-    *base = current->stack.base;
+    cpu_u64 f = irq_save(), lo, hi;
+    int ok = initialized && base;
+    if (ok) {
+        check();
+        ok = current != &threads[0] && bounds(current, &lo, &hi);
+        if (ok) *base = lo - KSTACK_GUARD_BYTES;
+    }
+    irq_restore(f); return ok;
+}
+int thread_ready_count(void)
+{
+    if (!cpu_interrupts_disabled() || !initialized) return 0;
+    check();
+    int count = 0;
+    for (unsigned int i = 0; i < SCHED_THREADS; ++i)
+        if (threads[i].state == THREAD_READY || threads[i].state == THREAD_RUNNING) ++count;
+    return count;
+}
+int scheduler_statistics(struct sched_statistics *out)
+{
+    if (!foreground() || !initialized || !out) return 0;
+    check();
+    *out = (struct sched_statistics){ticks, switches, (cpu_u64)thread_ready_count()};
     return 1;
 }
+int thread_yield(void)
+{
+    cpu_u64 f = irq_save();
+    if (!initialized || irq_in_context() || held_locks) { irq_restore(f); return 0; }
+    check();
+    struct thread *me = current, *next = pick_next();
+    if (next) {
+        select_thread(next, 0);
+        thread_switch(&me->saved, &next->saved);
+        /* The selecting path already published current; never overwrite it. */
+        require(current == me && cpu_interrupts_disabled(), "yield_return");
+        check();
+    }
+    irq_restore(f);
+    return 1;
+}
+void thread_exit(void)
+{
+    (void)irq_save();
+    require(initialized && !irq_in_context() && !held_locks, "exit_context");
+    check();
+    require(current != &threads[0], "bootstrap_exit");
+    struct thread *next = pick_next();
+    require(next != 0, "exit_no_next");
+    select_thread(next, 1);
+    sched_resume(&next->saved);
+}
+struct exception_frame *sched_tick(struct exception_frame *frame)
+{
+    if (!initialized) return frame;
+    require(cpu_interrupts_disabled() && irq_in_context() && !held_locks, "tick_context");
+    check();
+    cpu_u64 lo, hi;
+    require(bounds(current, &lo, &hi) && (cpu_u64)frame >= lo &&
+            (cpu_u64)frame <= hi - sizeof(*frame), "irq_frame_owner");
+    if (!frame_valid(current, frame) || !(frame->rflags & 0x200)) frame_failure(frame);
+    ++ticks;
+    struct thread *next = pick_next();
+    if (!next) return frame;
+    current->saved = *frame;
+    ++current->statistics.preemptions;
+    current->statistics.irq_rsp = frame->rsp;
+    current->statistics.irq_rip = frame->rip;
+    ++next->statistics.dispatches;
+    select_thread(next, 0);
+    ++switches;
+    return &next->saved;
+}
+struct exception_frame *sched_handoff(struct exception_frame *original, struct exception_frame *selected)
+{
+    require(cpu_interrupts_disabled() && !irq_in_context(), "handoff_context");
+    if (!initialized) { require(selected == original, "handoff_pointer"); return selected; }
+    check();
+    require(selected == original || selected == &current->saved, "handoff_pointer");
+    cpu_u64 lo, hi;
+    if (selected == original)
+        require(bounds(current, &lo, &hi) && (cpu_u64)original >= lo &&
+                (cpu_u64)original <= hi - sizeof(*original), "handoff_stack");
+    require(frame_valid(current, selected), "handoff_frame");
+    return selected;
+}
 
-/* Synchronization. On a single CPU a spinlock is safe only when the holder
-   cannot be preempted/yield; the irq-save critical section is the correct
-   primitive under timer preemption and inside IRQ handlers. */
 cpu_u64 irq_save(void)
 {
     cpu_u64 flags;
-    __asm__ volatile ("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
+    __asm__ volatile ("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
     return flags & 0x200;
 }
-void irq_restore(cpu_u64 previous)
+void irq_restore(cpu_u64 flags)
 {
-    if (previous & 0x200) __asm__ volatile ("sti" : : : "memory");
+    require(!(flags & 0x200) || !held_locks, "restore_with_lock");
+    if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+    else __asm__ volatile ("cli" ::: "memory");
 }
-
-void spin_lock(spinlock_t *lock)
+static cpu_u64 lock_owner(void)
+{ return (initialized ? current->id : 1) | (irq_in_context() ? 1ULL << 63 : 0); }
+int spin_lock(spinlock_t *lock)
 {
-    /* xchg-based test-and-set; single CPU only. */
-    cpu_u8 want = 1;
-    do {
-        __asm__ volatile ("xchgb %b0, %1" : "+q"(want) : "m"(lock->held) : "memory");
-    } while (want);
+    if (!cpu_interrupts_disabled() || !lock || lock->owner) return 0;
+    if (initialized) check();
+    lock->owner = lock_owner(); lock->identity = lock;
+    ++held_locks;
+    __asm__ volatile ("" ::: "memory");
+    return 1;
 }
-void spin_unlock(spinlock_t *lock)
+int spin_unlock(spinlock_t *lock)
 {
-    __asm__ volatile ("movb $0, %0" : "=m"(lock->held) : : "memory");
-}
-
-/* Return true once at least one thread has actually resumed on its own stack:
-   used by the self-test to prove real context switching (not a single stack). */
-int ksymbol_sched_ready(void)
-{
-    return sched_active;
-}
-
-/* --- Guest self-test (matched by tools/host/sched_output.py). --- */
-
-static volatile cpu_u64 workers_remaining, sched_runs;
-static cpu_u64 per_thread_runs[SCHED_THREADS];
-static cpu_u64 per_thread_marks[SCHED_THREADS];
-
-static void stext(const char *s)
-{ require(serial_write(s), "serial"); }
-static void snumber(cpu_u64 value)
-{
-    char b[21]; unsigned int n = 20; b[n] = 0;
-    do { b[--n] = (char)('0' + value % 10); value /= 10; } while (value);
-    stext(b + n);
-}
-
-static void worker(void *arg)
-{
-    cpu_u64 id = (cpu_u64)arg;    /* 1-based: threads[id] identity */
-    /* Each worker writes to a slot on ITS OWN kernel stack; each thread's stack
-       base differs, so distinct marker VAs prove the stack genuinely switched. */
-    struct thread *me = current;
-    volatile cpu_u64 *own = (volatile cpu_u64 *)(me->stack.base + KSTACK_PAYLOAD_TOP_OFFSET - 8);
-    while (!sched_stop) {
-        cpu_u64 f = irq_save();
-        ++per_thread_runs[id];
-        per_thread_marks[id] = (cpu_u64)own;
-        ++sched_runs;
-        irq_restore(f);
-        thread_yield();
-    }
-    cpu_u64 f = irq_save();
-    --workers_remaining;
-    irq_restore(f);
-    thread_exit();
-}
-
-#define SCHED_BUDGET_TICKS 60u
-
-static void sched_timer_isr(void)
-{
-    ++sched_ticks;
-    if (sched_ticks >= SCHED_BUDGET_TICKS) {
-        sched_stop = 1;
-        (void)irq_set_enabled(0, 0);   /* stop preempting once the budget is spent */
-    }
-}
-
-void scheduler_self_test(void)
-{
-    require(cpu_interrupts_disabled(), "if0");
-    struct pmm_statistics before, after;
-    require(pmm_statistics(&before) == PMM_OK, "stats_before");
-
-    /* Bootstrap context becomes thread[0]; it preempts like any worker. */
-    zero_words((cpu_u64 *)threads, sizeof(struct thread) / sizeof(cpu_u64));
-    threads[0].id = 0;
-    threads[0].state = THREAD_RUNNING;
-    threads[0].space = vm_kernel_space();
-    threads[0].magic = SCHED_MAGIC;
-    threads[0].magic_inv = SCHED_MAGIC_INV;
-    current = &threads[0];
-
-    enum { WORKERS = 3 };
-    workers_remaining = 0;
-    sched_runs = 0;
-    sched_stop = 0;
-    sched_ticks = 0;
-    sched_preemptions = 0;
-    for (unsigned int i = 0; i < SCHED_THREADS; ++i) {
-        per_thread_runs[i] = 0;
-        per_thread_marks[i] = 0;
-    }
-
-    struct kstack stacks[WORKERS];
-    struct thread *ts[WORKERS];
-    for (unsigned int i = 0; i < WORKERS; ++i) {
-        require(kstack_alloc(&stacks[i]), "stack_alloc");
-        cpu_u64 id = i + 1;
-        require(thread_create(&ts[i], &stacks[i], worker, (void *)id, vm_kernel_space()),
-                "thread_create");
-        ++workers_remaining;
-    }
-    require(thread_ready_count() == WORKERS + 1, "ready_count");
-
-    /* Swap IRQ0 from the one-shot heartbeat to the scheduler drive and start
-       genuine timer preemption. */
-    require(irq_set_handler(0, sched_timer_isr), "isr_swap");
-    sched_active = 1;
-    require(irq_set_enabled(0, 1), "irq0_enable");
-
-    /* Interrupts must be enabled for the PIT to preempt; the yield loop sinks the
-       bootstrap thread into the READY ring. Workers observe the budget stop and
-       exit; once they are all gone the last exit resumes us back here. */
-    __asm__ volatile ("sti" : : : "memory");
-    while (!sched_stop) thread_yield();
-    while (workers_remaining > 0) thread_yield();
-    __asm__ volatile ("cli" : : : "memory");
-    require(cpu_interrupts_disabled(), "if0_after");
-
-    require(sched_active, "still_active");
-    sched_active = 0;
-
-    /* Prove the supervisor genuinely preempted and redirected execution: the
-       IRQ0 ISR ran for the full budget, and at least one tick actually switched
-       to a different thread's saved frame. */
-    require(sched_ticks >= SCHED_BUDGET_TICKS, "full_budget");
-    require(sched_preemptions > 0, "preempted");
-    /* Every worker genuinely resumed on its own stack with a distinct marker VA,
-       and defaulted to the shared kernel address space. */
-    require(thread_ready_count() == 1, "only_boot_running");
-    for (unsigned int i = 1; i <= WORKERS; ++i) {
-        require(per_thread_runs[i] > 0, "worker_ran");
-        require(vm_query(vm_kernel_space(), per_thread_marks[i], &((struct vm_mapping){0})) == VM_OK,
-                "mark_mapped");
-    }
-    require(per_thread_marks[1] != per_thread_marks[2] &&
-            per_thread_marks[2] != per_thread_marks[3] &&
-            per_thread_marks[1] != per_thread_marks[3], "marks_distinct");
-    require(workers_remaining == 0, "all_exited");
-
-    /* Reap the zombies: frees every kstack (payload + guard) and restores PMM. */
-    for (unsigned int i = 0; i < WORKERS; ++i) {
-        struct vm_space *sp = (void *)0;
-        require(ts[i]->state == THREAD_EXITED, "joined_exited");
-        require(thread_join(ts[i], &sp), "join");
-        require(sp == vm_kernel_space(), "join_space");
-    }
-    require(thread_ready_count() == 1, "only_boot_after_join");
-    require(pmm_statistics(&after) == PMM_OK, "stats_after");
-    require(after.allocated_bytes == before.allocated_bytes, "pmm_balanced");
-    require(after.free_bytes + after.allocated_bytes == before.free_bytes + before.allocated_bytes,
-            "pmm_region_preserved");
-
-    (void)serial_write("[TEST] scheduler self-test passed\r\n");
-    (void)serial_write("[TEST] preemptions=");
-    snumber((cpu_u64)sched_preemptions);
-    (void)serial_write(" runs=");
-    snumber(sched_runs);
-    (void)serial_write("\r\n");
-    (void)serial_flush();
-}
-
-int scheduler_check(void)
-{
-    /* Idle invariant: scheduler stopped, all worker slots reclaimed, no leaks. */
-    if (sched_active || workers_remaining != 0) return 0;
-    for (unsigned int i = 1; i < SCHED_THREADS; ++i)
-        if (threads[i].state != THREAD_FREE) return 0;
-    if (threads[0].state != THREAD_RUNNING && threads[0].state != THREAD_FREE) return 0;
-    if (current != &threads[0]) return 0;
-    return sched_runs > 0 && sched_preemptions > 0;
+    if (!cpu_interrupts_disabled() || !lock || !held_locks ||
+        lock->identity != lock || lock->owner != lock_owner()) return 0;
+    __asm__ volatile ("" ::: "memory");
+    lock->owner = 0; lock->identity = 0; --held_locks;
+    return 1;
 }

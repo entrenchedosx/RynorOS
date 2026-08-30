@@ -4,7 +4,8 @@
 
 Implemented Stage 3: original dual-8259 PIC programming, IRQ dispatch, and PIT
 channel 0 interrupts on the existing single-CPU QEMU PC/SeaBIOS path. This is
-a bounded hardware timer self-test, **not a scheduler** or a timekeeping service.
+a bounded hardware timer self-test, not a timekeeping service. Stage 7 subsequently
+uses the same IRQ0 source for the separate kernel scheduler.
 The CPU exception mechanisms and six execution-tested vectors remain intact.
 
 ## Controller and timer choice
@@ -53,11 +54,13 @@ userspace ABI or general driver framework:
 - `irq_initialize()` initializes the controller once; returns zero on failure.
 - `irq_register(irq, handler)` installs one non-null callback per line. Requires
   IF=0 and initialized controller; rejects duplicates, IRQ2 and out-of-range IDs.
-  There is deliberately no dynamic unregister/replacement operation yet.
+  Stage 7 adds `irq_set_handler` to replace an existing non-null handler with IF=0.
 - `irq_set_enabled(irq, enabled)` changes masks with IF=0; enabling requires a
   registered handler. PIC register readback is checked. Cascade is automatic.
 - `irq_dispatch(frame)` receives the saved frame from assembly. Valid real IRQs
-  invoke a callback, then acknowledge the PIC. It never enters CPU diagnostics.
+  invoke a callback, acknowledge the PIC, then optionally select a scheduler
+  frame for IRQ0. Assembly validates the final handoff before changing RSP.
+  `irq_in_context` is true during callback/selection and false before return.
 - `pic_initialize`, `pic_set_enabled`, `pic_in_service`, `pic_eoi` are low-level
   architecture internals; callers must obey the same single-CPU/IF=0 contract.
 - `timer_self_test()` owns channel 0 and its static state for this one-shot test.
@@ -68,7 +71,8 @@ mechanism. The vector at frame offset 120 chooses a separate C IRQ dispatcher;
 the exception frame layout and CR2 diagnostic contract do not change. GDT and
 IDT readback now verifies all 48 gates before the existing breakpoint test runs.
 Both paths use interrupt gates (0x8e), CPL0, selector 0x08, IST0. No new stack,
-privilege transition, scheduler context or paging mechanism is introduced.
+privilege transition or paging mechanism is introduced by IRQ registration.
+Stage 7 scheduler context/return contracts are specified in `scheduler.md`.
 
 The dispatcher verifies IF=0, saved IF=1, normalized error=0 and the matching
 PIC ISR bit before calling the registered handler. A software `INT 32` cannot
@@ -101,8 +105,9 @@ are not canned serial strings. The completion marker requires three samples,
 exactly three serviced ticks, a cleared PIC ISR, both PIC masks=0xff and IF=0.
 Foreground progress after each wake demonstrates return from the interrupt
 entry/handler/EOI/IRETQ path. It then flushes serial and returns to CLI/HLT.
-The PIT continues oscillating, but all device lines remain masked. Timer service
-is intentionally stopped after the test rather than silently promising uptime.
+The PIT continues oscillating, but all device lines remain masked on return.
+Stage 7 then replaces the handler and unmasks IRQ0 for its execution tests;
+this does not silently promise an uptime service.
 
 ## Tests and known limitations
 

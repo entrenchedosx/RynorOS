@@ -1,5 +1,12 @@
 # Kernel execution infrastructure — thread stacks, switching, scheduler
 
+**Historical report from untrusted commit 3187675, superseded by
+[the independent Stage 7 audit](stage7-audit.md).** Its preemption/ownership
+claims below were not adequate evidence: the clean audit baseline failed an
+integration test, ownership and IF probes exposed defects, and the two original
+negative tests merely changed assertions. Current code no longer uses backed
+guard pages or caller-supplied stack/frame ownership.
+
 Stage 7 adds real per-thread kernel stacks with guard pages, genuine context
 switching, and a deterministic round-robin scheduler driven by the PIT IRQ0. It
 is a forward milestone on top of the Stage 6 heap baseline
@@ -32,8 +39,8 @@ exactly. `pmm_check`/`vm_check`/`heap_check`/`scheduler_check` all pass after th
 post-IRQ accounting line.
 
 [Scheduler design](../design/scheduler.md) describes the actual API, invariants and
-limits. [Codebase audit](codebase-audit.md) remains the authoritative current
-verification record. Earlier stage reports remain historical snapshots.
+limits. [Codebase audit](codebase-audit.md) records the prior Stage 6 baseline.
+[Stage 7 audit](stage7-audit.md) is the current verification record.
 
 Remaining limitations: eight threads, 16 KiB payloads, one CPU, a shared address
 space, round-robin only, and preemption that stops at a bounded budget. No user

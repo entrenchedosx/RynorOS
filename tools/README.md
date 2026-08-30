@@ -98,8 +98,9 @@ and strict repository fixtures; the integration cases exercise allocation/free,
 alignment, coalescing, corruption and OOM via `heap-test.c` against the real allocator.
 Stage 7 scheduler checks validate the thread/preemption transcript with
 `host/sched_output.py` and strict repository fixtures; the integration cases prove
-real preemption and broken-variant `[SCHED] failure=` halts against `thread.c`.
-Current counts and measured results are in `../docs/reports/codebase-audit.md`.
+non-yielding preemption and hardware fault/state/ownership failures. These variants
+break implementations, not the truth value of assertions.
+Current counts and measured results are in `../docs/reports/stage7-audit.md`.
 Audit-only QEMU options select `max` or `qemu64,-nx`, and a below-4G RAM limit
 to test real high physical addresses. Defaults are unchanged. These configure
 emulated hardware, not kernel success flags or substitute firmware maps.

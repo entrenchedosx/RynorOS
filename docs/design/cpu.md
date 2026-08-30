@@ -11,7 +11,7 @@ Stage 4 adds real-mode E820 collection without changing the CPU-mode transition.
 After the original boot prefix,
 `kernel_main` calls `cpu_initialize`, then `cpu_exception_self_test`, then
 runs Stage 4 PMM and Stage 5 VM initialization/self-tests, the Stage 6 kernel-heap self-test,
-Stage 3 `timer_self_test`, rechecks
+Stage 3 `timer_self_test`, Stage 7 `scheduler_self_test`, then rechecks
 PMM integrity, then returns to the existing halt loop. See
 `irq-timer.md` for the separate hardware IRQ layer; the exception contract below
 is preserved.
@@ -101,6 +101,11 @@ The common entry saves all 15 non-RSP GPRs before clobbering any, samples CR2,
 passes the frame pointer and CR2 to exception C (IRQ vectors select separate C), clears DF for the C ABI, and aligns the
 call stack to 16 bytes. RBX retains the original frame pointer across the call.
 Compiler flags remain freestanding, general-registers-only, and no red zone.
+
+For Stage 7 hardware IRQs, C may select another thread's frame. A final
+`sched_handoff` call validates pointer provenance, saved state and current-thread
+ownership before RSP changes; see `scheduler.md`. Synchronous exception recovery
+continues using the original frame and does not invoke the scheduler.
 
 Exact layout at the common entry's frame pointer (176 bytes total):
 

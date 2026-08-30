@@ -7,8 +7,9 @@ Stages may be split further. Numbering is a working sequence, not a schedule.
 
 The incoming Stage 6 heap required correctness repairs despite passing its
 original suite, and the Stage 7 scheduling milestone was rebuilt from that
-baseline. Current evidence and limitations are recorded in
-`docs/reports/codebase-audit.md`; stage labels do not imply production readiness.
+baseline. The independent Stage 7 review found further ownership and scheduling
+defects and repaired them. Current evidence is in `docs/reports/stage7-audit.md`;
+`codebase-audit.md` is the earlier baseline. Stage labels do not imply production readiness.
 
 | Stage | Milestone | Exit condition |
 | --- | --- | --- |
@@ -19,10 +20,10 @@ baseline. Current evidence and limitations are recorded in
 | 4 | Physical memory manager — implemented | Real BIOS E820 handoff; conservative map normalization; linker/firmware/metadata reservations; 4096-byte frame allocation, release, reuse, accounting and full real-pool OOM tests; multiple-RAM QEMU and corrupted-map tests; timer works after PMM. See `docs/reports/stage4.md`. No virtual-memory manager or isolation. |
 | 5 | Virtual memory — implemented | PMM-owned four-level 4 KiB tables replace boot CR3; kernel RX/R/NX/RW layout, transactional map/unmap, permissions, translation, INVLPG, controlled real #PF, table ownership/OOM rollback, and full regressions. See `docs/reports/stage5.md`. No user mode, processes, COW, swap or heap. |
 | 6 | Kernel heap — implemented | Bounded allocation/free with alignment, corruption, OOM/failure, and stress tests against real frames via the Stage 5 VM map; two-sided coalescing and strict host transcript validation. See `docs/reports/stage6.md`. No user heap, realloc or grow/shrink. |
-| 7 | Kernel execution infrastructure — implemented | Real per-thread kernel stacks (each with a faulting guard page) backed by PMM frames in a dedicated virtual slot; genuine context switching (`sched_resume`/`thread_switch`); a deterministic round-robin scheduler preempted by the PIT IRQ0; bounded guest self-test proving real preemption, distinct worker stacks, join/reaping and exact PMM balance; strict host transcript validation; broken-variant failures halt with `[SCHED] failure=`. See `docs/reports/stage7.md`. No user mode, processes or SMP. |
+| 7 | Kernel execution infrastructure — implemented and audited | PMM-backed RW/NX worker stacks with unbacked guards and checked ownership; real context switching and PIT-driven round-robin preemption; non-reused thread IDs and safe reap; tested rollback, hardware guard/NX faults, invalid handoffs and non-yielding worker execution. See `docs/reports/stage7-audit.md` for evidence and limits. No user mode, processes or SMP. |
 | 8 | Hardware input | One documented keyboard device feeds a tested event queue; overflow behavior defined. |
 | 9 | Framebuffer/text output | Validated display information and bounds-safe drawing/text; serial diagnostics retained. |
-| 10 | Cooperative user task lifecycle | User-level tasks with tested context save/restore and resource ownership, distinct from the Stage 7 kernel thread scheduler. |
+| 10 | Basic kernel runtime | Bounded strings/buffers and runtime services built on the tested kernel threads; protected user tasks remain Stage 18. |
 | 11 | Shell/monitor | Kernel monitor accepts real input and exposes only implemented services; parsing/error tests. |
 | 12 | RynorLang lexer | Freeze lexical subset; tokenize `.rl` input with spans and invalid-token tests; no execution claim. |
 | 13 | RynorLang parser | Parse selected syntax into a documented temporary syntax tree; reject malformed input with locations. |

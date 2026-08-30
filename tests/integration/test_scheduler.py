@@ -1,4 +1,4 @@
-"""Real preemptive scheduler proof and independently broken kernel variants."""
+"""Real scheduler probes and implementation mutations, never assertion inversion."""
 import json
 from pathlib import Path
 import re
@@ -11,9 +11,10 @@ sys.path.insert(0, str(ROOT / "tools/host"))
 from image import build_image
 from qemu import boot_image
 from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
-from boot_output import POST_IRQ, SCHED_END
-from sched_output import parse_sched_output
+from boot_output import POST_IRQ
+from sched_output import SCHED_START, SCHED_END, parse_sched_output
 from timer_output import TIMER_OUTPUT
+from test_boot import elf_symbol
 
 
 class SchedulerTests(unittest.TestCase):
@@ -26,19 +27,26 @@ class SchedulerTests(unittest.TestCase):
     def test_real_scheduler_preempts_workers(self):
         destination = ROOT / "build/sched-tests/normal"
         build_image(ROOT, destination)
-        output = boot_image(destination / "rynoros.img", destination / "logs")
-        self.assertIn(TIMER_OUTPUT, output)
-        self.assertIn(SCHED_END, output)
-        self.assertIn(b"[TEST] scheduler self-test passed", output)
-        stats, sep, post = output.partition(SCHED_END)[2].partition(POST_IRQ)
-        self.assertEqual(sep, POST_IRQ)
-        self.assertEqual(post, b"")
-        parsed = parse_sched_output(SCHED_END + stats)
-        self.assertGreaterEqual(parsed["preemptions"], 1)
-        self.assertGreaterEqual(parsed["runs"], 4)
-        self.cleanup(destination / "logs")
+        # Repeated boots of exactly the same image, not timing-based assertions.
+        for run in range(3):
+            logs = destination / f"logs-{run}"
+            try:
+                output = boot_image(destination / "rynoros.img", logs)
+            finally:
+                self.cleanup(logs)
+            self.assertIn(TIMER_OUTPUT, output)
+            section = SCHED_START + output.partition(SCHED_START)[2].partition(POST_IRQ)[0]
+            parsed = parse_sched_output(section)
+            self.assertEqual(parsed["preemptions"], 48)
+            elf = destination / "rynorkernel.elf"
+            for w in parsed["workers"]:
+                self.assertGreaterEqual(w["irq_rip"], elf_symbol(elf, "sched_test_loop_begin"))
+                self.assertLess(w["irq_rip"], elf_symbol(elf, "sched_test_loop_end"))
+                self.assertEqual(w["preemptions"], 6)
+                self.assertEqual(w["dispatches"], 6)
+            self.assertTrue(output.endswith(POST_IRQ))
 
-    def broken(self, name, source, old, new, reason):
+    def broken(self, name, source, old, new, reason, hardware=None):
         with tempfile.TemporaryDirectory(prefix="sched-fault-", dir=ROOT / "build") as tmp:
             fixture = Path(tmp)
             for directory in REQUIRED_DIRECTORIES:
@@ -51,22 +59,130 @@ class SchedulerTests(unittest.TestCase):
             path.write_text(contents.replace(old, new), encoding="utf-8")
             build_image(fixture)
             logs = ROOT / "build/sched-tests" / name
-            with self.assertRaisesRegex(RuntimeError, "timed out"):
-                boot_image(fixture / "build/rynoros.img", logs, timeout=4)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "timed out"):
+                    boot_image(fixture / "build/rynoros.img", logs, timeout=3)
+            finally:
+                self.cleanup(logs)
             output = (logs / "serial.log").read_bytes()
+            # A crash earlier in PMM/VM/heap cannot masquerade as this failure.
+            self.assertIn(SCHED_START, output)
             self.assertIn(reason.encode(), output)
-            self.assertNotIn(b"[TEST] scheduler self-test passed", output)
+            self.assertNotIn(SCHED_END, output)
             self.assertNotIn(POST_IRQ, output)
-            self.cleanup(logs)
+            if hardware:
+                address, error, symbol = hardware
+                match = re.search(
+                    rb"\[VM\] fault_address=0x([0-9a-f]{16}) error=0x([0-9a-f]{16}) rip=0x([0-9a-f]{16})",
+                    output.partition(SCHED_START)[2])
+                self.assertIsNotNone(match)
+                cr2, actual_error, rip = (int(x, 16) for x in match.groups())
+                self.assertEqual((cr2, actual_error), (address, error))
+                self.assertEqual(rip, elf_symbol(fixture / "build/rynorkernel.elf", symbol) if symbol else address)
+                self.assertIn(b"[VM] page fault action=halt reason=unexpected", output)
 
     def test_no_genuine_preemption_cannot_pass(self):
         self.broken("no-preemption", "kernel/core/thread.c",
-                    '    require(sched_preemptions > 0, "preempted");',
-                    '    require(sched_preemptions > 999999, "preempted");',
-                    "[SCHED] failure=preempted")
+                    "if (!initialized) return frame;", "return frame; /* omit scheduling */",
+                    "[SCHED] failure=timer_preemption")
 
     def test_pmm_imbalance_after_join_cannot_pass(self):
-        self.broken("pmm-leak", "kernel/core/thread.c",
-                    '    require(after.allocated_bytes == before.allocated_bytes, "pmm_balanced");',
-                    '    require(after.allocated_bytes != before.allocated_bytes, "pmm_balanced");',
-                    "[SCHED] failure=pmm_balanced")
+        self.broken("pmm-leak", "kernel/mm/kstack.c",
+                    "require(pmm_release(r->frames[i]) == PMM_OK);",
+                    "/* deliberately leak the unmapped stack frame */",
+                    "[SCHED] failure=resource_balance")
+
+    def test_partial_mapping_rollback_leak_cannot_pass(self):
+        self.broken("rollback-leak", "kernel/mm/kstack.c",
+                    "require(pmm_release(r.frames[mapped]) == PMM_OK);\n            break;",
+                    "/* deliberately leak the frame after failed map */\n            break;",
+                    "[SCHED] failure=resource_balance")
+
+    def test_guard_access_is_real_fatal_page_fault(self):
+        self.broken("guard-fault", "kernel/core/scheduler-test.c",
+                    'cpu_u64 lo = 0, hi = 0;',
+                    'extern void vm_test_read(cpu_u64); vm_test_read(KSTACK_BASE);\n        cpu_u64 lo = 0, hi = 0;',
+                    "[VM] page fault action=halt reason=unexpected",
+                    (0xffffe00000000000, 0, "vm_test_read_fault"))
+
+    def test_stack_payload_is_hardware_non_executable(self):
+        self.broken("stack-nx", "kernel/core/scheduler-test.c",
+                    'cpu_u64 lo = 0, hi = 0;',
+                    'extern void vm_test_execute(cpu_u64); vm_test_execute(KSTACK_BASE+VM_PAGE_SIZE);\n        cpu_u64 lo = 0, hi = 0;',
+                    "[VM] page fault action=halt reason=unexpected",
+                    (0xffffe00000001000, 17, None))
+
+    def test_copied_stack_cannot_gain_ownership(self):
+        self.broken("copied-owner", "kernel/mm/kstack.c",
+                    "records[h->slot].owner == h &&", "records[h->slot].owner != 0 &&",
+                    "[SCHED] failure=copied_stack_owner")
+
+    def test_corrupted_current_is_rejected_before_dereference(self):
+        self.broken("bad-current", "kernel/core/thread.c",
+                    "unsigned int slot = current_slot();",
+                    "current = (struct thread *)1; unsigned int slot = current_slot();",
+                    "[SCHED] failure=invalid_current")
+
+    def test_invalid_resume_stack_is_rejected_before_iret(self):
+        self.broken("bad-rsp", "kernel/core/thread.c",
+                    'require(frame_valid(next, &next->saved), "invalid_resume");',
+                    'next->saved.rsp = 1; require(frame_valid(next, &next->saved), "invalid_resume");',
+                    "[SCHED] failure=invalid_resume")
+
+    def test_invalid_irq_handoff_is_rejected_before_rsp_change(self):
+        self.broken("bad-handoff", "kernel/interrupts/irq.c",
+                    "dispatching = 0;\n    return resume;",
+                    "dispatching = 0;\n    if (resume != frame) resume = 0;\n    return resume;",
+                    "[SCHED] failure=handoff_pointer")
+
+    def test_stale_id_cannot_alias_recycled_thread(self):
+        self.broken("stale-id", "kernel/core/thread.c",
+                    "threads[i].id == id) return &threads[i];",
+                    "(threads[i].id == id || (id == 2 && i == 1))) return &threads[i];",
+                    "[SCHED] failure=invalid_lifecycle")
+
+    def test_live_join_is_rejected(self):
+        self.broken("live-join", "kernel/core/thread.c",
+                    "t->state != THREAD_EXITED) return 0;",
+                    "0) return 0; /* permit live stack destruction */",
+                    "[SCHED] failure=invalid_lifecycle")
+
+    def test_preempted_register_corruption_is_detected(self):
+        self.broken("bad-register", "kernel/core/thread.c",
+                    "return &next->saved;",
+                    "next->saved.r12 ^= 1; return &next->saved;",
+                    "[SCHED] failure=register_or_flags_restore")
+
+    def test_bootstrap_cannot_exit(self):
+        self.broken("bootstrap-exit", "kernel/core/scheduler-test.c",
+                    "stack_tests(); allocation_failure_tests();",
+                    "thread_exit(); stack_tests(); allocation_failure_tests();",
+                    "[SCHED] failure=bootstrap_exit")
+
+    def test_present_guard_is_rejected(self):
+        self.broken("mapped-guard", "kernel/mm/kstack.c",
+                    "r.owner = out; r.generation = ++generation;",
+                    "require(vm_map(vm_kernel_space(), base_of(slot), r.frames[0], VM_WRITE) == VM_OK);\n    r.owner = out; r.generation = ++generation;",
+                    "[SCHED] failure=stack_permissions")
+
+    def test_invalid_code_selector_is_rejected(self):
+        self.broken("bad-cs", "kernel/core/thread.c",
+                    'require(frame_valid(next, &next->saved), "invalid_resume");',
+                    'next->saved.cs = 0x10; require(frame_valid(next, &next->saved), "invalid_resume");',
+                    "[SCHED] failure=invalid_resume")
+
+    def test_yield_must_not_enable_interrupts(self):
+        self.broken("yield-if", "kernel/arch/x86_64/switch.asm",
+                    "mov [rdi + 152], rax", "mov qword [rdi + 152], 0x202",
+                    "[SCHED] failure=yield_return")
+
+    def test_interrupt_enable_with_held_lock_is_rejected(self):
+        self.broken("locked-sti", "kernel/core/scheduler-test.c",
+                    "spinlock_t copy = a;", "irq_restore(0x200); spinlock_t copy = a;",
+                    "[SCHED] failure=restore_with_lock")
+
+    def test_non_timer_irq_return_must_remain_supported(self):
+        self.broken("timer-only-handoff", "kernel/core/thread.c",
+                    "(f->vector >= IRQ_BASE && f->vector < IRQ_BASE + IRQ_COUNT)",
+                    "f->vector == IRQ_BASE",
+                    "[SCHED] failure=handoff_frame")

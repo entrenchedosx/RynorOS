@@ -61,6 +61,9 @@ REQUIRED_FILES = (
     "docs/design/heap.md", "docs/reports/stage6.md",
     "kernel/include/ksched.h", "kernel/arch/x86_64/switch.asm", "kernel/core/thread.c",
     "kernel/mm/kstack.c", "tools/host/sched_output.py",
+    "kernel/core/scheduler-test.c", "kernel/arch/x86_64/scheduler-test.asm",
+    "kernel/core/memory.c",
+    "tests/integration/test_scheduler.py",
     "tests/repository/test_sched_output.py",
     "docs/design/scheduler.md", "docs/reports/stage7.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)

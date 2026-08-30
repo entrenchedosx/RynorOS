@@ -31,10 +31,11 @@ sched_resume:
     add rsp, 16
     iretq
 
-; int thread_switch(struct exception_frame *out, struct exception_frame *next)
-; Capture the current real-time context (all GPRs, current RSP, a resume RIP that
-; returns to the caller) into *out, then switch to *next via IRETQ. This call
-; returns to its caller only after this thread is later resumed.
+; void thread_switch(struct exception_frame *out, struct exception_frame *next)
+; IF=0 throughout entry, capture and restore. C has validated next. This is a
+; SysV call boundary: caller-saved GPRs/flags need not retain their pre-call values.
+; Preserve the actual IF=0 flags here; thread_yield restores its caller's IF after
+; .resume returns. IRQ preemption instead saves all GPRs/flags at instruction scope.
 global thread_switch
 thread_switch:
     mov [rdi + 0], r15
@@ -53,32 +54,17 @@ thread_switch:
     mov [rdi + 104], rbx
     mov [rdi + 112], rax
     mov qword [rdi + 120], 0
-    mov qword [rdi + 124], 0
+    mov qword [rdi + 128], 0
     lea rax, [rel .resume]
     mov [rdi + 136], rax
     mov qword [rdi + 144], 0x08
-    mov qword [rdi + 152], 0x202
+    pushfq
+    pop rax
+    mov [rdi + 152], rax
     mov [rdi + 160], rsp
     mov qword [rdi + 168], 0x10
-    mov [rdi + 64], rdi
-    mov rsp, rsi
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdi
-    pop rsi
-    pop rbp
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rax
-    add rsp, 16
-    iretq
+    mov rdi, rsi
+    jmp sched_resume
 .resume:
     ret
 

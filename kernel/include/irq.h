@@ -14,6 +14,7 @@ int irq_set_enabled(unsigned int irq, int enabled);
    over IRQ0 from the one-shot heartbeat). Requires IF=0 and an initialized,
    non-cascade IRQ; never changes the enabled state. */
 int irq_set_handler(unsigned int irq, irq_handler handler);
+int irq_in_context(void);
 /* Dispatch a hardware IRQ and return the frame to resume from. Returns the same
    frame unless the scheduler preempted, in which case it returns a pointer to
    the next thread's saved context. Never returns NULL. */

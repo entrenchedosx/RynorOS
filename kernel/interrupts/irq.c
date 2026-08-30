@@ -1,10 +1,12 @@
 #include "irq.h"
 #include "io.h"
 #include "serial.h"
+#include "ksched.h"
 
 static irq_handler handlers[IRQ_COUNT];
 static int initialized;
-extern struct exception_frame *sched_tick(struct exception_frame *frame);
+static int dispatching;
+int irq_in_context(void) { return dispatching; }
 
 int irq_initialize(void)
 {
@@ -52,10 +54,13 @@ struct exception_frame *irq_dispatch(struct exception_frame *frame)
     if (!initialized || !handlers[irq] || !(active & (1u << irq)) ||
         !cpu_interrupts_disabled() || frame->error != 0 || !(frame->rflags & 0x200))
         cpu_halt();
+    if (dispatching) cpu_halt();
+    dispatching = 1;
     handlers[irq](); /* No allocation, blocking, serial, or enabling IF here. */
     pic_eoi(irq);
     /* The IRQ0 handler is the scheduler drive; it may redirect the resume frame.
        All other handlers resume on the same frame. */
-    if (irq == 0) return sched_tick(frame);
-    return frame;
+    struct exception_frame *resume = irq == 0 ? sched_tick(frame) : frame;
+    dispatching = 0;
+    return resume;
 }

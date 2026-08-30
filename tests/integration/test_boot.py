@@ -150,8 +150,9 @@ class BootTests(unittest.TestCase):
             directory = Path(temporary)
             image = directory / "wrong-version.img"
             data = self.image.read_bytes()
-            self.assertEqual(data.count(b"RynorOS 0.1.0"), 1)
-            image.write_bytes(data.replace(b"RynorOS 0.1.0", b"RynorOS 9.9.9"))
+            prefix_line = b"RynorOS 0.1.0 | x86_64 | stage1\r\n"
+            self.assertEqual(data.count(prefix_line), 1)
+            image.write_bytes(data.replace(prefix_line, prefix_line.replace(b"0.1.0", b"9.9.9")))
             self.assert_timeout_and_cleanup(image, directory / "logs")
             observed = (directory / "logs/serial.log").read_bytes()
             self.assertTrue(observed.startswith(b"Rynorkernel booted.\r\n"))

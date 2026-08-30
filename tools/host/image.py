@@ -74,6 +74,7 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/arch/x86_64/selftest.asm", "selftest.o"),
             ("kernel/arch/x86_64/vm-test.asm", "vm-test-entry.o"),
             ("kernel/arch/x86_64/switch.asm", "switch.o"),
+            ("kernel/arch/x86_64/scheduler-test.asm", "scheduler-test-entry.o"),
         ):
             target = output / name
             # NASM's default warning set becomes errors. Its optional -Wall
@@ -84,7 +85,9 @@ def build_image(root: Path, destination: Path | None = None, *,
             objects.append(str(target))
         for source, name in (
             ("kernel/core/main.c", "main.o"),
+            ("kernel/core/memory.c", "memory.o"),
             ("kernel/core/thread.c", "thread.o"),
+            ("kernel/core/scheduler-test.c", "scheduler-test.o"),
             ("kernel/arch/x86_64/serial.c", "serial.o"),
             ("kernel/arch/x86_64/cpu.c", "cpu.o"),
             ("kernel/interrupts/exceptions.c", "exception-diagnostics.o"),

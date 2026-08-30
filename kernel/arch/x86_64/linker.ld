@@ -16,7 +16,7 @@ SECTIONS
     . = 0x8000;
     __kernel_start = .;
     .boot : { KEEP(*(.boot)) }
-    .text ALIGN(16) : { *(.text.entry) *(.text .text.*) }
+    .text ALIGN(16) : { __text_start = .; *(.text.entry) *(.text .text.*) }
     . = ALIGN(4096);
     __text_end = .;
     .rodata : { *(.rodata .rodata.*) }
