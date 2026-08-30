@@ -6,7 +6,9 @@ Stage 4 implements original physical frame allocation from the actual BIOS E820
 map, not a static RAM-size assumption or an array pretending to be physical RAM.
 The page size is **4096 bytes**. It allocates physical addresses, not C buffers.
 The PMM provides no mappings, heap, userspace isolation, reclamation of firmware
-memory, scheduler, DMA subsystem, NUMA or SMP. During PMM initialization, Stage 1's
+memory, scheduler, DMA subsystem, NUMA or SMP. (A separate bounded kernel heap,
+backed by PMM frames mapped through the VM layer, is implemented in Stage 6;
+see [heap.md](heap.md).) During PMM initialization, Stage 1's
 three static tables identity-map only 0..2 MiB. Stage 5 subsequently replaces
 them using the separate [VM subsystem](virtual-memory.md).
 
@@ -187,4 +189,6 @@ security boundary, and bitmap placement constrained by the existing mapping.
 The exhaustive boot self-test scales with discovered frames; it is intended for
 bounded bring-up runs, not a claim of a production boot-time performance budget.
 Stage 5 virtual-memory management is implemented separately in `vm.c`; it does
-not alter PMM allocation semantics or add user-space isolation.
+not alter PMM allocation semantics or add user-space isolation. Stage 6 adds a
+bounded kernel heap in `heap.c` that allocates ordinary PMM frames and maps them
+through the VM layer; it also does not change PMM allocation semantics.

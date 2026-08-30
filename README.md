@@ -8,7 +8,11 @@ The long-term direction is a small, self-contained, integrated system inspired
 by TempleOS's simplicity and immediacy, not by reusing its implementation.
 RynorOS will not be based on Linux, BSD, another kernel, or an existing OS userspace.
 
-## Current status: Stage 5 — virtual memory management
+## Current status: audited early kernel with bounded heap
+
+The codebase audit found real defects in the incoming heap despite its passing
+tests. See [findings, repairs and verification](docs/reports/codebase-audit.md).
+This is kernel bring-up infrastructure, not a usable or production-ready OS.
 
 Implemented and tested in QEMU: an original BIOS disk loader, minimal x86-64
 entry, a freestanding C kernel, polled COM1 output, deterministic image build,
@@ -25,24 +29,31 @@ triggers exactly one intentional breakpoint, prints the real CPU frame and all
 then initializes and tests a physical frame allocator from the real BIOS E820
 map, exhausts/releases its discovered pool, replaces the boot page tables with
 a PMM-backed kernel address space, tests real mapping, permissions, page faults,
-unmapping and OOM rollback, then initializes the PIC/PIT and receives three real
-IRQ0 ticks. Both memory subsystems are checked again before halting with IRQs
+unmapping and OOM rollback, runs the Stage 6 kernel-heap self-test, then initializes the PIC/PIT and receives three real
+IRQ0 ticks. PMM, VM and heap integrity are checked again before halting with IRQs
 masked. The historical `stage1` banner identifies the preserved boot-path
-contract; metadata describes the current Stage 5 scope.
+contract; metadata describes the current Stage 6 scope.
 See [CPU design](docs/design/cpu.md), [IRQ/timer design](docs/design/irq-timer.md),
 the [physical-memory design](docs/design/physical-memory.md),
 the [virtual-memory design](docs/design/virtual-memory.md),
-and [exact observed output and verification](docs/reports/stage5.md).
-
+and [exact observed output and verification](docs/reports/stage5.md)
+and [stage6.md](docs/reports/stage6.md).
 The PMM manages real **4096-byte physical frames** using a bitmap placed in
 discovered usable RAM. It protects firmware/boot/kernel/stack/map/bitmap extents,
 rejects invalid/double frees and reports explicit exhaustion. Its physical
 addresses are not automatically virtual mappings or zero-filled buffers.
 
-There is **no heap, scheduler, filesystem, shell, graphics,
+The Stage 6 kernel heap is a small, bounded, boundary-tag first-fit allocator
+over a 65536-byte arena of real PMM frames mapped RW/NX through the kernel
+virtual space; see [the heap design](docs/design/heap.md). It is an internal
+kernel facility, not a libc `malloc` or a user allocator.
+
+There are **no scheduler, filesystem, shell, graphics,
 userspace, networking, or RynorLang compiler**. `.rl` examples still cannot run.
 Four-level paging uses 4096-byte pages, read-only kernel code/rodata, NX data,
-and a temporary physical-frame window. Seven PMM-owned tables remain after tests.
+and a temporary physical-frame window. Seven PMM-owned tables remain after the VM
+test; heap initialization adds three tables and sixteen arena frames (106496
+allocated bytes in total). The fixed 64 KiB heap does not grow or release its arena.
 No user mode, process address spaces, COW, demand paging, swap, or new large-page
 support exists. The PIT is configured at
 1193182/11932 Hz (about 99.9984914516 Hz); ticks count actual serviced interrupts,
@@ -79,12 +90,14 @@ python tools/build/build.py check
 `validate` checks structure/metadata using Python alone. `build` also checks host
 Python syntax, assembles/compiles/links Rynorkernel, creates `build/rynoros.img`,
 and packages the original icon with a deterministic resource manifest.
-`test` runs 51 repository, asset/package, image-layout, diagnostic/PMM/VM-parser, and CLI tests (requires build tools).
+`test` runs repository, asset/package, image-layout, diagnostic/PMM/VM/heap-parser,
+and CLI tests (requires build tools); current counts are in the audit report.
 `boot-test` builds and boots with a default 10-second timeout (`--timeout 15`
-overrides it). `integration-test` builds and runs 24 execution/reproducibility
+overrides it). `integration-test` builds and runs execution/reproducibility
 checks, including real #DE/#DB/#BP/#UD/#GP/#PF, timer IRQs and masked-IRQ/missing-EOI
 negative cases, real PMM/VM runs with 16/64/128/256 MiB, corrupted E820 handoffs,
-and broken CR3/TLB/table-zeroing/fault-arm variants.
+broken CR3/TLB/table-zeroing/fault-arm variants, heap corruption/boundary/rollback
+tests, 8/512 MiB runs, real RAM above 4 GiB, another CPU model and missing-NX rejection.
 `check` runs build, repository tests, and
 integration tests, stopping on failure. Commands return nonzero on failure and
 resolve source paths relative to the script, not the caller's working directory.
@@ -102,14 +115,14 @@ Git. [Stage 1 verification](docs/reports/stage1.md) is a historical snapshot.
 
 | Path | Responsibility | Status |
 | --- | --- | --- |
-| `boot/` | Original bounded BIOS loader, E820 handoff and long-mode transition | Implemented through Stage 5 |
-| `kernel/` | Entry, COM1, CPU diagnostics, PIC/PIT, PMM and virtual memory | Implemented through Stage 5 |
+| `boot/` | Original bounded BIOS loader, E820 handoff and long-mode transition | Implemented through Stage 6 |
+| `kernel/` | Entry, COM1, CPU diagnostics, PIC/PIT, PMM, virtual memory and kernel heap | Implemented through Stage 6 |
 | `assets/` | Canonical official icon, separately packaged, not rendered | Implemented Stage 3 |
 | `rynorlang/` | Language design and future toolchain | Experimental design |
 | `user/` | Future shell, libraries, applications | Planned |
 | `tools/` | Host validation, image build, and QEMU runner | Implemented |
 | `tests/repository/` | Repository validation tests | Implemented |
-| `tests/integration/` | Boot/exception/IRQ/PMM/VM execution, failure/cleanup, ELF, reproducibility | Implemented through Stage 5 |
+| `tests/integration/` | Boot/exception/IRQ/PMM/VM/heap execution, failure/cleanup, ELF, reproducibility | Implemented through Stage 6 |
 | `tests/kernel/`, `tests/rynorlang/` | Future subsystem/conformance tests | Planned |
 | `docs/design/`, `docs/reports/` | Decisions, subsystem template, verification reports | Foundation docs |
 | `build/` | Generated outputs/logs; `.gitkeep` retained | Implemented output area |
@@ -117,7 +130,7 @@ Git. [Stage 1 verification](docs/reports/stage1.md) is a historical snapshot.
 Start with [architecture](ARCHITECTURE.md), [roadmap](ROADMAP.md),
 [RynorLang design](rynorlang/README.md), and
 [bootstrap dependencies](docs/design/bootstrap-dependencies.md).
-[project.json](project.json) is machine-readable Stage 5 metadata (schema 6).
+[project.json](project.json) is machine-readable Stage 6 metadata (schema 7).
 
 PMM `reserved_bytes` includes explicitly reported firmware address-space windows
 (including high MMIO), not merely RAM consumption. `usable_bytes` is the actual

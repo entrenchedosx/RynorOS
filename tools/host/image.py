@@ -94,6 +94,8 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/mm/selftest.c", "pmm-selftest.o"),
             ("kernel/mm/vm.c", "vm.o"),
             ("kernel/mm/vm-test.c", "vm-selftest.o"),
+            ("kernel/mm/heap.c", "heap.o"),
+            ("kernel/mm/heap-test.c", "heap-test.o"),
         ):
             target = output / name
             run_tool([

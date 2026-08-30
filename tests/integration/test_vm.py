@@ -77,8 +77,9 @@ class VirtualMemoryTests(unittest.TestCase):
                     "[VM] page fault action=halt reason=unexpected")
 
     def test_missing_permission_tlb_invalidation_cannot_pass(self):
-        self.broken("stale-tlb", "kernel/mm/vm.c", "if (s == &kernel_space) page_invalidate(va);",
-                    "/* Intentionally leave the writable translation cached. */",
+        self.broken("stale-tlb", "kernel/mm/vm.c",
+                    "write_entry(path[0], page_index(va, 0), e);\n    if (s == &kernel_space) page_invalidate(va);",
+                    "write_entry(path[0], page_index(va, 0), e); /* Intentionally stale permissions. */",
                     "[VM] failure=expected_hardware_page_fault_missing")
 
     def test_missing_table_zeroing_cannot_pass(self):
@@ -86,3 +87,9 @@ class VirtualMemoryTests(unittest.TestCase):
                     "for (unsigned int i = 0; i < VM_ENTRIES; ++i) t->entry[i].value = 0;",
                     "if (!active) for (unsigned int i = 0; i < VM_ENTRIES; ++i) t->entry[i].value = 0;",
                     "[VM] failure=table_zeroing")
+
+    def test_missing_unmap_invalidation_cannot_pass(self):
+        self.broken("stale-unmap", "kernel/mm/vm.c",
+                    "if (s == &kernel_space) page_invalidate(va);\n    for (unsigned int level = 0; level < detached;",
+                    "/* Deliberately stale unmapped leaf. */\n    for (unsigned int level = 0; level < detached;",
+                    "[VM] failure=expected_hardware_page_fault_missing")

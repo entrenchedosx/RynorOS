@@ -12,6 +12,7 @@ from timer_output import TIMER_OUTPUT
 from test_exception_output import parser_fixture
 from qemu import boot_image
 from test_vm_output import fixture as vm_fixture
+from test_heap_output import fixture as heap_fixture
 
 
 def fixture():
@@ -36,7 +37,8 @@ def fixture():
 class PmmOutputTests(unittest.TestCase):
     def test_valid_fixture_and_complete_boot(self):
         self.assertEqual(validate_pmm_output(fixture()), [])
-        self.assertEqual(validate_boot_output(parser_fixture() + fixture() + vm_fixture() + TIMER_OUTPUT + POST_IRQ), [])
+        self.assertEqual(validate_boot_output(parser_fixture() + fixture() + vm_fixture() + heap_fixture()
+                                              + TIMER_OUTPUT + POST_IRQ), [])
         self.assertTrue(validate_boot_output(parser_fixture() + fixture() + TIMER_OUTPUT + POST_IRQ))
         self.assertTrue(validate_boot_output(parser_fixture() + TIMER_OUTPUT))
 
@@ -75,3 +77,9 @@ class PmmOutputTests(unittest.TestCase):
         for memory in (True, 0, 4097, "64M"):
             with self.assertRaises(ValueError):
                 boot_image(Path("missing.img"), Path("unused-logs"), memory_mib=memory)
+        for cpu in (None, True, "host", "max,unexpected=on"):
+            with self.assertRaises(ValueError):
+                boot_image(Path("missing.img"), Path("unused-logs"), cpu_model=cpu)
+        for limit in (True, 0, 4097, "32M"):
+            with self.assertRaises(ValueError):
+                boot_image(Path("missing.img"), Path("unused-logs"), max_ram_below_4g_mib=limit)

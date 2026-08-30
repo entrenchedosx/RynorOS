@@ -45,7 +45,7 @@ static enum vm_result allocate_table(struct vm_space *s, cpu_u64 *physical)
     enum pmm_result r = pmm_allocate(physical);
     if (r != PMM_OK) return r == PMM_OUT_OF_MEMORY ? VM_OOM : VM_CORRUPT;
     if (!active && *physical + VM_PAGE_SIZE > (cpu_u64)__identity_limit) {
-        (void)pmm_release(*physical);
+        if (pmm_release(*physical) != PMM_OK) cpu_halt();
         return VM_OOM; /* Bootstrap must not dereference an unmapped frame. */
     }
     volatile struct page_table *t = access_table(*physical);
@@ -55,7 +55,7 @@ static enum vm_result allocate_table(struct vm_space *s, cpu_u64 *physical)
 }
 static void release_table(struct vm_space *s, cpu_u64 physical)
 {
-    if (pmm_release(physical) != PMM_OK || !s->table_pages) cpu_halt();
+    if (!s->table_pages || pmm_release(physical) != PMM_OK) cpu_halt();
     --s->table_pages;
 }
 
@@ -94,11 +94,16 @@ static int empty(cpu_u64 physical)
 
 static void prune(struct vm_space *s, cpu_u64 va, cpu_u64 path[VM_LEVELS])
 {
+    unsigned int detached = 0;
     for (unsigned int level = 0; level < 3; ++level) {
         if (!empty(path[level])) break;
         write_entry(path[level + 1], page_index(va, level + 1), (page_entry){0});
-        release_table(s, path[level]);
+        ++detached;
     }
+    /* Invalidate AFTER the final parent unlink, BEFORE frame reuse. This also
+       clears paging-structure caches; do not rely on incidental window flushes. */
+    if (s == &kernel_space) page_invalidate(va);
+    for (unsigned int level = 0; level < detached; ++level) release_table(s, path[level]);
 }
 
 static enum vm_result range_valid(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
@@ -162,8 +167,10 @@ static enum vm_result insert(struct vm_space *s, cpu_u64 va, cpu_u64 pa, unsigne
     }
     for (unsigned int level = 0; level < 3; ++level) if (created & (1u << level)) {
         write_entry(path[level + 1], page_index(va, level + 1), (page_entry){0});
-        release_table(s, path[level]);
     }
+    if (created && s == &kernel_space) page_invalidate(va);
+    for (unsigned int level = 0; level < 3; ++level)
+        if (created & (1u << level)) release_table(s, path[level]);
     return result;
 }
 
@@ -219,7 +226,10 @@ enum vm_result vm_map_range(struct vm_space *s, cpu_u64 va, cpu_u64 pa, cpu_u64 
         if (r != VM_OK) break;
     }
     if (done != pages) {
-        while (done) { --done; (void)vm_unmap(s, va + done * VM_PAGE_SIZE); }
+        while (done) {
+            --done;
+            if (vm_unmap(s, va + done * VM_PAGE_SIZE) != VM_OK) cpu_halt();
+        }
         return r;
     }
     return VM_OK;
@@ -241,7 +251,6 @@ enum vm_result vm_unmap_range(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
         r = walk(s, address, path);
         if (r != VM_OK) return r;
         write_entry(path[0], page_index(address, 0), (page_entry){0});
-        if (s == &kernel_space) page_invalidate(address);
         prune(s, address, path);
     }
     return VM_OK;

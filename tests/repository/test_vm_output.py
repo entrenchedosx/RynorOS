@@ -47,7 +47,8 @@ class VmOutputTests(unittest.TestCase):
 
     def test_accounting_and_translation(self):
         for old, new in ((b"table_pages=7", b"table_pages=6"), (b"allocated_bytes=28672", b"allocated_bytes=0"),
-                         (b"offset_physical=1085432", b"offset_physical=1081344"), (b"root=1052672", b"root=1052673")):
+                         (b"offset_physical=1085432", b"offset_physical=1081344"),
+                         (b"root=1052672", b"root=0"), (b"root=1052672", b"root=1052673")):
             self.assertTrue(validate_vm_output(fixture().replace(old, new)))
         pmm = {"free_bytes": 1044480, "regions": [(1052672, 2097152, 1)]}
         self.assertEqual(validate_vm_output(fixture(), pmm), [])

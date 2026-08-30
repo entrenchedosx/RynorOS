@@ -25,14 +25,14 @@ Real QEMU runs are bounded and each owned process is stopped and waited for.
 
 ## Implementation status and tests
 
-Implemented: 51 `repository/` tests for paths, metadata, extension, image layout,
-command exits, native compile/link failures, strict diagnostic/timer parsing,
+Implemented: repository tests for paths, metadata, extension, image layout,
+command exits, native compile/link failures, strict diagnostic/timer/heap parsing,
 canonical PNG integrity, deterministic resource package contents and PMM map/
 accounting/ownership transcript validation.
 Parser fixtures are explicitly synthetic test data, never kernel execution evidence.
-The original 26 tests remain with the metadata assertion advanced to Stage 5.
+The original 26 tests remain with the metadata assertion advanced to Stage 6.
 
-The 24-test `integration/` suite retains the five Stage 1 regression cases and adds
+The `integration/` suite retains the five Stage 1 regression cases and adds
 real #DE/#DB/#UD/#GP/#PF execution and an unarmed-breakpoint negative case.
 The normal boot covers #BP and verifies IRETQ restoration, then requires PIC/PIT
 initialization and three actual IRQ0 counter samples/returns. All six saved RIPs
@@ -64,11 +64,27 @@ never provide the map or backing storage used by the real allocator tests.
 cross-pass language conformance. Local language fixtures can live in
 `../rynorlang/tests/`; none are executable today.
 
-Stage 5 adds five strict VM parser tests and six real integration tests. The
+The VM suite includes five strict parser tests and seven real integration tests. The
 normal VM case compares hardware fault RIPs against ELF symbols and PMM totals;
-five broken builds test skipped CR3, stale permission TLB, omitted post-bootstrap
-table zeroing, unarmed faults and wrong expected fault addresses. Logs are under
+six broken builds test skipped CR3, stale permission/unmap TLB entries, omitted
+post-bootstrap table zeroing, unarmed faults and wrong expected fault addresses. Logs are under
 `build/vm-tests/`. The same-image RAM-size tests now exercise VM as well as PMM.
+
+Stage 6 adds a strict kernel-heap output parser/repository test and real
+integration cases. The guest `heap_self_test` exercises allocation and free,
+alignment and boundary-tag coalescing, corruption detection, statistics and a
+bounded-arena OOM path, all backed by real PMM frames mapped through the kernel
+space; the host validator cross-checks the printed arena/block transcript.
+The audit strengthened corruption/near-full/reuse tests, actual initialization
+OOM rollback, all arena-frame ownership, and cross-subsystem accounting. A bad
+tag encoding now fails compilation rather than reaching QEMU. Tail-loss and
+forged-interior-free mutants must fail their guest assertions. The former
+image-size-growth assertion was removed: binary bloat is not functionality.
+
+`test_audit.py` adds 8/512 MiB boots, the `max` CPU, NX-disabled rejection, and
+real firmware RAM above 4 GiB using a 32 MiB below-4G limit. No guest memory
+map is fabricated for that test. Current exact counts and command results are
+in `../docs/reports/codebase-audit.md`; audit logs are under `build/audit-tests/`.
 
 ## Known limitations
 

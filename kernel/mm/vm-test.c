@@ -70,7 +70,7 @@ static void oom_test(struct vm_space *k, cpu_u64 data)
     struct vm_space empty_space = {0}, failed_space = {0};
     require(vm_create(&empty_space) == VM_OK, "oom_space_create");
     struct pmm_statistics before, exhausted, after;
-    pmm_statistics(&before);
+    require(pmm_statistics(&before) == PMM_OK, "oom_before_statistics");
     cpu_u64 head = 0, count = 0, frame;
     enum pmm_result status;
     while ((status = pmm_allocate(&frame)) == PMM_OK) {
@@ -91,13 +91,13 @@ static void oom_test(struct vm_space *k, cpu_u64 data)
     }
     require(vm_map(&empty_space, VM_TEST_HIGH, data, VM_WRITE) == VM_OOM &&
             empty_space.table_pages == 1 && vm_check(&empty_space), "partial_table_rollback");
-    pmm_statistics(&after);
+    require(pmm_statistics(&after) == PMM_OK, "partial_statistics");
     require(after.free_bytes == 2 * VM_PAGE_SIZE, "partial_rollback_accounting");
     frame = head; head = *(volatile cpu_u64 *)vm_frame_access(frame);
     require(pmm_release(frame) == PMM_OK, "range_oom_release"); --count;
-    require(vm_map_range(&empty_space, VM_TEST_BASE + 0x1ff000, data, 3, VM_WRITE) == VM_OOM &&
+    require(vm_map_range(&empty_space, (VM_TEST_BASE & ~0x1fffffULL) + 0x1ff000, data, 3, VM_WRITE) == VM_OOM &&
             empty_space.table_pages == 1 && vm_check(&empty_space), "range_oom_rollback");
-    pmm_statistics(&after);
+    require(pmm_statistics(&after) == PMM_OK, "range_statistics");
     require(after.free_bytes == 3 * VM_PAGE_SIZE, "range_rollback_accounting");
     while (head) {
         frame = head; head = *(volatile cpu_u64 *)vm_frame_access(frame);
@@ -111,7 +111,7 @@ static void oom_test(struct vm_space *k, cpu_u64 data)
 void vm_self_test(void)
 {
     struct pmm_statistics initial, baseline, final;
-    pmm_statistics(&initial);
+    require(pmm_statistics(&initial) == PMM_OK, "initial_statistics");
     enum vm_result result = vm_initialize();
     if (result != VM_OK) { field("[VM] init_error=", result); text("\r\n"); }
     require(result == VM_OK, "initialization");
@@ -169,17 +169,22 @@ void vm_self_test(void)
     require(vm_protect(k, VM_TEST_BASE, 0) == VM_OK, "set_nx");
     text("[TEST] triggering non-executable page fault\r\n"); fault_test(VM_TEST_BASE, 17);
     text("[TEST] VM permissions verified\r\n");
-    require(vm_unmap(k, VM_TEST_BASE) == VM_OK && vm_translate(k, VM_TEST_BASE, &translated) == VM_NOT_MAPPED &&
-            vm_unmap(k, VM_TEST_BASE) == VM_NOT_MAPPED, "unmap");
+    require(vm_map(k, VM_TEST_BASE + VM_PAGE_SIZE, data[2], VM_WRITE) == VM_OK &&
+            alias[0] == 0xc3, "warm_unmap_with_live_sibling");
+    require(vm_unmap(k, VM_TEST_BASE) == VM_OK, "unmap");
     text("[TEST] VM unmapping verified\r\n[TEST] triggering controlled page fault\r\n");
     fault_test(VM_TEST_BASE, 0);
+    require(vm_translate(k, VM_TEST_BASE, &translated) == VM_NOT_MAPPED &&
+            vm_unmap(k, VM_TEST_BASE) == VM_NOT_MAPPED, "unmap_query");
+    require(vm_query(k, VM_TEST_BASE + VM_PAGE_SIZE, &m) == VM_OK && m.physical == data[2] &&
+            vm_unmap(k, VM_TEST_BASE + VM_PAGE_SIZE) == VM_OK, "unmap_sibling_preserved");
     text("[TEST] controlled page fault verified\r\n[TEST] page fault diagnostics verified\r\n");
     /* Remap the same warmed VA to a different physical frame, never stale RAM. */
     *(volatile cpu_u64 *)vm_frame_access(data[1]) = 0x1122334455667788ULL;
     require(vm_map(k, VM_TEST_BASE, data[1], VM_WRITE) == VM_OK && alias[0] == 0x1122334455667788ULL &&
             vm_unmap(k, VM_TEST_BASE) == VM_OK, "tlb_remap");
     text("[TEST] VM TLB invalidation verified\r\n");
-    cpu_u64 range = VM_TEST_BASE + 0x1ff000;
+    cpu_u64 range = (VM_TEST_BASE & ~0x1fffffULL) + 0x1ff000;
     require(vm_map_range(k, range, data[0], 3, VM_WRITE) == VM_OK, "range_map");
     for (unsigned int i = 0; i < 3; ++i) {
         *(volatile cpu_u64 *)(range + i * VM_PAGE_SIZE) = 100 + i;
@@ -209,6 +214,20 @@ void vm_self_test(void)
     require(vm_check(&other) && vm_destroy(&other) == VM_OK && !other.root && !other.table_pages,
             "inactive_space_ownership");
     text("[TEST] VM address-space destruction verified\r\n");
+    /* Keep a sibling leaf live while repeatedly unmapping a warmed translation.
+       Pruning an entire branch must not be what accidentally makes this pass. */
+    require(vm_map(k, VM_TEST_BASE + VM_PAGE_SIZE, data[2], VM_WRITE) == VM_OK, "tlb_sibling");
+    for (unsigned int i = 0; i < 8; ++i) {
+        require(vm_map(k, VM_TEST_BASE, data[i % 2], VM_WRITE) == VM_OK, "tlb_cycle_map");
+        *(volatile cpu_u64 *)VM_TEST_BASE = 0xabc000 + i;
+        require(*(volatile cpu_u64 *)vm_frame_access(data[i % 2]) == 0xabc000 + i &&
+                vm_unmap(k, VM_TEST_BASE) == VM_OK, "tlb_cycle_unmap");
+        translated = ~0ULL;
+        require(vm_translate(k, VM_TEST_BASE, &translated) == VM_NOT_MAPPED && translated == ~0ULL &&
+                vm_query(k, VM_TEST_BASE + VM_PAGE_SIZE, &m) == VM_OK && m.physical == data[2],
+                "tlb_cycle_sibling");
+    }
+    require(vm_unmap(k, VM_TEST_BASE + VM_PAGE_SIZE) == VM_OK && vm_check(k), "tlb_cycle_restore");
     oom_test(k, data[0]);
     for (unsigned int i = 0; i < 3; ++i) require(pmm_release(data[i]) == PMM_OK, "data_release");
     require(vm_check(k) && pmm_check() && pmm_statistics(&final) == PMM_OK &&

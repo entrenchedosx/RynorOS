@@ -10,7 +10,8 @@ for best-effort diagnostics, not claimed as tested or enabled CPU features.
 Stage 4 adds real-mode E820 collection without changing the CPU-mode transition.
 After the original boot prefix,
 `kernel_main` calls `cpu_initialize`, then `cpu_exception_self_test`, then
-runs Stage 4 PMM and Stage 5 VM initialization/self-tests, Stage 3 `timer_self_test`, rechecks
+runs Stage 4 PMM and Stage 5 VM initialization/self-tests, the Stage 6 kernel-heap self-test,
+Stage 3 `timer_self_test`, rechecks
 PMM integrity, then returns to the existing halt loop. See
 `irq-timer.md` for the separate hardware IRQ layer; the exception contract below
 is preserved.
@@ -24,7 +25,8 @@ All interfaces are kernel-internal, declared in `kernel/include/cpu.h`:
 - `cpu_exception_self_test()` triggers exactly one selected test exception;
   default breakpoint returns only after successful frame/restoration checks.
 - `exception_dispatch(frame, cr2)` receives the normalized saved state from
-  assembly. Only a matching armed breakpoint may return to assembly/IRETQ.
+  assembly. Only a matching armed breakpoint or the exact Stage 5 page-fault
+  test recovery may return to assembly/IRETQ.
 - `cpu_halt()` never returns; it loops on CLI/HLT.
 
 There is no userspace ABI, scheduler context, general recovery callback, or
@@ -149,8 +151,8 @@ diagnostic guard halts; it does not make a broken stack safe.
 ## Tests
 
 `python tools/build/build.py check` runs repository and integration tests through
-Stage 5. The five Stage 1 regression cases remain; the normal boot requires the
-unchanged prefix plus the complete Stage 2, PMM, VM and timer transcripts.
+Stage 6. The five Stage 1 regression cases remain; the normal boot requires the
+unchanged prefix plus the complete Stage 2, PMM, VM, kernel-heap and timer transcripts.
 QEMU reads actual serial output with a 10-second deadline, not a fixed boot delay.
 Tests compare each saved RIP with the appropriate actual ELF symbol; require one
 exception/verified marker, exact register/error/flag data, and controlled action;

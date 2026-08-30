@@ -1,8 +1,10 @@
 # Memory subsystems
 
 Purpose: safely allocate/release real 4096-byte physical frames discovered via
-BIOS E820 (Stage 4), and map those frames using owned page tables (Stage 5).
-Neither subsystem is a heap or a user-mode isolation facility.
+BIOS E820 (Stage 4), map those frames using owned page tables (Stage 5), and
+provide a bounded kernel heap over mapped arena frames (Stage 6). Neither the
+PMM nor the VM layer is itself a heap; the separate `heap.c` allocator below is.
+None of them is a user-mode isolation facility.
 
 Public kernel interfaces are in `../include/pmm.h`: initialize, allocate, release,
 query frame state, statistics, const normalized-region inspection and integrity
@@ -39,3 +41,19 @@ IF=0, and temporary pointers expire on the next VM operation. The active kernel
 space cannot be destroyed. No user processes, COW, swap, demand paging or large
 pages are implemented. See [VM design](../../docs/design/virtual-memory.md) for
 API errors, layout, permissions, invariants, rollback and verification.
+
+### Kernel heap (Stage 6)
+
+`heap.h`/`heap.c` implement a small, bounded, boundary-tag first-fit allocator.
+It is backed by a fixed 65536-byte arena (`HEAP_BASE`, 16 PMM frames) mapped
+RW/NX through the active Stage 5 kernel space. Each block carries a 16-byte
+header and footer so neighbours are found by address and coalesced on free;
+allocation scans the bounded address-ordered partition, without payload links
+or a duplicate free list. Allocation honours power-of-two alignment (8..4096),
+and results cover OK, NOT_READY, INVALID, ALIGNMENT, OVERFLOW, OUT_OF_MEMORY,
+CORRUPT, BUSY, CONTEXT, VM_ERROR and MAPPING_CONFLICT. `heap_self_test` in
+`heap-test.c` runs from `kernel/core/main.c` after
+VM and before the PIC/PIT timer; global repository status is Stage 6. The heap
+requires one CPU and IF=0, and no IRQ handler may call it. See
+[heap design](../../docs/design/heap.md) for block layout, context and corruption
+checks. This is an internal kernel allocator, not a libc `malloc` or user allocator.

@@ -1,8 +1,8 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames and Stage 5 virtual memory under QEMU.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory and Stage 6 kernel heap under QEMU.
 Implemented details are explicitly labeled below; **planned** sections are future
-work and **experimental** items are unresolved proposals. Stage 6 has not begun.
+work and **experimental** items are unresolved proposals.
 
 ## 1. Boot process
 
@@ -13,9 +13,9 @@ mode and jumps to `rynorkernel_entry`, which owns the stack, clears BSS, and
 calls `kernel_main`. It prints the preserved boot prefix, initializes/verifies
 the kernel GDT/IDT, performs one controlled breakpoint self-test, initializes/tests
 the physical frame allocator from the handoff map, creates/activates/tests the
-new kernel page tables, then initializes
+new kernel page tables, initializes/tests the bounded kernel heap, then initializes
 the PIC/PIT and verifies three real IRQ0 ticks before masking IRQs, rechecking
-PMM/VM integrity and halting.
+PMM/VM/heap integrity and halting.
 The image contains no third-party loader or OS. SeaBIOS is external emulator
 firmware, not RynorOS code; host tools never execute as guest OS services.
 
@@ -50,7 +50,7 @@ Synchronous exceptions do not require IF.
 See `docs/design/cpu.md` for frame and recovery contracts. Broader CPU hardening,
 emergency stacks, and unsupported feature-specific exceptions remain future work.
 
-Plan: retain the initial single-CPU scope while developing the kernel heap.
+Plan: retain the single-CPU scope until explicit synchronization is implemented.
 Architecture-specific startup, registers, page tables, interrupt entry, and
 context switching belong under `kernel/arch/`. Portable policy belongs elsewhere.
 SMP, other architectures, floating-point task state, and broad hardware support
@@ -61,7 +61,7 @@ baseline. Changes to compiler flags and CPU assumptions require boot-test eviden
 
 Implemented: original freestanding C/assembly boot, serial, kernel descriptors,
 shared exception diagnostics, PIC IRQ dispatch, bounded PIT self-test and physical
-frame allocation and virtual-memory APIs. It has no heap,
+frame allocation, virtual-memory and a bounded kernel-heap API. It has no
 scheduler, privilege transitions, or OS service layer.
 
 Plan: an original, small monolithic Rynorkernel owns CPU state, memory,
@@ -117,7 +117,21 @@ are implemented. Only table frames are VM-owned; data mappings borrow caller-own
 PMM frames. All calls require one CPU and IF=0. See
 `docs/design/virtual-memory.md` for layout, formats, APIs, errors and ownership.
 No generic address-space switching, user mode/processes, COW, demand paging,
-swap, new large pages, MMIO mapping API or heap exists. Stage 6 is planned.
+swap, new large pages or MMIO mapping API exists.
+
+### Kernel heap (Stage 6)
+
+Implemented: a small, bounded, boundary-tag first-fit heap over a fixed 65536-byte
+arena (`HEAP_BASE`, 16 PMM frames) mapped RW/NX through the kernel space's
+dedicated high virtual arena at 0xffffc00000000000 (not the transient frame
+window). Allocation/free honour power-of-two alignment (8..4096),
+coalesce neighbouring blocks, detect boundary corruption and return distinct
+error codes for alignment, overflow, invalid, corruption, out-of-memory and
+context and mapping conflicts. `heap_check` walks the validated boundary-tag
+partition and accounting; there is no separate free list. Unsplittable tails
+belong to allocations, and only exact block payload pointers may be freed.
+It runs only in single-CPU IF=0 contexts and is an internal kernel allocator,
+not a libc `malloc` or a user allocator. See `docs/design/heap.md`.
 
 ## 5. Interrupts
 

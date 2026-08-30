@@ -2,9 +2,10 @@
 
 ## Purpose
 
-Original x86-64 kernel for RynorOS. Stages 1–5 boot, print serial output, load
+Original x86-64 kernel for RynorOS. Stages 1–6 boot, print serial output, load
 kernel descriptors, diagnose one controlled exception, initialize and test E820-
-based physical frame allocation, replace/test kernel paging, verify three PIC/PIT
+based physical frame allocation, replace/test kernel paging, run a bounded kernel-
+heap self-test, verify three PIC/PIT
 timer IRQs, mask interrupts and halt. It is not
 built on another kernel or existing OS userspace.
 
@@ -43,6 +44,14 @@ page-fault diagnostics and narrowly controlled hardware tests. The canonical
 layout, frame-window lifetime and ownership rules are in
 `../docs/design/virtual-memory.md`. There are no process address spaces yet.
 
+Stage 6 `include/heap.h` and `mm/heap.c` define a small, bounded, boundary-tag
+first-fit kernel heap over a fixed 65536-byte arena of PMM frames mapped RW/NX
+through the Stage 5 kernel space at `HEAP_BASE`. Allocation/free coalesce free
+blocks and detect boundary corruption; `heap_check` walks the arena and validates
+accounting. `heap_self_test` runs in `core/main.c` after the VM self-test and
+before the PIC/PIT timer. It requires one CPU and IF=0; it is an internal kernel
+allocator, not a libc `malloc`. See `../docs/design/heap.md`.
+
 `include/serial.h` declares `serial_init`, `serial_write`, and `serial_flush`.
 Implementation is `arch/x86_64/serial.c`: COM1 at 0x3f8, divisor 1 (115200), 8N1,
 FIFOs enabled/cleared, UART interrupts disabled. Write/flush return zero after
@@ -65,9 +74,10 @@ Implemented: 64-bit entry, BSS initialization, fixed stack, C main, serial outpu
 and fixed-layout linking; kernel GDT/IDT, 32 exception entry stubs, shared C
 diagnostics in `interrupts/exceptions.c`, and an assembly-controlled self-test;
 16 IRQ stubs, `interrupts/irq.c` dispatch, `arch/x86_64/pic.c` and `timer.c`.
-`mm/` implements map validation, real frame allocation, virtual memory and self-tests; `drivers/` remains reserved;
+`mm/` implements map validation, real frame allocation, virtual memory, the
+bounded kernel heap and self-tests; `drivers/` remains reserved;
 device code is limited to architecture-specific serial, PIC and PIT support.
-No Stage 6 heap or RynorLang implementation has been added.
+No RynorLang implementation has been added.
 
 ## Tests
 
@@ -86,11 +96,12 @@ allocation failure, plus broken CR3/TLB/zeroing/fault-arm kernel variants.
 
 ## Known limitations
 
-Only the documented QEMU PC configuration is verified. No heap,
+Only the documented QEMU PC configuration is verified. No
 scheduler, filesystem, graphics, userspace, privilege transitions, TSS/IST,
 or general external device support beyond IRQ0. No reliable stack-overflow recovery,
 process isolation or address-space switching. Invalid stacks, early boot faults,
 or faults during diagnosis can still reset the CPU; `-no-reboot` makes the runner
 fail. Other exception stubs are best-effort/unexercised, not feature-enablement
 claims. See `../docs/design/cpu.md`, `../docs/design/irq-timer.md` and
-`../docs/design/physical-memory.md` and `../docs/design/virtual-memory.md`. Stage 6 remains future work.
+`../docs/design/physical-memory.md`, `../docs/design/virtual-memory.md` and
+`../docs/design/heap.md`.

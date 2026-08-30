@@ -16,13 +16,19 @@ EXPECTED_OUTPUT = BOOT_PREFIX  # Stage 1 compatibility prefix, not the full Stag
 
 
 def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: int = 3,
-               memory_mib: int = 64) -> bytes:
+               memory_mib: int = 64, cpu_model: str = "qemu64",
+               max_ram_below_4g_mib: int | None = None) -> bytes:
     if not math.isfinite(timeout) or not 0 < timeout <= 60:
         raise ValueError("Boot timeout must be finite and in (0, 60] seconds")
     if type(test_vector) is not int or test_vector not in VECTOR_NAMES:
         raise ValueError("Unsupported expected exception vector")
     if type(memory_mib) is not int or not 8 <= memory_mib <= 4096:
         raise ValueError("QEMU test RAM must be an integer in [8, 4096] MiB")
+    if cpu_model not in ("qemu64", "max", "qemu64,-nx"):
+        raise ValueError("Unsupported audit CPU model")
+    if max_ram_below_4g_mib is not None and (type(max_ram_below_4g_mib) is not int or
+                                           not 32 <= max_ram_below_4g_mib <= 4096):
+        raise ValueError("Low RAM limit must be an integer in [32, 4096] MiB")
     if not image.is_file():
         raise FileNotFoundError(f"Boot image missing: {image}")
     qemu = find_tool("qemu-system-x86_64", "RYNOR_QEMU")
@@ -33,8 +39,11 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     # Never accept bytes from an earlier run, including failed runs.
     serial.write_bytes(b"")
     debug.write_bytes(b"")
+    machine = "pc-i440fx-10.0"
+    if max_ram_below_4g_mib is not None:
+        machine += f",max-ram-below-4g={max_ram_below_4g_mib}M"
     command = [
-        qemu, "-machine", "pc-i440fx-10.0", "-accel", "tcg", "-cpu", "qemu64",
+        qemu, "-machine", machine, "-accel", "tcg", "-cpu", cpu_model,
         "-m", f"{memory_mib}M", "-smp", "1", "-bios", "bios-256k.bin", "-display", "none", "-vga", "none",
         "-nic", "none", "-parallel", "none", "-boot", "order=c,strict=on",
         "-drive", f"file={str(image.resolve()).replace(',', ',,')},format=raw,if=ide,snapshot=on",

@@ -1,4 +1,4 @@
-"""Stage 5 repository/asset contract; this does not check kernel execution."""
+"""Current repository/asset contract; this does not check kernel execution."""
 
 import json
 from pathlib import Path
@@ -54,11 +54,16 @@ REQUIRED_FILES = (
     "kernel/arch/x86_64/vm-test.asm", "tools/host/vm_output.py",
     "tests/repository/test_vm_output.py", "tests/integration/test_vm.py",
     "docs/design/virtual-memory.md", "docs/reports/stage5.md",
+    "kernel/include/heap.h", "kernel/mm/heap.c", "tools/host/heap_output.py",
+    "kernel/mm/heap-test.c",
+    "tests/integration/test_audit.py",
+    "tests/repository/test_heap_output.py", "tests/integration/test_heap.py",
+    "docs/design/heap.md", "docs/reports/stage6.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 6 is the exact Stage 5 contract, not a build-target DSL.
+# Version 7 is the exact Stage 6 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 6,
+    "schema_version": 7,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
@@ -68,8 +73,8 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 5,
-    "status": "virtual-memory-management",
+    "stage": 6,
+    "status": "kernel-heap",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -88,6 +93,8 @@ EXPECTED_METADATA = {
         "pic-irq-dispatch", "pit-timer", "timer-irq-self-test", "os-resource-package",
         "bios-e820-map", "physical-frame-allocator", "pmm-self-test",
         "four-level-paging", "vm-map-unmap", "vm-permissions", "vm-page-fault-tests",
+        "bounded-kernel-heap", "heap-boundary-alignment", "heap-coalescing",
+        "heap-stress-oom", "heap-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }

@@ -2,6 +2,8 @@
 
 Implementation and verification report, 2026-08-30. Base commit:
 `83135e3064529eb1015248d647956aaf22da0d6d`. Stage 6 is not included.
+(Historical snapshot; see `codebase-audit.md` for later VM hardening and the
+audited heap. This report's hashes, transcript and counts belong to Stage 5.)
 
 ## Implemented mechanisms
 
@@ -270,6 +272,7 @@ requires serialized IF=0 calls. Initial table construction requires seven PMM
 frames inside the existing 2 MiB boot mapping. PMM's existing placement limits
 remain. Unexpected or nested faults and invalid stacks have no general recovery.
 
-Next: **Stage 6 — Kernel heap**, not started. The established workflow remains
+Next at that snapshot: **Stage 6 — Kernel heap** (subsequently audited and repaired; see
+[`stage6.md`](stage6.md)). The established workflow remains
 implement, test, verify, commit, clean tree, push, report SHA. The task handoff
 records the actual commit and GitHub result only after Git confirms them.
