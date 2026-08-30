@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "os": "RynorOS",
+  "kernel": "Rynorkernel",
+  "language": {
+    "name": "RynorLang",
+    "source_extension": ".rl",
+    "status": "experimental-design"
+  },
+  "license": "MIT",
+  "stage": 0,
+  "status": "foundation-only",
+  "target": {
+    "architecture": "x86_64",
+    "status": "planned"
+  },
+  "bootstrap": {
+    "python_minimum": "3.10",
+    "python_packages": [],
+    "git": "optional-version-control"
+  },
+  "implemented_components": ["repository-validator", "host-build-check", "repository-tests"],
+  "os_build_targets": []
+}
