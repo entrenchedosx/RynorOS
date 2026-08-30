@@ -13,7 +13,8 @@ sys.path.insert(0, str(ROOT / "tools/host"))
 from image import ARTIFACTS, build_image
 from qemu import EXPECTED_OUTPUT, boot_image
 from exception_output import validate_exception_output
-from timer_output import validate_boot_output, TIMER_OUTPUT
+from timer_output import TIMER_OUTPUT
+from boot_output import validate_boot_output, POST_IRQ
 import re
 import shutil
 from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
@@ -51,7 +52,7 @@ class BootTests(unittest.TestCase):
         observed = boot_image(self.image, logs)
         self.assertTrue(observed.startswith(EXPECTED_OUTPUT))
         self.assertEqual(validate_boot_output(observed), [])
-        self.assertTrue(observed.endswith(TIMER_OUTPUT))
+        self.assertTrue(observed.endswith(TIMER_OUTPUT + POST_IRQ))
         self.assert_rip_matches_elf(observed, ROOT / "build/rynorkernel.elf", 3)
         self.assertEqual(hashlib.sha256(self.image.read_bytes()).hexdigest(), before)
         summary = json.loads((logs / "run.json").read_text(encoding="utf-8"))

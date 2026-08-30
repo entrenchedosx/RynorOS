@@ -1,6 +1,7 @@
 #include "serial.h"
 #include "cpu.h"
 #include "irq.h"
+#include "pmm.h"
 
 /* RYNOR_VERSION is supplied from project.json, without timestamps or host paths. */
 void kernel_main(void)
@@ -14,6 +15,13 @@ void kernel_main(void)
     if (!cpu_initialize())
         cpu_halt();
     cpu_exception_self_test();
+    pmm_bootstrap_and_test();
     timer_self_test();
+    if (!pmm_check()) {
+        serial_write("[MM] failure=post_irq_accounting\r\n");
+        cpu_halt();
+    }
+    serial_write("[TEST] PMM post-IRQ accounting verified\r\n");
+    serial_flush();
     /* Returning reaches the entry stub's CLI/HLT loop, never BIOS or host code. */
 }

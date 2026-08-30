@@ -28,7 +28,7 @@ def validate() -> bool:
     if errors:
         print(f"Validation failed: {len(errors)} error(s).", file=sys.stderr)
         return False
-    print("Repository validation passed (structure, icon, and Stage 3 metadata).", flush=True)
+    print("Repository validation passed (structure, icon, and Stage 4 metadata).", flush=True)
     return True
 
 

@@ -2,9 +2,10 @@
 
 ## Scope and honesty
 
-The current implemented scope is Stage 3: boot, serial, CPU descriptors, exception
-diagnostics, PIC/PIT IRQs, a separately packaged icon and host verification.
-Stage 4 requires a separate change; a scheduler is not implemented.
+The current implemented scope is Stage 4: boot, serial, CPU descriptors, exception
+diagnostics, PIC/PIT IRQs, real E820-based physical frame allocation, a separately
+packaged icon and host verification. Stage 5 requires a separate change;
+a virtual-memory manager, isolation and scheduler are not implemented.
 Do not present a design, empty function, hardcoded
 demo, or TODO as working functionality. Scaffolding must say it is incomplete.
 Do not import and rename another kernel or userspace. Record the provenance,
@@ -53,3 +54,12 @@ Use logical commits such as `init: create RynorOS repository structure`,
 Configure your own author identity before committing. Review staged changes and
 run checks first. Stage only files relevant to your change; avoid meaningless
 commits and unrelated formatting churn. All initial code is MIT-licensed.
+
+For every fully completed milestone, inspect the complete diff, run the full
+verification suite one final time, commit only intentional milestone changes,
+verify a clean working tree, verify branch/remote, and push to the configured
+GitHub repository (`https://github.com/entrenchedosx/RynorOS`). Never push partial
+or failing milestones. Report the commit SHA and actual push outcome. If
+authentication/push fails, preserve the clean local commit and report the exact
+failure; never claim that synchronization succeeded. Do not force-push unrelated
+history or mix personal files into milestone commits.

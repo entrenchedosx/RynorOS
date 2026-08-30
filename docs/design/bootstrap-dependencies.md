@@ -1,15 +1,18 @@
 # Bootstrap dependencies
 
-## Actual requirements (unchanged from Stage 1 through Stage 3)
+## Actual requirements (unchanged from Stage 1 through Stage 4)
 
 All tools were already present on the Windows verification host. Nothing was
 downloaded, installed, or copied from another operating-system project for this
 milestone sequence. Kernel and loader sources are original RynorOS code under MIT.
-Stages 2–3 add only original freestanding C/NASM code and standard-library Python
+Stages 2–4 add only original freestanding C/NASM code and standard-library Python
 tests; no toolchain, emulator, firmware, library, or package dependency changed.
 Stage 3 uses Python's `zipfile`/`struct` to package the user-supplied original icon,
 without a PNG conversion library or runtime graphics dependency. The separately
 packaged asset is not part of the executable boot image or firmware.
+Stage 4 consumes SeaBIOS's standard E820 service while still in real mode. It
+uses no external memory-management library or new firmware/bootloader. GitHub
+synchronization uses Git and available host credentials, not guest OS code.
 
 | Dependency | Verified version | Purpose / boundary | Upstream license |
 | --- | --- | --- | --- |

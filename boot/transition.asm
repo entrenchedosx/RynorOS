@@ -1,9 +1,13 @@
 ; Minimal original real -> protected -> long-mode transition.
-; Fixed RAM ownership is documented in boot/README.md; there is no allocator.
+; Firmware map is collected before BIOS services become unavailable.
 section .boot progbits alloc exec nowrite align=16
 bits 16
 global boot_transition
 extern rynorkernel_entry
+extern __boot_map_start
+extern __boot_stack_end
+extern __page_tables_start
+extern __page_tables_end
 
 boot_transition:
     cli
@@ -12,7 +16,8 @@ boot_transition:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov sp, 0x7c00
+    mov sp, __boot_stack_end
+    call acquire_e820
     ; Mask legacy IRQs and NMI while no kernel exception/interrupt system exists.
     mov al, 0xff
     out 0x21, al
@@ -30,6 +35,64 @@ boot_transition:
     mov cr0, eax
     jmp 0x08:protected_entry
 
+; Fixed 4 KiB handoff page, header 32 bytes, up to 64 slots of 32 bytes.
+; Each slot: firmware's 20/24 bytes, returned size, zero reserved word.
+; No partial/truncated map is marked complete. Bounded continuation loop.
+acquire_e820:
+    mov di, __boot_map_start
+    xor ax, ax
+    mov cx, 4096 / 2
+    rep stosw
+    mov dword [__boot_map_start], 0x50414d52 ; 'RMAP'
+    mov dword [__boot_map_start + 4], 1
+    mov dword [__boot_map_start + 12], 64
+    mov dword [__boot_map_start + 16], 32
+    mov dword [__boot_map_start + 24], 4096
+    xor ebx, ebx
+    mov di, __boot_map_start + 32
+.next:
+    mov dword [es:di + 20], 1  ; Default enabled attributes for 20-byte BIOSes.
+    mov eax, 0xe820
+    mov edx, 0x534d4150        ; 'SMAP'
+    mov ecx, 24
+    push ds
+    push es
+    push di
+    sti
+    int 0x15
+    cli                      ; CLI/POP preserve carry from BIOS.
+    pop di
+    pop es
+    pop ds
+    jc .carry
+    cmp eax, 0x534d4150
+    jne .failed
+    cmp ecx, 20
+    je .size_ok
+    cmp ecx, 24
+    jne .failed
+.size_ok:
+    mov [es:di + 24], ecx
+    inc dword [__boot_map_start + 8]
+    test ebx, ebx
+    jz .complete
+    cmp dword [__boot_map_start + 8], 64
+    jae .failed
+    add di, 32
+    jmp .next
+.carry:
+    ; E820 permits CF to signal end after at least one successful record.
+    cmp dword [__boot_map_start + 8], 0
+    je .failed
+.complete:
+    mov dword [__boot_map_start + 20], 1
+    cld
+    ret
+.failed:
+    mov dword [__boot_map_start + 20], 2
+    cld
+    ret                      ; Kernel emits a diagnostic and refuses PMM init.
+
 bits 32
 protected_entry:
     mov ax, 0x10
@@ -38,7 +101,7 @@ protected_entry:
     mov ss, ax
     mov fs, ax
     mov gs, ax
-    mov esp, 0x7c00
+    mov esp, __boot_stack_end
     ; x86-64 is the hardware contract; require extended CPUID long-mode support.
     mov eax, 0x80000000
     cpuid
@@ -50,16 +113,18 @@ protected_entry:
     jz unsupported_cpu
 
     xor eax, eax
-    mov edi, 0x1000
-    mov ecx, (3 * 4096) / 4
+    mov edi, __page_tables_start
+    mov ecx, __page_tables_end
+    sub ecx, edi
+    shr ecx, 2
     rep stosd
-    mov dword [0x1000], 0x2003  ; PML4[0] -> PDPT, present/write.
-    mov dword [0x2000], 0x3003  ; PDPT[0] -> page directory.
-    mov dword [0x3000], 0x0083  ; Identity map 0..2 MiB, one large page.
+    mov dword [__page_tables_start], __page_tables_start + 4096 + 3
+    mov dword [__page_tables_start + 4096], __page_tables_start + 8192 + 3
+    mov dword [__page_tables_start + 8192], 0x0083 ; 0..2 MiB, one large page.
     mov eax, cr4
     or eax, 1 << 5             ; PAE is required for long mode.
     mov cr4, eax
-    mov eax, 0x1000
+    mov eax, __page_tables_start
     mov cr3, eax
     mov ecx, 0xc0000080
     rdmsr

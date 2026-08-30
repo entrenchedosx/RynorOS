@@ -7,9 +7,11 @@ x86-64 exception diagnostic path, and controlled self-tests under QEMU. Six
 required exception types are execution-tested. Other vector slots are wired
 for best-effort diagnostics, not claimed as tested or enabled CPU features.
 
-The BIOS transition remains Stage 1 code. After the original boot prefix,
+Stage 4 adds real-mode E820 collection without changing the CPU-mode transition.
+After the original boot prefix,
 `kernel_main` calls `cpu_initialize`, then `cpu_exception_self_test`, then
-runs Stage 3 `timer_self_test`, then returns to the existing halt loop. See
+runs Stage 4 PMM initialization/self-tests, Stage 3 `timer_self_test`, rechecks
+PMM integrity, then returns to the existing halt loop. See
 `irq-timer.md` for the separate hardware IRQ layer; the exception contract below
 is preserved.
 
@@ -146,9 +148,9 @@ diagnostic guard halts; it does not make a broken stack safe.
 
 ## Tests
 
-`python tools/build/build.py check` runs 40 repository tests and 13 integration
-tests through Stage 3. The five Stage 1 regression cases remain; the normal boot
-requires the unchanged prefix plus the complete Stage 2 and timer transcripts.
+`python tools/build/build.py check` runs repository and integration tests through
+Stage 4. The five Stage 1 regression cases remain; the normal boot requires the
+unchanged prefix plus the complete Stage 2, PMM and timer transcripts.
 QEMU reads actual serial output with a 10-second deadline, not a fixed boot delay.
 Tests compare each saved RIP with the appropriate actual ELF symbol; require one
 exception/verified marker, exact register/error/flag data, and controlled action;
@@ -159,11 +161,12 @@ Native artifacts remain byte-identical across independent rebuild directories.
 ## Known limitations / unsupported
 
 No privilege changes, TSS/IST/emergency stack, stack guard, general recovery,
-memory allocation, new virtual-memory facility, memory protection policy,
+new virtual-memory facility, memory protection policy,
 process isolation, FPU/SIMD
 context handling, SMP, or hardware-platform coverage beyond the tested QEMU PC.
 Faults before IDT loading, invalid stacks, or exceptions during diagnostics can
 still double/triple-fault. Wired non-test vectors and nesting are not execution
 coverage claims. Masked NMI is not an NMI-handling guarantee. Stage 3 adds only
 the separate PIC/PIT IRQ path described in `irq-timer.md`; bootstrap dependencies
-are unchanged. No Stage 4 functionality is implemented.
+are unchanged. Stage 4 adds physical allocation separately in `kernel/mm/`;
+it does not alter exception recovery, privilege or paging policy.

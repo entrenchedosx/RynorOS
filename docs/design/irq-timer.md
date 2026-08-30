@@ -107,7 +107,8 @@ is intentionally stopped after the test rather than silently promising uptime.
 ## Tests and known limitations
 
 The default QEMU boot must contain the unchanged boot prefix, complete Stage 2
-breakpoint diagnostics, and exact ordered timer transcript. The harness waits
+breakpoint diagnostics, Stage 4 PMM diagnostics/tests, and the exact ordered timer
+transcript followed by a PMM integrity check. The harness waits
 on explicit serial markers with a 10-second deadline, normally quits QEMU via
 its monitor and always reaps its owned process. Each run records cleanup/PID.
 Repository tests reject missing, changed, extra and reordered timer records.
@@ -119,7 +120,8 @@ kernel. All six CPU exception cases and original Stage 1 tests still run.
 
 Unsupported: scheduler, preemption, uptime API, variable-frequency timer API,
 APIC/SMP, device drivers other than boot/serial/PIC/PIT, TSS/IST/emergency stacks,
-memory allocation or protection policy, physical hardware validation, nested
+virtual-memory/protection policy, physical hardware validation, nested
 interrupts and recovery from a failed stack. Guest waits have no independent
 clock-based watchdog; the host timeout detects a missing timer. No claim of
-exact host timing or lossless timer-edge accounting is made. Stage 4 is planned.
+exact host timing or lossless timer-edge accounting is made. The Stage 4 PMM
+requires IF=0 and is never called by this IRQ handler; see `physical-memory.md`.

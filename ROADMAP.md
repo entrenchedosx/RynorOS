@@ -1,6 +1,6 @@
 # Roadmap
 
-Stages 0–3 are implemented. Stage 4 onward remains **planned**; language and ABI
+Stages 0–4 are implemented. Stage 5 onward remains **planned**; language and ABI
 details are **experimental** until specified and tested. Each row is a small
 delivery target with an observable exit condition, not a claim of functionality.
 Stages may be split further. Numbering is a working sequence, not a schedule.
@@ -11,7 +11,7 @@ Stages may be split further. Numbering is a working sequence, not a schedule.
 | 1 | Bootable kernel — implemented | Original BIOS loader and freestanding x86-64 kernel; two real serial lines; deterministic raw image; 26 repository and five integration tests pass. See `docs/reports/stage1.md`. |
 | 2 | CPU initialization and exception diagnostics — implemented | Kernel GDT/IDT loaded and checked; #DE/#DB/#BP/#UD/#GP/#PF diagnostics execute in QEMU; controlled breakpoint restores registers/flags/stack; 33 repository and 11 integration tests pass. See `docs/reports/stage2.md`. |
 | 3 | External interrupt controller and hardware timer — implemented | PIC remap/masks/manual EOI, separate IRQ dispatch, PIT mode 2, three actual IRQ0 ticks and IRETQ returns; QEMU negative/regression tests; canonical icon packaged separately and reproducibly. No scheduler. See `docs/reports/stage3.md`. |
-| 4 | Physical memory manager | Parse real boot memory map; reserve live regions; test allocation, exhaustion, and invalid/double frees. |
+| 4 | Physical memory manager — implemented | Real BIOS E820 handoff; conservative map normalization; linker/firmware/metadata reservations; 4096-byte frame allocation, release, reuse, accounting and full real-pool OOM tests; multiple-RAM QEMU and corrupted-map tests; timer works after PMM. See `docs/reports/stage4.md`. No virtual-memory manager or isolation. |
 | 5 | Virtual memory | Owned page tables with permission tests, map/unmap checks, and expected page faults. |
 | 6 | Kernel heap | Bounded allocation/free with alignment, failure, and stress tests. |
 | 7 | Hardware input | One documented keyboard device feeds a tested event queue; overflow behavior defined. |
