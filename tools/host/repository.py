@@ -1,7 +1,8 @@
-"""Stage 2 repository contract; this checks metadata, not kernel execution."""
+"""Stage 3 repository/asset contract; this does not check kernel execution."""
 
 import json
 from pathlib import Path
+from resources import read_icon
 
 
 SOURCE_EXTENSION = ".rl"
@@ -12,7 +13,7 @@ REQUIRED_DIRECTORIES = (
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
     "user/apps", "tools", "tools/build", "tools/host", "tests", "tests/repository",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
-    "docs/reports", "build", "kernel/arch/x86_64",
+    "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
 RESERVED_DIRECTORIES = (
     "kernel/mm", "kernel/drivers",
@@ -38,11 +39,17 @@ REQUIRED_FILES = (
     "kernel/arch/x86_64/exceptions.asm", "kernel/arch/x86_64/selftest.asm",
     "kernel/interrupts/exceptions.c", "tools/host/exception_output.py",
     "tests/repository/test_exception_output.py", "docs/design/cpu.md", "docs/reports/stage2.md",
+    "kernel/include/io.h", "kernel/include/irq.h", "kernel/interrupts/irq.c",
+    "kernel/arch/x86_64/pic.c", "kernel/arch/x86_64/timer.c",
+    "tools/host/timer_output.py", "tools/host/resources.py",
+    "assets/README.md", "assets/branding/icon.png", "docs/reports/stage3.md",
+    "docs/design/irq-timer.md", "tests/repository/test_timer_output.py",
+    "tests/repository/test_resources.py",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 3 is the exact Stage 2 contract, not a build-target DSL.
+# Version 4 is the exact Stage 3 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 3,
+    "schema_version": 4,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
@@ -52,8 +59,10 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 2,
-    "status": "cpu-exception-diagnostics",
+    "stage": 3,
+    "status": "hardware-timer-interrupts",
+    "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
+               "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
                "boot_method": "original-bios-lba-loader"},
     "bootstrap": {
@@ -67,8 +76,9 @@ EXPECTED_METADATA = {
         "repository-validator", "host-build-check", "repository-tests",
         "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test",
         "kernel-gdt", "exception-idt", "exception-diagnostics", "controlled-cpu-self-test",
+        "pic-irq-dispatch", "pit-timer", "timer-irq-self-test", "os-resource-package",
     ],
-    "os_build_targets": ["rynorkernel", "rynoros.img"],
+    "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }
 
 
@@ -129,6 +139,10 @@ def validate_repository(root: Path) -> list[str]:
             errors.extend(_compare_metadata(metadata, EXPECTED_METADATA, "project.json"))
 
     examples = root / "rynorlang/examples"
+    try:
+        read_icon(root)
+    except (OSError, ValueError) as error:
+        errors.append(f"official icon: {error}")
     if not any(path.is_file() and is_rynorlang_source(path) for path in examples.glob("*")):
         errors.append("rynorlang/examples: no .rl syntax sample found (not an execution test)")
     return sorted(errors)

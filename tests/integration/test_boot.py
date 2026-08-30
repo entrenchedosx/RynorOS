@@ -13,7 +13,10 @@ sys.path.insert(0, str(ROOT / "tools/host"))
 from image import ARTIFACTS, build_image
 from qemu import EXPECTED_OUTPUT, boot_image
 from exception_output import validate_exception_output
+from timer_output import validate_boot_output, TIMER_OUTPUT
 import re
+import shutil
+from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
 
 
 def elf_symbol(path, name):
@@ -47,7 +50,8 @@ class BootTests(unittest.TestCase):
         before = hashlib.sha256(self.image.read_bytes()).hexdigest()
         observed = boot_image(self.image, logs)
         self.assertTrue(observed.startswith(EXPECTED_OUTPUT))
-        self.assertEqual(validate_exception_output(observed), [])
+        self.assertEqual(validate_boot_output(observed), [])
+        self.assertTrue(observed.endswith(TIMER_OUTPUT))
         self.assert_rip_matches_elf(observed, ROOT / "build/rynorkernel.elf", 3)
         self.assertEqual(hashlib.sha256(self.image.read_bytes()).hexdigest(), before)
         summary = json.loads((logs / "run.json").read_text(encoding="utf-8"))
@@ -148,3 +152,33 @@ class BootTests(unittest.TestCase):
             observed = (directory / "logs/serial.log").read_bytes()
             self.assertTrue(observed.startswith(b"Rynorkernel booted.\r\n"))
             self.assertIn(b"RynorOS 9.9.9", observed)
+
+    def verify_timer_fault(self, name, source, original, replacement, expected_ticks):
+        # Build genuinely broken kernel copies. No fault knobs in production code,
+        # and no substituted emulator output. Keep failure logs in build/ for audit.
+        with tempfile.TemporaryDirectory(prefix="timer-fault-", dir=ROOT / "build") as temporary:
+            fixture = Path(temporary)
+            for directory in REQUIRED_DIRECTORIES:
+                (fixture / directory).mkdir(parents=True, exist_ok=True)
+            for filename in REQUIRED_FILES:
+                shutil.copyfile(ROOT / filename, fixture / filename)
+            path = fixture / source
+            contents = path.read_text(encoding="utf-8")
+            self.assertEqual(contents.count(original), 1)
+            path.write_text(contents.replace(original, replacement), encoding="utf-8")
+            build_image(fixture)
+            logs = ROOT / "build/timer-tests" / name
+            self.assert_timeout_and_cleanup(fixture / "build/rynoros.img", logs)
+            output = (logs / "serial.log").read_bytes()
+            self.assertIn(b"[TEST] exception handling verified\r\n", output)
+            self.assertIn(b"[TEST] waiting for timer interrupts\r\n", output)
+            self.assertEqual(output.count(b"[TIMER] tick="), expected_ticks)
+            self.assertNotIn(b"[TEST] timer interrupt handling verified", output)
+
+    def test_masked_irq0_cannot_claim_timer_success(self):
+        self.verify_timer_fault("masked", "kernel/arch/x86_64/timer.c",
+                                "!irq_set_enabled(0, 1)", "!irq_set_enabled(0, 0)", 0)
+
+    def test_missing_master_eoi_stops_after_one_real_tick(self):
+        self.verify_timer_fault("missing-eoi", "kernel/arch/x86_64/pic.c",
+                                "io_out8(0x20, 0x20);", "/* Deliberately omitted EOI. */", 1)

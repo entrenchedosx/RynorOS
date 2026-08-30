@@ -7,11 +7,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from resources import package_resources
 
 
 IMAGE_SIZE = 1024 * 1024
 MAX_PAYLOAD = 32 * 1024
-ARTIFACTS = ("boot.bin", "rynorkernel.elf", "rynorkernel.bin", "rynoros.img")
+ARTIFACTS = ("boot.bin", "rynorkernel.elf", "rynorkernel.bin", "rynoros.img", "rynoros-resources.zip")
 
 
 def find_tool(name: str, override: str) -> str:
@@ -84,6 +85,9 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/arch/x86_64/serial.c", "serial.o"),
             ("kernel/arch/x86_64/cpu.c", "cpu.o"),
             ("kernel/interrupts/exceptions.c", "exception-diagnostics.o"),
+            ("kernel/interrupts/irq.c", "irq.o"),
+            ("kernel/arch/x86_64/pic.c", "pic.o"),
+            ("kernel/arch/x86_64/timer.c", "timer.o"),
         ):
             target = output / name
             run_tool([
@@ -108,6 +112,7 @@ def build_image(root: Path, destination: Path | None = None, *,
                   "boot/sector.asm", "-o", str(output / "boot.bin")], root)
         image = make_image((output / "boot.bin").read_bytes(), payload)
         (output / "rynoros.img").write_bytes(image)
+        package_resources(root, output / "rynoros-resources.zip")
         manifest = {
             "version": version,
             "cpu_self_test": {"vector": test_vector, "armed": test_armed},

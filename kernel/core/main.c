@@ -1,5 +1,6 @@
 #include "serial.h"
 #include "cpu.h"
+#include "irq.h"
 
 /* RYNOR_VERSION is supplied from project.json, without timestamps or host paths. */
 void kernel_main(void)
@@ -13,5 +14,6 @@ void kernel_main(void)
     if (!cpu_initialize())
         cpu_halt();
     cpu_exception_self_test();
+    timer_self_test();
     /* Returning reaches the entry stub's CLI/HLT loop, never BIOS or host code. */
 }

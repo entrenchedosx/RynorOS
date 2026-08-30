@@ -22,6 +22,7 @@ static const cpu_u64 kernel_gdt[3] __attribute__((aligned(16))) = {
 };
 static struct idt_gate kernel_idt[256] __attribute__((aligned(16)));
 extern const cpu_u64 exception_stub_table[32];
+extern const cpu_u64 irq_stub_table[16];
 extern void cpu_load_gdt(const struct table_pointer *pointer);
 
 __attribute__((noreturn)) void cpu_halt(void)
@@ -49,9 +50,9 @@ static int initialize_gdt(void)
 
 static int initialize_idt(void)
 {
-    /* BSS initialization leaves vectors 32..255 non-present. No device IRQs. */
-    for (unsigned int vector = 0; vector < 32; ++vector) {
-        cpu_u64 address = exception_stub_table[vector];
+    /* Exceptions 0..31 and PIC IRQs 32..47; 48..255 remain non-present. */
+    for (unsigned int vector = 0; vector < 48; ++vector) {
+        cpu_u64 address = vector < 32 ? exception_stub_table[vector] : irq_stub_table[vector - 32];
         kernel_idt[vector] = (struct idt_gate){
             (cpu_u16)address, CPU_CODE_SELECTOR, 0, 0x8e,
             (cpu_u16)(address >> 16), (cpu_u32)(address >> 32), 0
@@ -65,13 +66,14 @@ static int initialize_idt(void)
         return 0;
     for (unsigned int vector = 0; vector < 256; ++vector) {
         const struct idt_gate *gate = &kernel_idt[vector];
-        if (vector >= 32) {
+        if (vector >= 48) {
             if (gate->attributes != 0) return 0;
             continue;
         }
         cpu_u64 address = gate->offset_low | ((cpu_u64)gate->offset_middle << 16) |
                           ((cpu_u64)gate->offset_high << 32);
-        if (address != exception_stub_table[vector] || gate->selector != CPU_CODE_SELECTOR ||
+        cpu_u64 expected = vector < 32 ? exception_stub_table[vector] : irq_stub_table[vector - 32];
+        if (address != expected || gate->selector != CPU_CODE_SELECTOR ||
             gate->ist != 0 || gate->attributes != 0x8e || gate->reserved != 0)
             return 0;
     }

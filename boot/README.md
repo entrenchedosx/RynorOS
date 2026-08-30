@@ -53,6 +53,9 @@ blank disks and wrong-version payloads; source/compiler/link failure tests live
 in the repository suite. Successful QEMU runs exit normally through monitor quit.
 Stage 2 preserves this boot path and appends GDT/IDT/exception diagnostics after
 the two legacy boot lines. See `../docs/design/cpu.md` for kernel-owned tables.
+Stage 3 then verifies three PIT IRQ0 deliveries with the kernel's PIC/IDT path;
+the BIOS loader itself is unchanged. The icon resource package is a separate
+host-side artifact, never loaded by BIOS or inserted into the raw image.
 
 ## Known limitations
 

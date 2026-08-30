@@ -1,5 +1,10 @@
 # Stage 2 — CPU Initialization and Controlled Exception Diagnostics
 
+Historical snapshot of commit `c6a353e`, including its tests and limitations.
+Stage 3 supersedes the current-status statements below; see `stage3.md`. The
+previous icon/cleanliness decision is resolved there by integrating the original
+asset into `assets/branding/icon.png` and its separate deterministic package.
+
 Date: 2026-08-30. **Implementation and runtime verification passed** on the
 documented QEMU configuration. The final Git-cleanliness gate also requires a
 decision about an unrelated `icon.png` added during this task; it is not part of

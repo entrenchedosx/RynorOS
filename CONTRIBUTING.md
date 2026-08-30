@@ -2,8 +2,9 @@
 
 ## Scope and honesty
 
-The current implemented scope is Stage 2: boot, serial, CPU descriptors, exception
-diagnostics, and host verification. Stage 3 requires a separate change.
+The current implemented scope is Stage 3: boot, serial, CPU descriptors, exception
+diagnostics, PIC/PIT IRQs, a separately packaged icon and host verification.
+Stage 4 requires a separate change; a scheduler is not implemented.
 Do not present a design, empty function, hardcoded
 demo, or TODO as working functionality. Scaffolding must say it is incomplete.
 Do not import and rename another kernel or userspace. Record the provenance,
@@ -40,6 +41,10 @@ may be written by builds or tests. Preserve `.rl` as the language source suffix.
 Exception changes must retain actual QEMU coverage of both hardware-error-code
 and no-error-code frames. Never substitute `INT n` for a hardware-error exception;
 that instruction does not synthesize the exception's CPU error-code slot.
+IRQ changes must retain actual timer delivery, IRETQ and EOI coverage, including
+masked-IRQ and missing-EOI negative cases. Never print or block in the timer IRQ.
+Keep the canonical icon under `assets/`; derived assets need explicit provenance,
+deterministic generation and no unnecessary kernel/boot-image embedding.
 
 ## Git
 
