@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository checks, original Stage 1 image build, and bounded QEMU tests."""
+"""Repository checks, original kernel image build, and bounded QEMU CPU tests."""
 
 import argparse
 from pathlib import Path
@@ -28,7 +28,7 @@ def validate() -> bool:
     if errors:
         print(f"Validation failed: {len(errors)} error(s).", file=sys.stderr)
         return False
-    print("Repository validation passed (structure and Stage 1 metadata).", flush=True)
+    print("Repository validation passed (structure and Stage 2 metadata).", flush=True)
     return True
 
 

@@ -1,5 +1,9 @@
 # Stage 1 — Bootable Rynorkernel
 
+Historical verification at commit `668daf3`, not current subsystem status or
+artifact hashes. Stage 2 supersedes this report; see `stage2.md`. The original
+boot banner remains a compatibility prefix, not a claim that Stage 2 is absent.
+
 Date: 2026-08-30. Status: **COMPLETE for the documented QEMU configuration**.
 Stage 2 and all later subsystems remain unimplemented. This is execution evidence
 for a boot-and-serial milestone, not a claim of a usable general-purpose OS.

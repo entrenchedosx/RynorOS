@@ -2,7 +2,7 @@
 
 Historical snapshot of Stage 0 at commit `9869c1f`, not current project status.
 The commands/test counts and dependency scope below describe that commit only.
-See `stage1.md` for the current verified milestone.
+See `stage2.md` for the current verified milestone.
 
 Date: 2026-08-30. Status: **Stage 0 foundation verified**.
 

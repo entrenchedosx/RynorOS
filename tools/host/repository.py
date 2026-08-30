@@ -1,4 +1,4 @@
-"""Stage 1 repository contract; this checks metadata, not kernel execution."""
+"""Stage 2 repository contract; this checks metadata, not kernel execution."""
 
 import json
 from pathlib import Path
@@ -15,7 +15,7 @@ REQUIRED_DIRECTORIES = (
     "docs/reports", "build", "kernel/arch/x86_64",
 )
 RESERVED_DIRECTORIES = (
-    "kernel/mm", "kernel/interrupts", "kernel/drivers",
+    "kernel/mm", "kernel/drivers",
     "rynorlang/lexer", "rynorlang/parser", "rynorlang/ast",
     "rynorlang/compiler", "rynorlang/runtime", "rynorlang/tests", "user/shell",
     "user/lib", "user/apps", "tests/kernel", "tests/rynorlang",
@@ -34,11 +34,15 @@ REQUIRED_FILES = (
     "kernel/arch/x86_64/serial.c", "kernel/arch/x86_64/linker.ld",
     "kernel/core/main.c", "kernel/include/serial.h", "tools/host/image.py",
     "tools/host/qemu.py", "tests/repository/test_image.py", "tests/integration/test_boot.py",
+    "kernel/include/cpu.h", "kernel/arch/x86_64/cpu.c", "kernel/arch/x86_64/descriptors.asm",
+    "kernel/arch/x86_64/exceptions.asm", "kernel/arch/x86_64/selftest.asm",
+    "kernel/interrupts/exceptions.c", "tools/host/exception_output.py",
+    "tests/repository/test_exception_output.py", "docs/design/cpu.md", "docs/reports/stage2.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 2 is the exact Stage 1 contract, not a build-target DSL.
+# Version 3 is the exact Stage 2 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 2,
+    "schema_version": 3,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
@@ -48,8 +52,8 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 1,
-    "status": "bootable-kernel",
+    "stage": 2,
+    "status": "cpu-exception-diagnostics",
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
                "boot_method": "original-bios-lba-loader"},
     "bootstrap": {
@@ -62,6 +66,7 @@ EXPECTED_METADATA = {
     "implemented_components": [
         "repository-validator", "host-build-check", "repository-tests",
         "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test",
+        "kernel-gdt", "exception-idt", "exception-diagnostics", "controlled-cpu-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img"],
 }
@@ -82,7 +87,7 @@ def _unique_object(pairs: list) -> dict:
 
 
 def _compare_metadata(actual: object, expected: object, field: str) -> list[str]:
-    # Exact types matter: JSON true must not pass as integer stage 1.
+    # Exact types matter: JSON booleans must never substitute for integer metadata.
     if type(actual) is not type(expected):
         return [f"{field}: expected {type(expected).__name__}"]
     errors = []

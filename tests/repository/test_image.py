@@ -5,11 +5,16 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/host"))
-from image import IMAGE_SIZE, MAX_PAYLOAD, make_image
+from image import IMAGE_SIZE, MAX_PAYLOAD, make_image, build_image
 from qemu import boot_image
 
 
 class ImageTests(unittest.TestCase):
+    def test_invalid_exception_variant_is_rejected_before_build(self):
+        for vector in (True, -1, 2, 32, "3"):
+            with self.subTest(vector=vector), self.assertRaises(ValueError):
+                build_image(Path("unused-root"), test_vector=vector)
+
     def test_layout_and_zero_padding(self):
         sector = bytes(510) + b"\x55\xaa"
         result = make_image(sector, b"payload fixture")

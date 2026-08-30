@@ -8,21 +8,29 @@ The long-term direction is a small, self-contained, integrated system inspired
 by TempleOS's simplicity and immediacy, not by reusing its implementation.
 RynorOS will not be based on Linux, BSD, another kernel, or an existing OS userspace.
 
-## Current status: Stage 1 — bootable Rynorkernel
+## Current status: Stage 2 — CPU exception diagnostics
 
 Implemented and tested in QEMU: an original BIOS disk loader, minimal x86-64
 entry, a freestanding C kernel, polled COM1 output, deterministic image build,
-and bounded boot tests. It prints two lines and halts:
+and bounded boot tests. The original two-line boot prefix remains unchanged:
 
 ```text
 Rynorkernel booted.
 RynorOS 0.1.0 | x86_64 | stage1
 ```
 
+After that prefix, the kernel now explicitly loads/verifies its own GDT and IDT,
+triggers exactly one intentional breakpoint, prints the real CPU frame and all
+15 general-purpose registers, returns through `IRETQ`, verifies restoration,
+and halts. The historical `stage1` banner identifies the preserved boot-path
+contract; metadata and the CPU diagnostics describe the current Stage 2 scope.
+See [CPU design](docs/design/cpu.md) and [exact observed output](docs/reports/stage2.md).
+
 There is **no memory manager, heap, scheduler, filesystem, shell, graphics,
 userspace, networking, or RynorLang compiler**. `.rl` examples still cannot run.
 Static page tables and a fixed stack exist only to enter 64-bit mode safely
-on the supported emulator configuration. Stage 2 is not implemented.
+on the supported emulator configuration. No new paging/memory-management facility,
+privilege transition, process isolation, or Stage 3 device interrupt system exists.
 
 Status labels throughout the project:
 
@@ -49,29 +57,30 @@ python tools/build/build.py check
 
 `validate` checks structure/metadata using Python alone. `build` also checks host
 Python syntax, assembles/compiles/links Rynorkernel, and creates `build/rynoros.img`.
-`test` runs 26 repository, image-layout, and CLI tests (requires build tools).
+`test` runs 33 repository, image-layout, diagnostic-parser, and CLI tests (requires build tools).
 `boot-test` builds and boots with a default 10-second timeout (`--timeout 15`
-overrides it). `integration-test` builds and runs five execution/reproducibility
-checks, including real failure cases. `check` runs build, repository tests, and
+overrides it). `integration-test` builds and runs 11 execution/reproducibility
+checks, including real #DE/#DB/#BP/#UD/#GP/#PF and failure cases. `check` runs build, repository tests, and
 integration tests, stopping on failure. Commands return nonzero on failure and
 resolve source paths relative to the script, not the caller's working directory.
 
 Artifacts: `build/boot.bin`, `build/rynorkernel.elf`, `build/rynorkernel.bin`,
 `build/rynoros.img`, and `build/build-manifest.json` (versions, sizes, SHA-256).
-QEMU logs and process cleanup evidence are in `build/boot-test/`. Generated files
-are ignored by Git. See [Stage 1 verification](docs/reports/stage1.md).
+Default QEMU logs and process cleanup evidence are in `build/boot-test/`; separate
+CPU test images/logs are under `build/cpu-tests/`. Generated files are ignored by
+Git. [Stage 1 verification](docs/reports/stage1.md) is a historical snapshot.
 
 ## Layout
 
 | Path | Responsibility | Status |
 | --- | --- | --- |
 | `boot/` | Original BIOS sector loader and long-mode transition | Implemented Stage 1 |
-| `kernel/` | 64-bit entry, C main, COM1 output | Implemented Stage 1 only |
+| `kernel/` | 64-bit entry, COM1, kernel GDT/IDT and CPU diagnostics | Implemented through Stage 2 |
 | `rynorlang/` | Language design and future toolchain | Experimental design |
 | `user/` | Future shell, libraries, applications | Planned |
 | `tools/` | Host validation, image build, and QEMU runner | Implemented |
 | `tests/repository/` | Repository validation tests | Implemented |
-| `tests/integration/` | Boot, timeout/cleanup, ELF, and reproducibility tests | Implemented Stage 1 |
+| `tests/integration/` | Boot/exception execution, timeout/cleanup, ELF, reproducibility | Implemented through Stage 2 |
 | `tests/kernel/`, `tests/rynorlang/` | Future subsystem/conformance tests | Planned |
 | `docs/design/`, `docs/reports/` | Decisions, subsystem template, verification reports | Foundation docs |
 | `build/` | Generated outputs/logs; `.gitkeep` retained | Implemented output area |
@@ -79,7 +88,7 @@ are ignored by Git. See [Stage 1 verification](docs/reports/stage1.md).
 Start with [architecture](ARCHITECTURE.md), [roadmap](ROADMAP.md),
 [RynorLang design](rynorlang/README.md), and
 [bootstrap dependencies](docs/design/bootstrap-dependencies.md).
-[project.json](project.json) is machine-readable Stage 1 metadata (schema 2).
+[project.json](project.json) is machine-readable Stage 2 metadata (schema 3).
 
 ## License and contributions
 

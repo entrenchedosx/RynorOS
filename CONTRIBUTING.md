@@ -2,8 +2,9 @@
 
 ## Scope and honesty
 
-The current implemented scope is Stage 1: boot, serial, and host verification
-only. Stage 2 requires a separate change. Do not present a design, empty function, hardcoded
+The current implemented scope is Stage 2: boot, serial, CPU descriptors, exception
+diagnostics, and host verification. Stage 3 requires a separate change.
+Do not present a design, empty function, hardcoded
 demo, or TODO as working functionality. Scaffolding must say it is incomplete.
 Do not import and rename another kernel or userspace. Record the provenance,
 license, version, and purpose of any introduced bootstrap dependency.
@@ -36,6 +37,9 @@ The combined check must actually execute the kernel in QEMU. Do not skip the
 boot suite when dependencies are missing. Output/logs belong under ignored
 `build/`; failed fixtures belong in temporary directories. No physical disks
 may be written by builds or tests. Preserve `.rl` as the language source suffix.
+Exception changes must retain actual QEMU coverage of both hardware-error-code
+and no-error-code frames. Never substitute `INT n` for a hardware-error exception;
+that instruction does not synthesize the exception's CPU error-code slot.
 
 ## Git
 

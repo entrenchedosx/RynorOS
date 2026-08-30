@@ -8,14 +8,17 @@ import subprocess
 import time
 
 from image import find_tool
+from exception_output import BOOT_PREFIX, VECTOR_NAMES, validate_exception_output
 
 
-EXPECTED_OUTPUT = b"Rynorkernel booted.\r\nRynorOS 0.1.0 | x86_64 | stage1\r\n"
+EXPECTED_OUTPUT = BOOT_PREFIX  # Stage 1 compatibility prefix, not the full Stage 2 log.
 
 
-def boot_image(image: Path, logs: Path, timeout: float = 10.0) -> bytes:
+def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: int = 3) -> bytes:
     if not math.isfinite(timeout) or not 0 < timeout <= 60:
         raise ValueError("Boot timeout must be finite and in (0, 60] seconds")
+    if type(test_vector) is not int or test_vector not in VECTOR_NAMES:
+        raise ValueError("Unsupported expected exception vector")
     if not image.is_file():
         raise FileNotFoundError(f"Boot image missing: {image}")
     qemu = find_tool("qemu-system-x86_64", "RYNOR_QEMU")
@@ -51,11 +54,12 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0) -> bytes:
                 if process.poll() is not None:
                     failure = f"QEMU exited before test completion (exit {process.returncode})"
                     break
-                if observed == EXPECTED_OUTPUT:
+                if not validate_exception_output(observed, test_vector):
                     break
                 time.sleep(0.05)
             else:
-                failure = f"Boot timed out after {timeout:g}s waiting for both exact serial lines"
+                failure = (f"Boot timed out after {timeout:g}s: " +
+                           "; ".join(validate_exception_output(observed, test_vector)))
         finally:
             # HMP quit gives QEMU a normal shutdown; terminate/kill are bounded
             # fallbacks only. Always reap this exact child, never other QEMU PIDs.
@@ -85,6 +89,10 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0) -> bytes:
             (logs / "run.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if cleanup != "monitor-quit" or process.returncode != 0:
         failure = failure or f"QEMU did not shut down normally: {cleanup}, exit {process.returncode}"
+    observed = serial.read_bytes()
+    errors = validate_exception_output(observed, test_vector)
+    if errors:
+        failure = failure or "; ".join(errors)
     if failure:
         raise RuntimeError(
             f"{failure}\nSerial captured: {observed!r}\n"

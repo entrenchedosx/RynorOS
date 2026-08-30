@@ -51,6 +51,8 @@ is supervisor writable/executable with no guard pages; this is not isolation.
 kernel serial lines within a bounded timeout. `integration-test` also exercises
 blank disks and wrong-version payloads; source/compiler/link failure tests live
 in the repository suite. Successful QEMU runs exit normally through monitor quit.
+Stage 2 preserves this boot path and appends GDT/IDT/exception diagnostics after
+the two legacy boot lines. See `../docs/design/cpu.md` for kernel-owned tables.
 
 ## Known limitations
 
@@ -59,6 +61,7 @@ disk retry policy, no executable signature/security scheme, no E820 parsing,
 no boot arguments or general handoff ABI. Unsupported long-mode CPUs halt
 silently (the runner times out); pre-CPUID machines are outside the contract.
 BIOS disk-error and UART hardware-failure branches are not fault-injected yet.
-There are no exception handlers; unexpected exceptions can triple-fault.
+The boot transition has no exception handlers. The kernel installs its exception
+IDT later; faults before that point or with an unusable stack can triple-fault.
 The temporary stack has no guard and BIOS stack usage is firmware-dependent.
 Firmware stays an explicitly external bootstrap dependency, never renamed OS code.

@@ -13,5 +13,5 @@ SECTIONS
     }
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.llvm_addrsig) }
     ASSERT(boot_transition == 0x8000, "boot transition must start the flat payload")
-    ASSERT(__bss_end <= 0x10000, "Stage 1 payload/BSS exceeds reserved 32 KiB")
+    ASSERT(__bss_end <= 0x10000, "Boot payload/BSS exceeds reserved 32 KiB")
 }

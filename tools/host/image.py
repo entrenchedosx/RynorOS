@@ -44,7 +44,12 @@ def make_image(boot: bytes, payload: bytes) -> bytes:
     return (boot + payload).ljust(IMAGE_SIZE, b"\0")
 
 
-def build_image(root: Path, destination: Path | None = None) -> dict:
+def build_image(root: Path, destination: Path | None = None, *,
+                test_vector: int = 3, test_armed: bool = True) -> dict:
+    if type(test_vector) is not int or test_vector not in (0, 1, 3, 6, 13, 14):
+        raise ValueError("Unsupported CPU self-test vector")
+    if type(test_armed) is not bool:
+        raise ValueError("test_armed must be boolean")
     destination = destination or root / "build"
     destination.mkdir(parents=True, exist_ok=True)
     # Invalidate only named generated deliverables: an unsuccessful rebuild must
@@ -56,23 +61,29 @@ def build_image(root: Path, destination: Path | None = None) -> dict:
     nasm = find_tool("nasm", "RYNOR_NASM")
     version = json.loads((root / "project.json").read_text(encoding="utf-8"))["version"]
     if version != "0.1.0":
-        raise ValueError("Unexpected Stage 1 version; update metadata and boot tests together")
+        raise ValueError("Unexpected boot banner version; update metadata and boot tests together")
     with tempfile.TemporaryDirectory(prefix="compile-", dir=destination) as temporary:
         output = Path(temporary)
         objects = []
         for source, name in (
             ("boot/transition.asm", "transition.o"),
             ("kernel/arch/x86_64/entry.asm", "entry.o"),
+            ("kernel/arch/x86_64/descriptors.asm", "descriptors.o"),
+            ("kernel/arch/x86_64/exceptions.asm", "exceptions.o"),
+            ("kernel/arch/x86_64/selftest.asm", "selftest.o"),
         ):
             target = output / name
             # Use NASM's default warning set as errors. Its optional -Wall
             # relocation-style warnings reject intentional low-address 16/32-bit
             # relocations in our mixed-mode ELF; LLD checks their actual range.
-            run_tool([nasm, "-f", "elf64", "-Werror", source, "-o", str(target)], root)
+            run_tool([nasm, "-f", "elf64", "-Werror", f"-DRYNOR_TEST_VECTOR={test_vector}",
+                      source, "-o", str(target)], root)
             objects.append(str(target))
         for source, name in (
             ("kernel/core/main.c", "main.o"),
             ("kernel/arch/x86_64/serial.c", "serial.o"),
+            ("kernel/arch/x86_64/cpu.c", "cpu.o"),
+            ("kernel/interrupts/exceptions.c", "exception-diagnostics.o"),
         ):
             target = output / name
             run_tool([
@@ -81,7 +92,8 @@ def build_image(root: Path, destination: Path | None = None) -> dict:
                 "-mno-red-zone", "-mgeneral-regs-only", "-fno-ident",
                 "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
                 "-Wall", "-Wextra", "-Werror", "-O2", "-Ikernel/include",
-                f'-DRYNOR_VERSION="{version}"', "-c", source, "-o", str(target),
+                f'-DRYNOR_VERSION="{version}"', f"-DRYNOR_TEST_VECTOR={test_vector}",
+                f"-DRYNOR_TEST_ARMED={int(test_armed)}", "-c", source, "-o", str(target),
             ], root)
             objects.append(str(target))
         link = [linker, "-m", "elf_x86_64", "-T", "kernel/arch/x86_64/linker.ld",
@@ -98,6 +110,7 @@ def build_image(root: Path, destination: Path | None = None) -> dict:
         (output / "rynoros.img").write_bytes(image)
         manifest = {
             "version": version,
+            "cpu_self_test": {"vector": test_vector, "armed": test_armed},
             "target": "x86_64-none-elf",
             "payload_sectors": sectors,
             "tools": {"clang": run_tool([clang, "--version"], root).splitlines()[0],

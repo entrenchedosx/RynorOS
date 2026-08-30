@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "version": "0.1.0",
   "os": "RynorOS",
   "kernel": "Rynorkernel",
@@ -9,8 +9,8 @@
     "status": "experimental-design"
   },
   "license": "MIT",
-  "stage": 1,
-  "status": "bootable-kernel",
+  "stage": 2,
+  "status": "cpu-exception-diagnostics",
   "target": {
     "architecture": "x86_64",
     "status": "implemented-qemu",
@@ -23,6 +23,6 @@
     "build_tools": ["clang", "ld.lld", "nasm"],
     "test_tools": ["qemu-system-x86_64", "SeaBIOS"]
   },
-  "implemented_components": ["repository-validator", "host-build-check", "repository-tests", "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test"],
+  "implemented_components": ["repository-validator", "host-build-check", "repository-tests", "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test", "kernel-gdt", "exception-idt", "exception-diagnostics", "controlled-cpu-self-test"],
   "os_build_targets": ["rynorkernel", "rynoros.img"]
 }
