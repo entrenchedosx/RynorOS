@@ -1,4 +1,4 @@
-"""Stage 0 repository contract; no kernel or language implementation."""
+"""Stage 1 repository contract; this checks metadata, not kernel execution."""
 
 import json
 from pathlib import Path
@@ -12,13 +12,13 @@ REQUIRED_DIRECTORIES = (
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
     "user/apps", "tools", "tools/build", "tools/host", "tests", "tests/repository",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
-    "docs/reports", "build",
+    "docs/reports", "build", "kernel/arch/x86_64",
 )
 RESERVED_DIRECTORIES = (
-    "kernel/arch", "kernel/core", "kernel/mm", "kernel/interrupts", "kernel/drivers",
-    "kernel/include", "rynorlang/lexer", "rynorlang/parser", "rynorlang/ast",
+    "kernel/mm", "kernel/interrupts", "kernel/drivers",
+    "rynorlang/lexer", "rynorlang/parser", "rynorlang/ast",
     "rynorlang/compiler", "rynorlang/runtime", "rynorlang/tests", "user/shell",
-    "user/lib", "user/apps", "tests/kernel", "tests/rynorlang", "tests/integration",
+    "user/lib", "user/apps", "tests/kernel", "tests/rynorlang",
     "build",
 )
 REQUIRED_FILES = (
@@ -29,12 +29,17 @@ REQUIRED_FILES = (
     "tools/build/build.py", "tools/host/repository.py",
     "tests/repository/test_repository.py", "tests/repository/test_commands.py",
     "docs/design/subsystem-template.md", "docs/design/bootstrap-dependencies.md",
-    "docs/reports/foundation.md",
+    "docs/reports/foundation.md", "docs/reports/stage1.md",
+    "boot/sector.asm", "boot/transition.asm", "kernel/arch/x86_64/entry.asm",
+    "kernel/arch/x86_64/serial.c", "kernel/arch/x86_64/linker.ld",
+    "kernel/core/main.c", "kernel/include/serial.h", "tools/host/image.py",
+    "tools/host/qemu.py", "tests/repository/test_image.py", "tests/integration/test_boot.py",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 1 is deliberately the exact Stage 0 contract, not a build-target DSL.
+# Version 2 is the exact Stage 1 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 1,
+    "schema_version": 2,
+    "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
     "language": {
@@ -43,18 +48,22 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 0,
-    "status": "foundation-only",
-    "target": {"architecture": "x86_64", "status": "planned"},
+    "stage": 1,
+    "status": "bootable-kernel",
+    "target": {"architecture": "x86_64", "status": "implemented-qemu",
+               "boot_method": "original-bios-lba-loader"},
     "bootstrap": {
         "python_minimum": "3.10",
         "python_packages": [],
         "git": "optional-version-control",
+        "build_tools": ["clang", "ld.lld", "nasm"],
+        "test_tools": ["qemu-system-x86_64", "SeaBIOS"],
     },
     "implemented_components": [
         "repository-validator", "host-build-check", "repository-tests",
+        "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test",
     ],
-    "os_build_targets": [],
+    "os_build_targets": ["rynorkernel", "rynoros.img"],
 }
 
 
@@ -73,7 +82,7 @@ def _unique_object(pairs: list) -> dict:
 
 
 def _compare_metadata(actual: object, expected: object, field: str) -> list[str]:
-    # Exact types matter: JSON false must not pass as integer stage 0.
+    # Exact types matter: JSON true must not pass as integer stage 1.
     if type(actual) is not type(expected):
         return [f"{field}: expected {type(expected).__name__}"]
     errors = []

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import os
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,10 +15,11 @@ from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES  # noqa: E402
 
 
 class CommandTests(unittest.TestCase):
-    def run_command(self, root, command):
+    def run_command(self, root, command, environment=None):
         return subprocess.run(
             [sys.executable, "-B", str(root / "tools/build/build.py"), command],
-            cwd=root.parent, capture_output=True, text=True, timeout=30,
+            cwd=root.parent, capture_output=True, text=True, timeout=60,
+            env=environment,
         )
 
     def make_fixture(self):
@@ -36,10 +38,42 @@ class CommandTests(unittest.TestCase):
         self.assertIn("Repository validation passed", result.stdout)
 
     def test_build_reports_actual_scope(self):
-        result = self.run_command(ROOT, "build")
+        root = self.make_fixture()
+        result = self.run_command(root, "build")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Python sources compiled", result.stdout)
-        self.assertIn("no kernel, compiler, or boot image was built", result.stdout)
+        self.assertIn("rynoros.img", result.stdout)
+        self.assertTrue((root / "build/rynorkernel.elf").is_file())
+        self.assertEqual((root / "build/rynoros.img").stat().st_size, 1024 * 1024)
+
+    def test_missing_compiler_fails_without_stale_image(self):
+        root = self.make_fixture()
+        image = root / "build/rynoros.img"
+        image.write_bytes(b"stale test fixture")
+        environment = dict(os.environ, RYNOR_CLANG=str(root / "missing-clang"))
+        result = self.run_command(root, "build", environment)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Required host tool", result.stderr)
+        self.assertFalse(image.exists())
+
+    def test_c_compilation_failure_stops_build(self):
+        root = self.make_fixture()
+        (root / "kernel/core/main.c").write_text("#error deliberate_compile_failure\n", encoding="utf-8")
+        result = self.run_command(root, "build")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("deliberate_compile_failure", result.stderr)
+        self.assertFalse((root / "build/rynoros.img").exists())
+
+    def test_unresolved_symbol_stops_link(self):
+        root = self.make_fixture()
+        (root / "kernel/core/main.c").write_text(
+            "extern void missing_symbol(void);\nvoid kernel_main(void) { missing_symbol(); }\n",
+            encoding="utf-8",
+        )
+        result = self.run_command(root, "build")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("undefined symbol: missing_symbol", result.stderr)
+        self.assertFalse((root / "build/rynoros.img").exists())
 
     def test_invalid_command_fails(self):
         result = self.run_command(ROOT, "boot")
