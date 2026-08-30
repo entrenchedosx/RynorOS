@@ -12,7 +12,7 @@ from exception_output import BOOT_PREFIX, VECTOR_NAMES
 from boot_output import validate_boot_output
 
 
-EXPECTED_OUTPUT = BOOT_PREFIX  # Stage 1 compatibility prefix, not the full Stage 5 log.
+EXPECTED_OUTPUT = BOOT_PREFIX  # Compatibility prefix, not the full execution log.
 
 
 def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: int = 3,

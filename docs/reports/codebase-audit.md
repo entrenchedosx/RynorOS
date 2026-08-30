@@ -1,5 +1,8 @@
 # RynorOS codebase audit
 
+Historical audit of the Stage 6 baseline. Current execution-infrastructure
+findings and verification are in [stage7-audit.md](stage7-audit.md).
+
 Audit date: 2026-08-30. Starting committed baseline:
 `be1da0a39941bf726c6d961f3d1502c38d294127` (Stage 5), matching GitHub main.
 The working tree also contained 23 modified files and seven untracked files

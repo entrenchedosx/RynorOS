@@ -14,8 +14,9 @@ calls `kernel_main`. It prints the preserved boot prefix, initializes/verifies
 the kernel GDT/IDT, performs one controlled breakpoint self-test, initializes/tests
 the physical frame allocator from the handoff map, creates/activates/tests the
 new kernel page tables, initializes/tests the bounded kernel heap, then initializes
-the PIC/PIT and verifies three real IRQ0 ticks before masking IRQs, rechecking
-PMM/VM/heap integrity and halting.
+the PIC/PIT and verifies three real IRQ0 ticks. Stage 7 then verifies stack
+ownership, lifecycle and timer-driven execution with four, two and one runnable
+contexts, before masking IRQs, rechecking PMM/VM/heap/scheduler state and halting.
 The image contains no third-party loader or OS. SeaBIOS is external emulator
 firmware, not RynorOS code; host tools never execute as guest OS services.
 
@@ -61,8 +62,8 @@ baseline. Changes to compiler flags and CPU assumptions require boot-test eviden
 
 Implemented: original freestanding C/assembly boot, serial, kernel descriptors,
 shared exception diagnostics, PIC IRQ dispatch, bounded PIT self-test and physical
-frame allocation, virtual-memory and a bounded kernel-heap API. It has no
-scheduler, privilege transitions, or OS service layer.
+frame allocation, virtual-memory, bounded kernel heap and kernel scheduling APIs.
+It has no privilege transitions or userspace OS service layer.
 
 Plan: an original, small monolithic Rynorkernel owns CPU state, memory,
 interrupts, scheduling, devices, and filesystem services. Early milestones run
@@ -137,17 +138,18 @@ not a libc `malloc` or a user allocator. See `docs/design/heap.md`.
 
 Implemented: bounded single-CPU kernel threads with real per-thread kernel
 stacks. Each stack lives in a dedicated virtual slot (PML4 index 448) as one
-faulting guard page below four RW/NX payload pages, all backed by PMM frames;
-the guard stays allocated but non-present so underflow faults. Genuine context
+unmapped, unbacked guard page below four RW/NX PMM-backed payload pages.
+Private registry identity and generation enforce stack ownership. Genuine context
 switching (`sched_resume`/`thread_switch`) redirects IRETQ to a different
 thread's saved frame. The PIT IRQ0 drives a deterministic round-robin scheduler
 that preempts threads; the bootstrap context is a first-class thread and can be
-preempted and resumed like any worker. Synchronization is irq-save/strict
-single-CPU (spinlocks only where the holder never yields). The bounded guest
-self-test proves real preemption, distinct per-worker stacks, join/reaping and
-exact PMM restoration; `scheduler_check` verifies the idle invariant. See
+preempted and resumed like any worker. Non-reused value IDs reject stale thread
+references. Synchronization is irq-save/strict single-CPU; yielding with locks
+is rejected. The bounded guest self-test uses non-yielding assembly workers,
+real saved IRQ RIP/RSP, lifecycle/ownership negatives and exact PMM restoration;
+`scheduler_check` verifies live state invariants. See
 `docs/design/scheduler.md`. No user mode, processes, SMP or address-space
-switching exists; preemption stops at a bounded tick budget.
+switching exists; the self-test masks IRQ0 at its bounded budgets.
 
 ## 5. Interrupts
 
@@ -178,7 +180,7 @@ triple-fault: there is no TSS/IST/emergency stack or general fault recovery.
 Plan: introduce input interrupts only at their milestone. Handlers must remain
 bounded and non-blocking; deferred work belongs outside interrupt context.
 APIC/multicore choices remain future work. Preemption requires safe context
-switching; **no scheduler is implemented** merely because the timer works.
+switching; the separately audited Stage 7 scheduler supplies that mechanism.
 
 ## 6. Device drivers
 
@@ -210,8 +212,9 @@ promise crash consistency until its guarantees are specified and tested.
 
 ## 8. Process/task model
 
-Plan: single kernel execution context, then cooperative kernel tasks, then user
-processes with separate address spaces and validated system-call boundaries.
+Implemented: bounded cooperative and preemptive kernel threads in one shared
+address space. Planned: user processes with separate address spaces and validated
+system-call boundaries.
 An initial in-kernel monitor and trusted test programs are not protected userspace.
 Task lifecycle, stacks, resource ownership, and cancellation/exit behavior must
 be explicit. Preemptive scheduling follows tested save/restore and synchronization.
@@ -264,7 +267,7 @@ and real QEMU integration tests. Native code is assembled, compiled, and linked;
 independent output directories yield byte-identical artifacts. QEMU captures
 the original boot prefix plus ordered CPU initialization, real state diagnostics,
 real E820/PMM initialization/full-pool tests, VM mapping/permission/fault/OOM tests,
-then timer setup/three real ticks and
+then heap, timer setup/three real ticks, Stage 7 execution tests and
 post-IRQ accounting within 10 seconds. Six required exception vectors are
 actually triggered in separate images; saved RIP is compared with the linked ELF
 symbol and register/error/flag values are checked. Default breakpoint return also
@@ -279,10 +282,12 @@ Corrupted real-map handoffs must fail before initialization. Guest map fixtures
 are explicitly synthetic validation tests, never the source of PMM allocations.
 Every launched emulator is stopped/reaped, normally via monitor `quit`. The five
 Stage 1 regression tests remain, with their prefix assertion extended to require
-the appended Stage 2–5 output. VM tests compare fault RIPs to linked symbols,
+the appended Stage 2–7 output. VM tests compare fault RIPs to linked symbols,
 test actual RX/RO/NX accesses, and reject broken CR3/TLB/zeroing/fault-arm builds.
-These checks prove neither general hardware support nor language execution,
-user-mode isolation or a scheduler.
+Scheduler probes compare hardware IRQ RIPs with a non-yielding assembly loop,
+test register/flags/stack restoration, and reject broken handoffs and ownership.
+These checks prove neither general hardware support nor language execution
+or user-mode isolation. Current evidence is in `docs/reports/stage7-audit.md`.
 
 Plan: host unit tests for pure algorithms and language passes; emulator tests
 for faults, allocation, interrupts, and native application execution; disposable

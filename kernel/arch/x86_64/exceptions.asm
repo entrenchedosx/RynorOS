@@ -3,6 +3,7 @@ default rel
 section .text
 extern exception_dispatch
 extern irq_dispatch
+extern sched_handoff
 
 ; No-error vectors get a synthetic zero. Hardware-error vectors already have
 ; a qword error slot. Do not use INT n to test a hardware-error vector.
@@ -56,6 +57,9 @@ exception_common:
     call irq_dispatch         ; Returns the frame to resume from in RAX (RAX is
                               ; volatile across the C call); scheduler preemption
                               ; redirects the IRETQ to another thread's frame.
+    mov rdi, rbx              ; original frame, still on current IRQ stack
+    mov rsi, rax              ; untrusted selected pointer is checked before use
+    call sched_handoff
     jmp .switch_back
 .exception:
     call exception_dispatch

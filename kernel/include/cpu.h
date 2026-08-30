@@ -19,9 +19,15 @@ struct exception_frame {
 
 _Static_assert(sizeof(cpu_u64) == 8, "64-bit CPU word required");
 _Static_assert(sizeof(struct exception_frame) == 176, "assembly frame size");
+_Static_assert(__builtin_offsetof(struct exception_frame, r15) == 0, "first GPR offset");
+_Static_assert(__builtin_offsetof(struct exception_frame, rax) == 112, "last GPR offset");
 _Static_assert(__builtin_offsetof(struct exception_frame, vector) == 120, "vector offset");
+_Static_assert(__builtin_offsetof(struct exception_frame, error) == 128, "error offset");
 _Static_assert(__builtin_offsetof(struct exception_frame, rip) == 136, "RIP offset");
+_Static_assert(__builtin_offsetof(struct exception_frame, cs) == 144, "CS offset");
+_Static_assert(__builtin_offsetof(struct exception_frame, rflags) == 152, "flags offset");
 _Static_assert(__builtin_offsetof(struct exception_frame, rsp) == 160, "RSP offset");
+_Static_assert(__builtin_offsetof(struct exception_frame, ss) == 168, "SS offset");
 
 int cpu_initialize(void);
 void cpu_exception_self_test(void);

@@ -1,6 +1,6 @@
 # Bootstrap dependencies
 
-## Actual requirements (unchanged from Stage 1 through Stage 6)
+## Actual requirements (unchanged from Stage 1 through the Stage 7 audit)
 
 All tools were already present on the Windows verification host. Nothing was
 downloaded, installed, or copied from another operating-system project for this

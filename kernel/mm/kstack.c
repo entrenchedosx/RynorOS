@@ -1,134 +1,105 @@
 #include "ksched.h"
-#include "paging.h"
+#include "irq.h"
 #include "io.h"
 #include "serial.h"
 
-/* Per-thread kernel stacks: KSTACK_PAGES payload frames plus a faulting guard
-   page, all real PMM frames mapped RW/NX through the active kernel address
-   space at a dedicated high virtual slot. The guard page is mapped then
-   unmapped so any access below the payload raises a page fault, but its PMM
-   frame stays allocated (a borrowed leaf) for the whole stack lifetime. */
-
-static cpu_u64 slot_used;   /* one bit per KSTACK_MAX_THREADS slot */
-
-static int context_ok(void) { return cpu_interrupts_disabled(); }
-
-static void panic(const char *reason)
+/* An absent guard needs no backing frame. Private registry owns payload RAM. */
+struct stack_record {
+    struct kstack *owner;
+    cpu_u64 generation;
+    cpu_u64 frames[KSTACK_PAGES];
+};
+static struct stack_record records[KSTACK_MAX_THREADS];
+static cpu_u64 generation;
+static cpu_u64 base_of(cpu_u64 slot) { return KSTACK_BASE + slot * KSTACK_SLOT_SIZE; }
+static int context_ok(void) { return cpu_interrupts_disabled() && !irq_in_context(); }
+static void require(int ok)
 {
-    if (serial_write("[KSTACK] failure=")) (void)serial_write(reason);
-    (void)serial_write("\r\n");
-    serial_flush();
-    cpu_halt();
+    if (!ok) {
+        (void)serial_write("[KSTACK] failure=rollback_or_ownership\r\n");
+        cpu_halt();
+    }
 }
-
-static void require(int condition, const char *reason)
-{ if (!condition) panic(reason); }
-
-static int slot_held(cpu_u64 slot)
-{ return slot < KSTACK_MAX_THREADS && ((slot_used >> slot) & 1); }
-
-static int slot_take(cpu_u64 slot)
-{
-    if (slot >= KSTACK_MAX_THREADS || slot_held(slot)) return 0;
-    slot_used |= 1ULL << slot;
-    return 1;
-}
-
-static void slot_release(cpu_u64 slot)
-{ slot_used &= ~(1ULL << slot); }
-
 int kstack_valid(const struct kstack *h)
 {
-    if (!h || h->magic != KSTACK_MAGIC || h->magic_inv != KSTACK_MAGIC_INV) return 0;
-    if (h->slot >= KSTACK_MAX_THREADS || h->base != kstack_base_of(h->slot)) return 0;
-    if (h->guard_phys % VM_PAGE_SIZE) return 0;
+    return cpu_interrupts_disabled() && h && h->slot < KSTACK_MAX_THREADS && h->generation &&
+           records[h->slot].owner == h && records[h->slot].generation == h->generation;
+}
+int kstack_bounds(const struct kstack *h, cpu_u64 *low, cpu_u64 *high)
+{
+    if (!cpu_interrupts_disabled() || !low || !high || !kstack_valid(h)) return 0;
+    *low = base_of(h->slot) + KSTACK_GUARD_BYTES;
+    *high = *low + KSTACK_PAYLOAD_BYTES;
     return 1;
 }
-
+int kstack_check(const struct kstack *h)
+{
+    if (!context_ok() || !kstack_valid(h)) return 0;
+    struct vm_mapping m;
+    if (vm_query(vm_kernel_space(), base_of(h->slot), &m) != VM_NOT_MAPPED) return 0;
+    const struct stack_record *r = &records[h->slot];
+    for (unsigned int i = 0; i < KSTACK_PAGES; ++i) {
+        enum pmm_state state;
+        if (vm_query(vm_kernel_space(), base_of(h->slot) + (i + 1) * VM_PAGE_SIZE, &m) != VM_OK ||
+            m.physical != r->frames[i] || m.permissions != VM_WRITE ||
+            pmm_query(r->frames[i], &state) != PMM_OK || state != PMM_STATE_ALLOCATED) return 0;
+        for (unsigned int j = 0; j < i; ++j) if (r->frames[i] == r->frames[j]) return 0;
+    }
+    return 1;
+}
 int kstack_alloc(struct kstack *out)
 {
-    if (!out || !context_ok() || !vm_kernel_space()) return 0;
-    cpu_u64 slot;
-    for (slot = 0; slot < KSTACK_MAX_THREADS; ++slot) if (!slot_held(slot)) break;
-    if (slot >= KSTACK_MAX_THREADS) return 0;
-    if (!slot_take(slot)) return 0;
-
-    struct kstack h = {0};
-    h.slot = slot;
-    h.base = kstack_base_of(slot);
-    h.magic = KSTACK_MAGIC;
-    h.magic_inv = KSTACK_MAGIC_INV;
-
-    /* Preflight: every slot page must be free in the kernel space. */
-    for (cpu_u64 i = 0; i < KSTACK_SLOT_PAGES; ++i) {
+    if (!context_ok() || !out || !vm_kernel_space() || generation == ~0ULL) return 0;
+    for (unsigned int i = 0; i < KSTACK_MAX_THREADS; ++i)
+        if (records[i].owner == out) return 0;
+    if (out->generation || out->slot) return 0;
+    unsigned int slot = 0;
+    while (slot < KSTACK_MAX_THREADS && records[slot].owner) ++slot;
+    if (slot == KSTACK_MAX_THREADS) return 0;
+    for (unsigned int i = 0; i <= KSTACK_PAGES; ++i) {
         struct vm_mapping m;
-        enum vm_result r = vm_query(vm_kernel_space(), h.base + i * VM_PAGE_SIZE, &m);
-        if (r == VM_OK) goto fail_release_slot;
-        if (r != VM_NOT_MAPPED) goto fail_release_slot;
+        if (vm_query(vm_kernel_space(), base_of(slot) + i * VM_PAGE_SIZE, &m) != VM_NOT_MAPPED)
+            return 0;
     }
-
-    /* Allocate all payload + guard frames first so failure leaves nothing mapped. */
-    cpu_u64 frames[KSTACK_SLOT_PAGES];
-    cpu_u64 got = 0;
-    for (; got < KSTACK_SLOT_PAGES; ++got) {
-        enum pmm_result r = pmm_allocate(&frames[got]);
-        if (r != PMM_OK) break;
-    }
-    if (got != KSTACK_SLOT_PAGES) {
-        while (got) require(pmm_release(frames[--got]) == PMM_OK, "alloc_release");
-        goto fail_release_slot;
-    }
-    h.guard_phys = frames[0];   /* lowest slot page is the guard */
-    for (cpu_u64 i = 0; i < KSTACK_PAGES; ++i) h.payload_phys[i] = frames[i + KSTACK_GUARD_PAGES];
-
-    /* Map every slot page RW/NX, then unmask the guard page so it faults. */
-    cpu_u64 mapped = 0;
-    for (; mapped < KSTACK_SLOT_PAGES; ++mapped) {
-        if (vm_map(vm_kernel_space(), h.base + mapped * VM_PAGE_SIZE, frames[mapped], VM_WRITE) != VM_OK)
+    struct stack_record r = {0};
+    unsigned int mapped = 0;
+    for (; mapped < KSTACK_PAGES; ++mapped) {
+        if (pmm_allocate(&r.frames[mapped]) != PMM_OK) break;
+        cpu_u64 va = base_of(slot) + (mapped + 1) * VM_PAGE_SIZE;
+        if (vm_map(vm_kernel_space(), va, r.frames[mapped], VM_WRITE) != VM_OK) {
+            require(pmm_release(r.frames[mapped]) == PMM_OK);
             break;
+        }
+        for (unsigned int word = 0; word < VM_PAGE_SIZE / 8; ++word)
+            ((volatile cpu_u64 *)va)[word] = 0;
     }
-    if (mapped != KSTACK_SLOT_PAGES) {
-        while (mapped) { require(vm_unmap(vm_kernel_space(), h.base + --mapped * VM_PAGE_SIZE) == VM_OK,
-                                 "alloc_unmap"); }
-        for (cpu_u64 i = 0; i < KSTACK_SLOT_PAGES; ++i)
-            require(pmm_release(frames[i]) == PMM_OK, "alloc_release2");
-        goto fail_release_slot;
+    if (mapped != KSTACK_PAGES) {
+        while (mapped) {
+            --mapped;
+            require(vm_unmap(vm_kernel_space(), base_of(slot) + (mapped + 1) * VM_PAGE_SIZE) == VM_OK);
+            require(pmm_release(r.frames[mapped]) == PMM_OK);
+        }
+        return 0;
     }
-    /* Guard is now a genuine faulting non-present page, frame still owned. */
-    if (vm_unmap(vm_kernel_space(), h.base) != VM_OK) {
-        for (cpu_u64 i = KSTACK_SLOT_PAGES; i > 0; --i)
-            require(vm_unmap(vm_kernel_space(), h.base + (i - 1) * VM_PAGE_SIZE) == VM_OK, "alloc_unmap3");
-        for (cpu_u64 i = 0; i < KSTACK_SLOT_PAGES; ++i)
-            require(pmm_release(frames[i]) == PMM_OK, "alloc_release3");
-        goto fail_release_slot;
-    }
-    struct vm_mapping gm;
-    require(vm_query(vm_kernel_space(), h.base, &gm) == VM_NOT_MAPPED, "guard_nonpresent");
-    *out = h;
+    r.owner = out; r.generation = ++generation;
+    records[slot] = r;
+    *out = (struct kstack){slot, r.generation};
     return 1;
-
-fail_release_slot:
-    slot_release(slot);
-    return 0;
 }
-
 int kstack_free(struct kstack *h)
 {
-    if (!kstack_valid(h) || !context_ok()) return 0;
-    /* Unmap the payload pages (the guard is already non-present). */
-    for (cpu_u64 i = KSTACK_GUARD_PAGES; i < KSTACK_SLOT_PAGES; ++i) {
-        cpu_u64 va = h->base + i * VM_PAGE_SIZE;
-        struct vm_mapping m;
-        if (vm_query(vm_kernel_space(), va, &m) == VM_OK)
-            require(vm_unmap(vm_kernel_space(), va) == VM_OK, "free_unmap");
+    if (!context_ok() || !kstack_check(h)) return 0;
+    cpu_u64 rsp;
+    __asm__ volatile ("mov %%rsp, %0" : "=r"(rsp));
+    cpu_u64 base = base_of(h->slot);
+    if (rsp >= base && rsp < base + KSTACK_SLOT_SIZE) return 0;
+    struct stack_record *r = &records[h->slot];
+    /* Validate the WHOLE ownership/mapping set before removing any part. */
+    for (unsigned int i = 0; i < KSTACK_PAGES; ++i) {
+        require(vm_unmap(vm_kernel_space(), base + (i + 1) * VM_PAGE_SIZE) == VM_OK);
+        require(pmm_release(r->frames[i]) == PMM_OK);
     }
-    struct vm_mapping gm;
-    require(vm_query(vm_kernel_space(), h->base, &gm) == VM_NOT_MAPPED, "free_guard_still_hidden");
-    /* Release the guard frame first, then the payload frames. */
-    require(pmm_release(h->guard_phys) == PMM_OK, "free_release_guard");
-    for (cpu_u64 i = 0; i < KSTACK_PAGES; ++i)
-        require(pmm_release(h->payload_phys[i]) == PMM_OK, "free_release_payload");
-    slot_release(h->slot);
-    h->magic = 0; h->magic_inv = 0;
+    *r = (struct stack_record){0};
+    *h = (struct kstack){0};
     return 1;
 }

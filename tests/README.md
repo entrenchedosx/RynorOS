@@ -76,14 +76,15 @@ alignment and boundary-tag coalescing, corruption detection, statistics and a
 bounded-arena OOM path, all backed by real PMM frames mapped through the kernel
 space; the host validator cross-checks the printed arena/block transcript.
 
-Stage 7 adds a strict scheduler output parser/repository test and real integration
-cases. The guest `scheduler_self_test` creates three workers with real per-thread
-kernel stacks, runs them under full PIT preemption, proves at least one genuine
-supervisor switch, distinct per-worker stack markers, join/reaping and exact PMM
-restoration, then a final idle check. Host validators record `preemptions`/`runs`;
-a normal boot plus two broken builds (no genuine preemption, PMM imbalance)
-prove the guest asserts fire with `[SCHED] failure=` halts. Logs are under
-`build/sched-tests/`.
+Stage 7's independent audit replaced assertion-only negative tests with actual
+implementation mutations. Separate guest tests cover stack ownership, guard/map
+conflicts, 0..7-frame OOM rollback, lifecycle exhaustion/reuse/stale IDs, IRQ and
+lock restrictions, then non-yielding assembly workers. Actual IRQ RIP/RSP and
+register/flag checks prove timer preemption; host comparisons use linked ELF
+symbols. Four-, two- and one-runnable-context cases are exercised. Guard/NX faults,
+bad pointers/selectors/handoffs, missing frame releases, stale IDs and broken
+register/IF restoration must fail. Normal scheduler images boot repeatedly.
+Logs are under `build/sched-tests/`; exact scope/counts are in `stage7-audit.md`.
 The audit strengthened corruption/near-full/reuse tests, actual initialization
 OOM rollback, all arena-frame ownership, and cross-subsystem accounting. A bad
 tag encoding now fails compilation rather than reaching QEMU. Tail-loss and
@@ -93,7 +94,7 @@ image-size-growth assertion was removed: binary bloat is not functionality.
 `test_audit.py` adds 8/512 MiB boots, the `max` CPU, NX-disabled rejection, and
 real firmware RAM above 4 GiB using a 32 MiB below-4G limit. No guest memory
 map is fabricated for that test. Current exact counts and command results are
-in `../docs/reports/codebase-audit.md`; audit logs are under `build/audit-tests/`.
+in `../docs/reports/stage7-audit.md`; audit logs are under `build/audit-tests/`.
 
 ## Known limitations
 
