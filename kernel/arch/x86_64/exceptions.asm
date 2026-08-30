@@ -2,6 +2,7 @@ bits 64
 default rel
 section .text
 extern exception_dispatch
+extern irq_dispatch
 
 ; No-error vectors get a synthetic zero. Hardware-error vectors already have
 ; a qword error slot. Do not use INT n to test a hardware-error vector.
@@ -11,6 +12,17 @@ exception_stub_%+vector:
 %if vector != 8 && vector != 10 && vector != 11 && vector != 12 && vector != 13 && vector != 14 && vector != 17 && vector != 21 && vector != 29 && vector != 30
     push qword 0
 %endif
+    push qword vector
+    jmp exception_common
+%assign vector vector + 1
+%endrep
+
+; PIC IRQs never push CPU error codes. Share the proven full-register entry
+; and IRETQ return, but dispatch to a separate C hardware-IRQ layer.
+%assign vector 32
+%rep 16
+irq_stub_%+vector:
+    push qword 0
     push qword vector
     jmp exception_common
 %assign vector vector + 1
@@ -39,7 +51,13 @@ exception_common:
     mov rbx, rsp
     cld                       ; SysV C requires DF=0, interrupted flags stay saved.
     and rsp, -16              ; Align before CALL without moving the saved frame.
+    cmp qword [rdi + 120], 32
+    jb .exception
+    call irq_dispatch
+    jmp .restore
+.exception:
     call exception_dispatch
+.restore:
     mov rsp, rbx              ; RBX is callee-saved by the C ABI.
     pop r15
     pop r14
@@ -65,6 +83,14 @@ exception_stub_table:
 %assign vector 0
 %rep 32
     dq exception_stub_%+vector
+%assign vector vector + 1
+%endrep
+
+global irq_stub_table
+irq_stub_table:
+%assign vector 32
+%rep 16
+    dq irq_stub_%+vector
 %assign vector vector + 1
 %endrep
 

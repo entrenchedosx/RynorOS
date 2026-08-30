@@ -1,12 +1,15 @@
 # Bootstrap dependencies
 
-## Actual requirements (unchanged from Stage 1 through Stage 2)
+## Actual requirements (unchanged from Stage 1 through Stage 3)
 
 All tools were already present on the Windows verification host. Nothing was
 downloaded, installed, or copied from another operating-system project for this
-milestones. Kernel and loader sources are original RynorOS code under MIT.
-Stage 2 adds only original freestanding C/NASM code and standard-library Python
+milestone sequence. Kernel and loader sources are original RynorOS code under MIT.
+Stages 2–3 add only original freestanding C/NASM code and standard-library Python
 tests; no toolchain, emulator, firmware, library, or package dependency changed.
+Stage 3 uses Python's `zipfile`/`struct` to package the user-supplied original icon,
+without a PNG conversion library or runtime graphics dependency. The separately
+packaged asset is not part of the executable boot image or firmware.
 
 | Dependency | Verified version | Purpose / boundary | Upstream license |
 | --- | --- | --- | --- |

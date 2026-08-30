@@ -9,7 +9,9 @@ for best-effort diagnostics, not claimed as tested or enabled CPU features.
 
 The BIOS transition remains Stage 1 code. After the original boot prefix,
 `kernel_main` calls `cpu_initialize`, then `cpu_exception_self_test`, then
-returns to the existing halt loop. No device IRQs or Stage 3 code are enabled.
+runs Stage 3 `timer_self_test`, then returns to the existing halt loop. See
+`irq-timer.md` for the separate hardware IRQ layer; the exception contract below
+is preserved.
 
 ## Public interfaces
 
@@ -24,7 +26,8 @@ All interfaces are kernel-internal, declared in `kernel/include/cpu.h`:
 - `cpu_halt()` never returns; it loops on CLI/HLT.
 
 There is no userspace ABI, scheduler context, general recovery callback, or
-interrupt-controller API. The existing serial API is unchanged.
+interrupt-controller API in this CPU header. Stage 3 uses the separate `irq.h`
+interface. The existing serial API is unchanged.
 
 ## GDT design and verification
 
@@ -51,10 +54,12 @@ it does not re-enter protected/long mode or modify paging.
 A static 256-entry array occupies 4096 BSS bytes. Each installed gate is a
 16-byte long-mode interrupt gate: selector 0x08, type/attributes 0x8e
 (present, DPL 0), IST=0, reserved fields zero. Entries 0..31 target distinct
-small stubs, all sharing `exception_common`; entries 32..255 are non-present.
+small stubs, all sharing `exception_common`. Stage 3 installs PIC IRQ stubs at
+32..47 using the same saved frame but separate `irq_dispatch`; 48..255 are non-present.
 LIDT is followed by SIDT base/limit verification and gate address/attribute checks
 before `[CPU] IDT initialized` is emitted. Exception delivery works with IF=0;
-external IRQs, PIC lines, NMI, and UART interrupts remain disabled/masked.
+PIC lines are masked during this initialization/exception test. Stage 3 subsequently
+enables IRQ0 for its bounded timer test; NMI/UART interrupts remain disabled.
 
 | Vector (decimal) | Name | CPU error slot? | Verification status |
 | --- | --- | --- | --- |
@@ -70,7 +75,8 @@ external IRQs, PIC lines, NMI, and UART interrupts remain disabled/masked.
 | 17, 21, 29, 30 | Alignment Check, Control Protection, VMM Communication, Security | Yes | Wired; feature handling unsupported |
 | 28 | Hypervisor Injection | No | Wired; unsupported |
 | 9, 15, 22–27, 31 | Reserved | No synthetic hardware error assumed | Wired defensively; unsupported |
-| 32–255 | External/device/application vectors | No gates | Unsupported; Stage 3 onward |
+| 32–47 | PIC IRQ0..15 | Synthetic zero | Stage 3 gates; real IRQ0 tested, other lines masked |
+| 48–255 | Unassigned external/application vectors | No gates | Unsupported |
 
 Architectural vector/error distinctions follow the
 [AMD64 System Programming manual, exception chapter](https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/24593.pdf).
@@ -88,7 +94,7 @@ These mode-specific rules are described in
 
 Stubs add a synthetic zero only for no-error vectors, then push the vector.
 The common entry saves all 15 non-RSP GPRs before clobbering any, samples CR2,
-passes the frame pointer and CR2 to C, clears DF for the C ABI, and aligns the
+passes the frame pointer and CR2 to exception C (IRQ vectors select separate C), clears DF for the C ABI, and aligns the
 call stack to 16 bytes. RBX retains the original frame pointer across the call.
 Compiler flags remain freestanding, general-registers-only, and no red zone.
 
@@ -140,9 +146,9 @@ diagnostic guard halts; it does not make a broken stack safe.
 
 ## Tests
 
-`python tools/build/build.py check` runs 33 repository tests and 11 integration
-tests. The five Stage 1 regression cases remain; the normal boot assertion now
-requires the unchanged prefix plus the appended complete Stage 2 transcript.
+`python tools/build/build.py check` runs 40 repository tests and 13 integration
+tests through Stage 3. The five Stage 1 regression cases remain; the normal boot
+requires the unchanged prefix plus the complete Stage 2 and timer transcripts.
 QEMU reads actual serial output with a 10-second deadline, not a fixed boot delay.
 Tests compare each saved RIP with the appropriate actual ELF symbol; require one
 exception/verified marker, exact register/error/flag data, and controlled action;
@@ -154,9 +160,10 @@ Native artifacts remain byte-identical across independent rebuild directories.
 
 No privilege changes, TSS/IST/emergency stack, stack guard, general recovery,
 memory allocation, new virtual-memory facility, memory protection policy,
-process isolation, device IRQ dispatch, controller remapping/EOI, timer, FPU/SIMD
+process isolation, FPU/SIMD
 context handling, SMP, or hardware-platform coverage beyond the tested QEMU PC.
 Faults before IDT loading, invalid stacks, or exceptions during diagnostics can
 still double/triple-fault. Wired non-test vectors and nesting are not execution
-coverage claims. Masked NMI is not an NMI-handling guarantee. Stage 3 is planned,
-not implemented; bootstrap dependencies are unchanged.
+coverage claims. Masked NMI is not an NMI-handling guarantee. Stage 3 adds only
+the separate PIC/PIT IRQ path described in `irq-timer.md`; bootstrap dependencies
+are unchanged. No Stage 4 functionality is implemented.

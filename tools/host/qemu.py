@@ -8,10 +8,11 @@ import subprocess
 import time
 
 from image import find_tool
-from exception_output import BOOT_PREFIX, VECTOR_NAMES, validate_exception_output
+from exception_output import BOOT_PREFIX, VECTOR_NAMES
+from timer_output import validate_boot_output
 
 
-EXPECTED_OUTPUT = BOOT_PREFIX  # Stage 1 compatibility prefix, not the full Stage 2 log.
+EXPECTED_OUTPUT = BOOT_PREFIX  # Stage 1 compatibility prefix, not the full Stage 3 log.
 
 
 def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: int = 3) -> bytes:
@@ -54,18 +55,23 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                 if process.poll() is not None:
                     failure = f"QEMU exited before test completion (exit {process.returncode})"
                     break
-                if not validate_exception_output(observed, test_vector):
+                if not validate_boot_output(observed, test_vector):
                     break
                 time.sleep(0.05)
             else:
                 failure = (f"Boot timed out after {timeout:g}s: " +
-                           "; ".join(validate_exception_output(observed, test_vector)))
+                           "; ".join(validate_boot_output(observed, test_vector)))
         finally:
             # HMP quit gives QEMU a normal shutdown; terminate/kill are bounded
             # fallbacks only. Always reap this exact child, never other QEMU PIDs.
             if process.poll() is None:
                 try:
-                    process.communicate(input=b"quit\n", timeout=3)
+                    # Keep the Windows stdio monitor open until it consumes the
+                    # complete command. communicate() immediately closes stdin;
+                    # its EOF can race the monitor's final newline processing.
+                    process.stdin.write(b"quit\n")
+                    process.stdin.flush()
+                    process.wait(timeout=3)
                     cleanup = "monitor-quit"
                 except (subprocess.TimeoutExpired, OSError):
                     cleanup = "terminate"
@@ -90,7 +96,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     if cleanup != "monitor-quit" or process.returncode != 0:
         failure = failure or f"QEMU did not shut down normally: {cleanup}, exit {process.returncode}"
     observed = serial.read_bytes()
-    errors = validate_exception_output(observed, test_vector)
+    errors = validate_boot_output(observed, test_vector)
     if errors:
         failure = failure or "; ".join(errors)
     if failure:
