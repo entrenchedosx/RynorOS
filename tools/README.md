@@ -3,22 +3,22 @@
 ## Purpose
 
 One Python entry point extends the foundation with a minimal native image build
-and real QEMU boot verification. Host tools are not RynorOS functionality.
+and real QEMU boot/CPU-exception verification. Host tools are not RynorOS functionality.
 
 ## Public interfaces
 
 `python tools/build/build.py COMMAND`:
 
-- `validate`: required paths, nonempty files, exact Stage 1/schema-2 metadata,
+- `validate`: required paths, nonempty files, exact Stage 2/schema-3 metadata,
   and `.rl` source recognition. Python only; not proof that code executes.
 - `build`: validate, compile all host/test Python to temporary bytecode, assemble
   NASM sources, compile freestanding C with Clang, link ELF and flat payload with
   LLD, assemble the BIOS sector, and construct a zero-padded 1 MiB raw image.
-- `test`: 26 repository/layout/CLI tests, including real build failures; requires
+- `test`: 33 repository/layout/parser/CLI tests, including real build failures; requires
   native build tools but not QEMU.
-- `boot-test`: build then run the serial smoke test; `--timeout SECONDS` defaults
+- `boot-test`: build then verify boot prefix plus full controlled breakpoint diagnostics; `--timeout SECONDS` defaults
   to 10, must be finite and greater than zero and at most 60.
-- `integration-test`: build, QEMU positive/negative tests, ELF checks, independent
+- `integration-test`: build, 11 QEMU/ELF/reproducibility tests including all six required exceptions, independent
   byte-for-byte rebuild; requires all bootstrap dependencies.
 - `check`: build, test, integration-test; short-circuits on failure.
 
@@ -44,7 +44,8 @@ tool versions and artifact hashes; it is not an OS runtime component.
 
 QEMU has no display, VGA, network, or parallel port, uses a snapshot disk, and
 has serial output separate from monitor stdio. Each run truncates old logs,
-requires both exact serial lines, and sends monitor `quit` in `finally`, with
+requires the exact legacy boot prefix and complete ordered Stage 2 diagnostics,
+checks register/error/flag values and completion state, and sends monitor `quit` in `finally`, with
 3-second normal shutdown then 2-second terminate/kill fallbacks. The owned PID is
 always waited for; forced cleanup fails a successful-boot claim. Interrupting the
 test normally also executes cleanup; forcibly killing the host runner cannot be
@@ -52,10 +53,19 @@ guaranteed to do so. `run.json` records PID, command, exit, and cleanup.
 
 ## Implementation status and tests
 
-Implemented Stage 1. `host/repository.py` owns the schema; `host/image.py` the
-fixed-layout image build; `host/qemu.py` the execution harness. Tests cover path
+Implemented through Stage 2. `host/repository.py` owns the schema; `host/image.py` the
+fixed-layout image build; `host/qemu.py` the execution harness and
+`host/exception_output.py` the captured-output validator. Tests cover path
 and metadata failures, actual compile/link failures, image bounds, output
 reproducibility, blank disk timeout, wrong version output, and stale-log rejection.
+
+The internal builder's keyword-only `test_vector` selects 0/1/3/6/13/14 and
+defaults to breakpoint (3). `test_armed=False` is a negative integration fixture.
+Only the test suite uses variant images; each triggers exactly one exception and
+is retained under ignored `build/cpu-tests/` with logs. `cpu_self_test` in the
+build manifest records the variant. The public build always uses the returning
+breakpoint. `EXPECTED_OUTPUT` in the QEMU module is the Stage 1 prefix for
+regression compatibility, not a complete Stage 2 success criterion.
 
 ## Known limitations
 

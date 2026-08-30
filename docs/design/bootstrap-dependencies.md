@@ -1,10 +1,12 @@
 # Bootstrap dependencies
 
-## Actual Stage 1 requirements
+## Actual requirements (unchanged from Stage 1 through Stage 2)
 
 All tools were already present on the Windows verification host. Nothing was
 downloaded, installed, or copied from another operating-system project for this
-milestone. Kernel and loader sources are original RynorOS code under MIT.
+milestones. Kernel and loader sources are original RynorOS code under MIT.
+Stage 2 adds only original freestanding C/NASM code and standard-library Python
+tests; no toolchain, emulator, firmware, library, or package dependency changed.
 
 | Dependency | Verified version | Purpose / boundary | Upstream license |
 | --- | --- | --- | --- |

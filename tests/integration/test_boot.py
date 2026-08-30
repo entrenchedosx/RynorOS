@@ -12,6 +12,28 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/host"))
 from image import ARTIFACTS, build_image
 from qemu import EXPECTED_OUTPUT, boot_image
+from exception_output import validate_exception_output
+import re
+
+
+def elf_symbol(path, name):
+    """Read the actual linked ELF64 symbol, without adding a host binary tool."""
+    data = path.read_bytes()
+    section_offset = struct.unpack_from("<Q", data, 40)[0]
+    section_size, section_count = struct.unpack_from("<HH", data, 58)
+    sections = [struct.unpack_from("<IIQQQQIIQQ", data, section_offset + i * section_size)
+                for i in range(section_count)]
+    for section in sections:
+        if section[1] != 2:  # SHT_SYMTAB
+            continue
+        strings = sections[section[6]]
+        strings_data = data[strings[4]:strings[4] + strings[5]]
+        for offset in range(section[4], section[4] + section[5], section[9]):
+            name_offset, _, _, _, value, _ = struct.unpack_from("<IBBHQQ", data, offset)
+            symbol = strings_data[name_offset:].split(b"\0", 1)[0].decode("ascii")
+            if symbol == name:
+                return value
+    raise AssertionError(f"Missing ELF symbol: {name}")
 
 
 class BootTests(unittest.TestCase):
@@ -23,11 +45,60 @@ class BootTests(unittest.TestCase):
     def test_actual_kernel_boots_and_qemu_is_reaped(self):
         logs = ROOT / "build/boot-test"
         before = hashlib.sha256(self.image.read_bytes()).hexdigest()
-        self.assertEqual(boot_image(self.image, logs), EXPECTED_OUTPUT)
+        observed = boot_image(self.image, logs)
+        self.assertTrue(observed.startswith(EXPECTED_OUTPUT))
+        self.assertEqual(validate_exception_output(observed), [])
+        self.assert_rip_matches_elf(observed, ROOT / "build/rynorkernel.elf", 3)
         self.assertEqual(hashlib.sha256(self.image.read_bytes()).hexdigest(), before)
         summary = json.loads((logs / "run.json").read_text(encoding="utf-8"))
         self.assertTrue(summary["reaped"])
         self.assertEqual(summary["returncode"], 0)
+        self.assertEqual(summary["cleanup"], "monitor-quit")
+
+    def assert_rip_matches_elf(self, output, elf, vector):
+        saved_rip = int(re.search(rb"\[STATE\] rip=0x([0-9a-f]{16})", output)[1], 16)
+        symbol = "cpu_test_after" if vector in (1, 3) else "cpu_test_fault"
+        self.assertEqual(saved_rip, elf_symbol(elf, symbol))
+        self.assertEqual(output.count(b"[EXCEPTION] vector="), 1)
+        self.assertEqual(output.count(b"[TEST] exception handling verified"), 1)
+
+    def verify_vector(self, vector):
+        destination = ROOT / f"build/cpu-tests/vector-{vector:02d}"
+        build_image(ROOT, destination, test_vector=vector)
+        output = boot_image(destination / "rynoros.img", destination / "logs", test_vector=vector)
+        self.assertEqual(validate_exception_output(output, vector), [])
+        self.assert_rip_matches_elf(output, destination / "rynorkernel.elf", vector)
+        summary = json.loads((destination / "logs/run.json").read_text(encoding="utf-8"))
+        self.assertTrue(summary["reaped"])
+        self.assertEqual(summary["returncode"], 0)
+        self.assertEqual(summary["cleanup"], "monitor-quit")
+
+    def test_divide_error_diagnostics(self):
+        self.verify_vector(0)
+
+    def test_debug_diagnostics(self):
+        self.verify_vector(1)
+
+    def test_invalid_opcode_diagnostics(self):
+        self.verify_vector(6)
+
+    def test_general_protection_cpu_error_code(self):
+        self.verify_vector(13)
+
+    def test_page_fault_cpu_error_code_and_cr2(self):
+        self.verify_vector(14)
+
+    def test_unarmed_breakpoint_is_fatal_not_false_success(self):
+        destination = ROOT / "build/cpu-tests/unarmed-breakpoint"
+        build_image(ROOT, destination, test_armed=False)
+        with self.assertRaisesRegex(RuntimeError, "timed out"):
+            boot_image(destination / "rynoros.img", destination / "logs", timeout=2)
+        output = (destination / "logs/serial.log").read_bytes()
+        self.assertIn(b"vector=03 name=breakpoint", output)
+        self.assertIn(b"[EXCEPTION] action=halt reason=unexpected\r\n", output)
+        self.assertNotIn(b"[TEST] exception handling verified", output)
+        summary = json.loads((destination / "logs/run.json").read_text(encoding="utf-8"))
+        self.assertTrue(summary["reaped"])
         self.assertEqual(summary["cleanup"], "monitor-quit")
 
     def test_rebuild_is_byte_identical(self):

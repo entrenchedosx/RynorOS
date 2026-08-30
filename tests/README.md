@@ -25,12 +25,22 @@ Real QEMU runs are bounded and each owned process is stopped and waited for.
 
 ## Implementation status and tests
 
-Implemented: 26 `repository/` tests for paths, metadata, extension, image layout,
-command exits, and actual native compile/link failures. Five `integration/` tests
-build the kernel/image, verify real serial execution, inspect ELF architecture,
-compare independent rebuilds, and reject blank/wrong-version images even with
-stale success logs. The positive run records its serial/logs/cleanup in
-`build/boot-test/`; negative fixtures are discarded after assertions.
+Implemented: 33 `repository/` tests for paths, metadata, extension, image layout,
+command exits, native compile/link failures, and strict diagnostic parsing.
+Parser fixtures are explicitly synthetic test data, never kernel execution evidence.
+The original 26 tests remain with the metadata assertion advanced to Stage 2.
+
+Eleven `integration/` tests retain the five Stage 1 regression cases and add
+real #DE/#DB/#UD/#GP/#PF execution and an unarmed-breakpoint negative case.
+The normal boot covers #BP and verifies IRETQ restoration. All six saved RIPs
+are compared with actual ELF symbols; complete diagnostics check seeded GPRs,
+CPU flags/selectors, hardware versus synthetic errors, and CR2 for #PF. A
+Stage 1 prefix alone cannot pass. Byte-identical rebuild, blank disk, wrong
+version, and stale-log rejection coverage remains. No existing case was removed.
+
+Normal logs are in `build/boot-test/`; variant images/logs persist in
+`build/cpu-tests/`. Blank/wrong-version temporary fixtures are discarded after
+assertions. Every run asserts normal monitor quit/reaping; forced cleanup is failure.
 
 `kernel/` reserves future isolated subsystem tests; `rynorlang/` reserves
 cross-pass language conformance. Local language fixtures can live in
@@ -38,7 +48,8 @@ cross-pass language conformance. Local language fixtures can live in
 
 ## Known limitations
 
-No hardware tests or coverage of memory allocation, interrupts, scheduling,
+No physical-hardware tests or coverage of memory allocation, device interrupts, scheduling,
 filesystem, graphics, userspace, or RynorLang execution. Serial success proves
-only this milestone. BIOS error injection and forced-QEMU-cleanup fallbacks are
+only this milestone. Other exception vectors, nested faults, TSS/IST, SIMD state,
+privilege transitions, BIOS error injection and forced-QEMU-cleanup fallbacks are
 not separately exercised; normal monitor cleanup is asserted on success/timeout.

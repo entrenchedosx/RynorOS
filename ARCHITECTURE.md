@@ -1,8 +1,8 @@
 # Intended architecture
 
-**Implemented:** foundation tooling and Stage 1 boot/serial execution under QEMU.
+**Implemented:** foundation, boot/serial, and Stage 2 CPU exception diagnostics under QEMU.
 Implemented details are explicitly labeled below; **planned** sections are future
-work and **experimental** items are unresolved proposals. Stage 2 is not complete.
+work and **experimental** items are unresolved proposals. Stage 3 is not implemented.
 
 ## 1. Boot process
 
@@ -10,7 +10,8 @@ Implemented: SeaBIOS starts the original 512-byte `boot/sector.asm` from an IDE
 raw image. BIOS extended reads load the fixed payload from LBA 1 at physical
 0x8000. Original `boot/transition.asm` establishes minimal GDT/PAE paging/long
 mode and jumps to `rynorkernel_entry`, which owns the stack, clears BSS, and
-calls `kernel_main`. Kernel serial code prints versioned startup and halts.
+calls `kernel_main`. It prints the preserved boot prefix, initializes/verifies
+the kernel GDT/IDT, performs one controlled breakpoint self-test, then halts.
 The image contains no third-party loader or OS. SeaBIOS is external emulator
 firmware, not RynorOS code; host tools never execute as guest OS services.
 
@@ -27,10 +28,19 @@ Implemented: x86-64, little-endian, one `qemu64` CPU under TCG on the pinned
 (data), and 0x18 (64-bit code). CR4.PAE, EFER.LME, and CR0.PG/WP are set; CPU
 long-mode support is checked. Kernel C uses the SysV x86-64 calling convention,
 16-byte pre-call stack alignment, no red zone, no SIMD, and no host runtime.
-Interrupts remain disabled. This minimal bring-up is not Stage 2's exception
-diagnostics, architectural hardening, or a general CPU initialization subsystem.
+Stage 2 replaces the temporary boot GDT with null, ring-0 long-code (0x08), and
+ring-0 data/stack (0x10) descriptors. `LGDT`, far return/segment reloads, `SGDT`,
+and selector checks verify the switch. It then builds a 256-slot IDT, installs
+32 exception gates, performs `LIDT`/`SIDT`, and checks gate addresses/attributes.
+The remaining 224 entries are non-present. No TSS/IST or user descriptors exist.
 
-Plan: retain the initial single-CPU scope while introducing controlled fault tests.
+Implemented tests cover #DE/#DB/#BP/#UD/#GP/#PF; only an armed self-test breakpoint
+can resume through `IRETQ`. All other exceptions halt after best-effort diagnostics.
+Device interrupts and NMI remain masked; synchronous exceptions do not require IF.
+See `docs/design/cpu.md` for frame and recovery contracts. Broader CPU hardening,
+emergency stacks, and unsupported feature-specific exceptions remain future work.
+
+Plan: retain the initial single-CPU scope while introducing device interrupt tests.
 Architecture-specific startup, registers, page tables, interrupt entry, and
 context switching belong under `kernel/arch/`. Portable policy belongs elsewhere.
 SMP, other architectures, floating-point task state, and broad hardware support
@@ -39,8 +49,9 @@ baseline. Changes to compiler flags and CPU assumptions require boot-test eviden
 
 ## 3. Kernel responsibilities
 
-Implemented: an original freestanding C/assembly kernel initializes COM1, emits
-two lines, and halts. It has no allocator, scheduler, or OS service layer.
+Implemented: original freestanding C/assembly boot, serial, kernel descriptors,
+shared exception diagnostics and controlled self-test. It has no allocator,
+scheduler, privilege transitions, or OS service layer.
 
 Plan: an original, small monolithic Rynorkernel owns CPU state, memory,
 interrupts, scheduling, devices, and filesystem services. Early milestones run
@@ -67,13 +78,18 @@ allocation failures must not silently continue with invalid pointers.
 
 ## 5. Interrupts
 
-Implemented only for boot safety: CLI, legacy PIC masks, NMI masking, and UART
-interrupt-disable. No kernel IDT/handlers exist; exceptions can triple-fault.
-The BIOS phase temporarily permits interrupts for BIOS disk services only.
+Implemented: CLI, legacy PIC masks, NMI masking, UART interrupt-disable, and a
+kernel exception IDT. Per-vector stubs normalize hardware/synthetic error slots
+and save 15 GPRs before a shared C diagnostic path. It prints vector/name/error,
+CPU-saved RIP/CS/RFLAGS/RSP/SS, GPRs, and CR2 for page faults. Stack alignment and
+DF are corrected for the C ABI; the armed breakpoint restores the original frame.
+No external IRQ dispatch, timer, controller acknowledgment, or interrupt enabling
+is implemented. BIOS temporarily permits interrupts for disk services only.
+Stack failure, faults before IDT loading, or faults during diagnostics may still
+triple-fault: there is no TSS/IST/emergency stack or general fault recovery.
 
-Plan: establish exception handlers and useful fault diagnostics before enabling
-external interrupts. Architecture entry stubs preserve a documented register
-frame. Configure and acknowledge the selected controller, then introduce timer
+Plan: use the established exception diagnostics while designing safe external
+interrupt entry. Configure and acknowledge the selected controller, then introduce timer
 and input interrupts individually. Handlers must be bounded and non-blocking;
 deferred work belongs outside interrupt context. Experimental: initial PIC/APIC
 and timer choices. Preemption follows safe context switching, not merely a timer.
@@ -151,13 +167,18 @@ The API and ownership/error conventions are experimental.
 
 ## 13. Testing strategy
 
-Implemented: 26 repository/layout/CLI checks, host Python syntax compilation,
-and five integration tests. Native code is assembled, compiled, and linked;
+Implemented: 33 repository/layout/parser/CLI checks, host Python syntax compilation,
+and 11 integration tests. Native code is assembled, compiled, and linked;
 independent output directories yield byte-identical artifacts. QEMU captures
-both exact serial lines within 10 seconds; deliberate blank/wrong-version
-images verify timeouts and stale-log rejection. Every launched emulator is
-stopped/reaped, normally via monitor `quit`. These establish Stage 1 execution,
-not language execution, general hardware support, or other kernel services.
+the original boot prefix plus ordered CPU initialization, real state diagnostics,
+and a completion marker within 10 seconds. Six required exception vectors are
+actually triggered in separate images; saved RIP is compared with the linked ELF
+symbol and register/error/flag values are checked. Default breakpoint return also
+verifies GPR/RSP/RFLAGS restoration. Blank/wrong-version/unarmed images must fail.
+Every launched emulator is stopped/reaped, normally via monitor `quit`. The five
+Stage 1 regression tests remain, with their prefix assertion extended to require
+the appended Stage 2 output. These checks prove neither general hardware support
+nor language execution, memory management, privilege isolation, or device IRQs.
 
 Plan: host unit tests for pure algorithms and language passes; emulator tests
 for faults, allocation, interrupts, and native application execution; disposable
