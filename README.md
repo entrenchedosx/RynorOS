@@ -1,6 +1,6 @@
 # RynorOS
 
-RynorOS is a new hobby operating-system project. Its intended kernel is
+RynorOS is a new hobby operating-system project. Its original kernel is
 **Rynorkernel**, and its intended native programming language is **RynorLang**
 (source extension **`.rl`**).
 
@@ -8,12 +8,21 @@ The long-term direction is a small, self-contained, integrated system inspired
 by TempleOS's simplicity and immediacy, not by reusing its implementation.
 RynorOS will not be based on Linux, BSD, another kernel, or an existing OS userspace.
 
-## Current status: repository foundation only
+## Current status: Stage 1 — bootable Rynorkernel
 
-Implemented: repository layout, project metadata, documentation, host-side
-validation, and repository tests. There is **no bootable kernel, compiler,
-shell, filesystem, userspace, or native application execution** yet. Language
-examples describe proposed syntax and cannot currently run.
+Implemented and tested in QEMU: an original BIOS disk loader, minimal x86-64
+entry, a freestanding C kernel, polled COM1 output, deterministic image build,
+and bounded boot tests. It prints two lines and halts:
+
+```text
+Rynorkernel booted.
+RynorOS 0.1.0 | x86_64 | stage1
+```
+
+There is **no memory manager, heap, scheduler, filesystem, shell, graphics,
+userspace, networking, or RynorLang compiler**. `.rl` examples still cannot run.
+Static page tables and a fixed stack exist only to enter 64-bit mode safely
+on the supported emulator configuration. Stage 2 is not implemented.
 
 Status labels throughout the project:
 
@@ -23,40 +32,54 @@ Status labels throughout the project:
 
 ## Host commands
 
-Requires Python 3.10 or newer (standard library only). Run from the repository:
+Requires Python 3.10+ (standard library), NASM, Clang, LLD, and QEMU with its
+SeaBIOS firmware for boot tests. See [dependency setup](docs/design/bootstrap-dependencies.md)
+for verified versions, PATH/override configuration, and this Windows host's paths.
+No Linux/WSL environment, host C library, third-party bootloader, Make, or ISO
+utility is used. After configuring tools, run:
 
 ```text
 python tools/build/build.py validate
 python tools/build/build.py build
 python tools/build/build.py test
+python tools/build/build.py boot-test
+python tools/build/build.py integration-test
 python tools/build/build.py check
 ```
 
-`validate` checks required paths and metadata. `build` validates and compiles
-the available host Python sources to bytecode in a temporary directory, then
-removes those temporary files; it produces no OS image. `test` runs repository
-tests. `check` runs build (including validation) and tests, stopping on failure.
-All commands return nonzero on failure and work from other working directories
-when invoked using the script's absolute path.
+`validate` checks structure/metadata using Python alone. `build` also checks host
+Python syntax, assembles/compiles/links Rynorkernel, and creates `build/rynoros.img`.
+`test` runs 26 repository, image-layout, and CLI tests (requires build tools).
+`boot-test` builds and boots with a default 10-second timeout (`--timeout 15`
+overrides it). `integration-test` builds and runs five execution/reproducibility
+checks, including real failure cases. `check` runs build, repository tests, and
+integration tests, stopping on failure. Commands return nonzero on failure and
+resolve source paths relative to the script, not the caller's working directory.
+
+Artifacts: `build/boot.bin`, `build/rynorkernel.elf`, `build/rynorkernel.bin`,
+`build/rynoros.img`, and `build/build-manifest.json` (versions, sizes, SHA-256).
+QEMU logs and process cleanup evidence are in `build/boot-test/`. Generated files
+are ignored by Git. See [Stage 1 verification](docs/reports/stage1.md).
 
 ## Layout
 
 | Path | Responsibility | Status |
 | --- | --- | --- |
-| `boot/` | Firmware/loader handoff | Planned |
-| `kernel/` | Rynorkernel hardware and resource management | Planned |
+| `boot/` | Original BIOS sector loader and long-mode transition | Implemented Stage 1 |
+| `kernel/` | 64-bit entry, C main, COM1 output | Implemented Stage 1 only |
 | `rynorlang/` | Language design and future toolchain | Experimental design |
 | `user/` | Future shell, libraries, applications | Planned |
-| `tools/` | Host validation and build entry point | Implemented foundation |
+| `tools/` | Host validation, image build, and QEMU runner | Implemented |
 | `tests/repository/` | Repository validation tests | Implemented |
-| `tests/kernel/`, `tests/rynorlang/`, `tests/integration/` | Future system tests | Planned |
+| `tests/integration/` | Boot, timeout/cleanup, ELF, and reproducibility tests | Implemented Stage 1 |
+| `tests/kernel/`, `tests/rynorlang/` | Future subsystem/conformance tests | Planned |
 | `docs/design/`, `docs/reports/` | Decisions, subsystem template, verification reports | Foundation docs |
-| `build/` | Ignored future generated output; `.gitkeep` retained | Reserved |
+| `build/` | Generated outputs/logs; `.gitkeep` retained | Implemented output area |
 
 Start with [architecture](ARCHITECTURE.md), [roadmap](ROADMAP.md),
 [RynorLang design](rynorlang/README.md), and
 [bootstrap dependencies](docs/design/bootstrap-dependencies.md).
-[project.json](project.json) is machine-readable foundation metadata.
+[project.json](project.json) is machine-readable Stage 1 metadata (schema 2).
 
 ## License and contributions
 

@@ -1,42 +1,60 @@
 # Intended architecture
 
-**Implemented:** Stage 0 repository tooling and documentation only.
-All system behavior below is **planned**; explicitly marked **experimental**
-items need decisions and prototypes. None of these interfaces exists yet.
+**Implemented:** foundation tooling and Stage 1 boot/serial execution under QEMU.
+Implemented details are explicitly labeled below; **planned** sections are future
+work and **experimental** items are unresolved proposals. Stage 2 is not complete.
 
 ## 1. Boot process
 
-Plan: firmware starts an explicitly documented bootstrap loader, which loads
-Rynorkernel and supplies a versioned handoff containing a memory map, kernel
-location, and optional framebuffer. The kernel validates the handoff, reserves
-all live boot resources, establishes its own stack and CPU state, and reports
-startup through serial output. Loader memory is reclaimed only after copying
-or releasing everything referencing it. Stage 1 must choose a boot protocol and
-firmware mode; neither is selected or implemented here. A third-party loader
-is acceptable as a disclosed bootstrap dependency, not as a kernel foundation.
-An original native loader is a later independence milestone, not a prerequisite
-for initial kernel work.
+Implemented: SeaBIOS starts the original 512-byte `boot/sector.asm` from an IDE
+raw image. BIOS extended reads load the fixed payload from LBA 1 at physical
+0x8000. Original `boot/transition.asm` establishes minimal GDT/PAE paging/long
+mode and jumps to `rynorkernel_entry`, which owns the stack, clears BSS, and
+calls `kernel_main`. Kernel serial code prints versioned startup and halts.
+The image contains no third-party loader or OS. SeaBIOS is external emulator
+firmware, not RynorOS code; host tools never execute as guest OS services.
+
+The small BIOS approach avoids UEFI packaging, ISO tools, and a separate loader
+dependency, at the cost of a QEMU-only fixed low-memory layout and 32 KiB payload
+limit. See `boot/README.md` for the exact contract. Planned: validated memory-map
+handoff, resource lifetime/reclamation, and more capable loading when needed.
+No memory map, framebuffer handoff, or versioned handoff structure exists yet.
 
 ## 2. CPU architecture
 
-Plan: x86-64, little-endian, one CPU initially, first tested under emulation.
+Implemented: x86-64, little-endian, one `qemu64` CPU under TCG on the pinned
+`pc-i440fx-10.0` machine. Bootstrap GDT selectors are 0x08 (32-bit code), 0x10
+(data), and 0x18 (64-bit code). CR4.PAE, EFER.LME, and CR0.PG/WP are set; CPU
+long-mode support is checked. Kernel C uses the SysV x86-64 calling convention,
+16-byte pre-call stack alignment, no red zone, no SIMD, and no host runtime.
+Interrupts remain disabled. This minimal bring-up is not Stage 2's exception
+diagnostics, architectural hardening, or a general CPU initialization subsystem.
+
+Plan: retain the initial single-CPU scope while introducing controlled fault tests.
 Architecture-specific startup, registers, page tables, interrupt entry, and
 context switching belong under `kernel/arch/`. Portable policy belongs elsewhere.
 SMP, other architectures, floating-point task state, and broad hardware support
-are out of initial scope. Experimental: exact baseline CPU features and ABI.
-Future freestanding code must avoid implicit host runtime dependencies and
-document compiler flags, stack alignment, red-zone policy, and calling convention.
+are out of initial scope. Experimental: future public ABI and physical-hardware
+baseline. Changes to compiler flags and CPU assumptions require boot-test evidence.
 
 ## 3. Kernel responsibilities
+
+Implemented: an original freestanding C/assembly kernel initializes COM1, emits
+two lines, and halts. It has no allocator, scheduler, or OS service layer.
 
 Plan: an original, small monolithic Rynorkernel owns CPU state, memory,
 interrupts, scheduling, devices, and filesystem services. Early milestones run
 a single kernel task. Clear internal interfaces should precede abstraction
 layers. No POSIX compatibility or existing OS userspace is assumed. A small
-freestanding C/assembly bootstrap is proposed until RynorLang can replace it;
+freestanding C/assembly bootstrap is used until RynorLang can replace it;
 this is a language/toolchain dependency, not an imported OS implementation.
 
 ## 4. Memory management
+
+Implemented only as required boot state: three zeroed page-table pages at
+0x1000–0x3fff identity-map the first 2 MiB using one writable/executable 2 MiB
+page; the fixed kernel stack spans 0x7c000–0x7ffff. This is not a physical or
+virtual memory manager and offers no isolation, allocation, or permission policy.
 
 Plan: first normalize and validate the boot memory map; exclude kernel,
 firmware, device, page-table, and handoff regions. A physical page allocator
@@ -49,6 +67,10 @@ allocation failures must not silently continue with invalid pointers.
 
 ## 5. Interrupts
 
+Implemented only for boot safety: CLI, legacy PIC masks, NMI masking, and UART
+interrupt-disable. No kernel IDT/handlers exist; exceptions can triple-fault.
+The BIOS phase temporarily permits interrupts for BIOS disk services only.
+
 Plan: establish exception handlers and useful fault diagnostics before enabling
 external interrupts. Architecture entry stubs preserve a documented register
 frame. Configure and acknowledge the selected controller, then introduce timer
@@ -58,7 +80,10 @@ and timer choices. Preemption follows safe context switching, not merely a timer
 
 ## 6. Device drivers
 
-Plan: serial diagnostics first, then minimal keyboard, display, and block-device
+Implemented: bounded polled 16550-compatible COM1 transmit at 0x3f8, 115200 baud,
+8N1, FIFO enabled, interrupts disabled; no input or general driver framework.
+
+Plan: minimal keyboard, display, and block-device
 support for a documented emulator configuration. Drivers validate device inputs
 and expose narrow internal interfaces. Polling can precede interrupts where it
 simplifies bring-up, with limitations documented. DMA requires reserved buffers
@@ -126,12 +151,16 @@ The API and ownership/error conventions are experimental.
 
 ## 13. Testing strategy
 
-Implemented: repository structure/metadata tests, malformed-metadata rejection,
-command failure checks, and host Python syntax compilation. These provide no
-evidence about booting or language execution.
+Implemented: 26 repository/layout/CLI checks, host Python syntax compilation,
+and five integration tests. Native code is assembled, compiled, and linked;
+independent output directories yield byte-identical artifacts. QEMU captures
+both exact serial lines within 10 seconds; deliberate blank/wrong-version
+images verify timeouts and stale-log rejection. Every launched emulator is
+stopped/reaped, normally via monitor `quit`. These establish Stage 1 execution,
+not language execution, general hardware support, or other kernel services.
 
 Plan: host unit tests for pure algorithms and language passes; emulator tests
-for boot, faults, allocation, interrupts, and native program execution; disposable
+for faults, allocation, interrupts, and native application execution; disposable
 image tests for filesystem corruption and recovery. Harnesses must assert
 observable behavior, record versions/configuration, enforce timeouts, and fail
 on crashes or missing results. Serial messages alone are not proof of a memory

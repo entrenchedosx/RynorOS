@@ -2,7 +2,8 @@
 
 ## Scope and honesty
 
-The current scope is Stage 0. Do not present a design, empty function, hardcoded
+The current implemented scope is Stage 1: boot, serial, and host verification
+only. Stage 2 requires a separate change. Do not present a design, empty function, hardcoded
 demo, or TODO as working functionality. Scaffolding must say it is incomplete.
 Do not import and rename another kernel or userspace. Record the provenance,
 license, version, and purpose of any introduced bootstrap dependency.
@@ -19,7 +20,9 @@ license, version, and purpose of any introduced bootstrap dependency.
 
 ## Checks
 
-Use Python 3.10+ with no third-party packages:
+Use Python 3.10+ with no third-party Python packages; native checks also require
+NASM, Clang, LLD, and QEMU/SeaBIOS. Configure tools as documented in
+`docs/design/bootstrap-dependencies.md`, then run:
 
 ```text
 python tools/build/build.py check
@@ -29,6 +32,10 @@ New host tooling needs positive and negative tests. Future subsystem changes
 need real behavior tests at the appropriate layer. Empty future test directories
 are reservations, not coverage. Report exact commands and distinguish repository
 validation from runtime verification. Never weaken a test merely to hide a failure.
+The combined check must actually execute the kernel in QEMU. Do not skip the
+boot suite when dependencies are missing. Output/logs belong under ignored
+`build/`; failed fixtures belong in temporary directories. No physical disks
+may be written by builds or tests. Preserve `.rl` as the language source suffix.
 
 ## Git
 

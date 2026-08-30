@@ -1,5 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "version": "0.1.0",
   "os": "RynorOS",
   "kernel": "Rynorkernel",
   "language": {
@@ -8,17 +9,20 @@
     "status": "experimental-design"
   },
   "license": "MIT",
-  "stage": 0,
-  "status": "foundation-only",
+  "stage": 1,
+  "status": "bootable-kernel",
   "target": {
     "architecture": "x86_64",
-    "status": "planned"
+    "status": "implemented-qemu",
+    "boot_method": "original-bios-lba-loader"
   },
   "bootstrap": {
     "python_minimum": "3.10",
     "python_packages": [],
-    "git": "optional-version-control"
+    "git": "optional-version-control",
+    "build_tools": ["clang", "ld.lld", "nasm"],
+    "test_tools": ["qemu-system-x86_64", "SeaBIOS"]
   },
-  "implemented_components": ["repository-validator", "host-build-check", "repository-tests"],
-  "os_build_targets": []
+  "implemented_components": ["repository-validator", "host-build-check", "repository-tests", "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test"],
+  "os_build_targets": ["rynorkernel", "rynoros.img"]
 }

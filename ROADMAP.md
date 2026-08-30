@@ -1,6 +1,6 @@
 # Roadmap
 
-Only Stage 0 is implemented. Every later stage is **planned**; language and ABI
+Stages 0 and 1 are implemented. Stage 2 onward remains **planned**; language and ABI
 details are **experimental** until specified and tested. Each row is a small
 delivery target with an observable exit condition, not a claim of functionality.
 Stages may be split further. Numbering is a working sequence, not a schedule.
@@ -8,8 +8,8 @@ Stages may be split further. Numbering is a working sequence, not a schedule.
 | Stage | Milestone | Exit condition |
 | --- | --- | --- |
 | 0 | Repository foundation — implemented | Required paths, metadata, documents, host checks, and repository tests pass; no OS binaries claimed. |
-| 1 | Bootable kernel | Select loader/protocol, firmware mode, compiler/linker, and emulator; original freestanding entry boots, emits a real serial message, and halts; reproducible image and timed smoke test. |
-| 2 | CPU initialization | Own stack and descriptor setup; document ABI/CPU assumptions and verify a controlled exception path. |
+| 1 | Bootable kernel — implemented | Original BIOS loader and freestanding x86-64 kernel; two real serial lines; deterministic raw image; 26 repository and five integration tests pass. See `docs/reports/stage1.md`. |
+| 2 | CPU initialization — planned | Harden/extend minimal Stage 1 stack and descriptor setup; establish controlled exception diagnostics and verify a deliberate fault under the documented CPU/ABI contract. |
 | 3 | Interrupt system | Defined entry frames, fault diagnostics, controller acknowledgment, and a verified timer interrupt. |
 | 4 | Physical memory manager | Parse real boot memory map; reserve live regions; test allocation, exhaustion, and invalid/double frees. |
 | 5 | Virtual memory | Owned page tables with permission tests, map/unmap checks, and expected page faults. |

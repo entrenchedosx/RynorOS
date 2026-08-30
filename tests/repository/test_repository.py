@@ -75,7 +75,7 @@ class RepositoryTests(unittest.TestCase):
         baseline = self.read_metadata()
         for field, value in (
             ("os", "OtherOS"), ("kernel", "Linux"), ("license", "unknown"),
-            ("stage", False), ("schema_version", True), ("stage", 1),
+            ("stage", True), ("schema_version", True), ("stage", 2),
             ("status", "bootable"), ("os_build_targets", ["kernel"]),
             ("implemented_components", ["compiler"]), ("extra", "unknown"),
         ):
