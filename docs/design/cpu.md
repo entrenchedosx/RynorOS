@@ -10,7 +10,7 @@ for best-effort diagnostics, not claimed as tested or enabled CPU features.
 Stage 4 adds real-mode E820 collection without changing the CPU-mode transition.
 After the original boot prefix,
 `kernel_main` calls `cpu_initialize`, then `cpu_exception_self_test`, then
-runs Stage 4 PMM initialization/self-tests, Stage 3 `timer_self_test`, rechecks
+runs Stage 4 PMM and Stage 5 VM initialization/self-tests, Stage 3 `timer_self_test`, rechecks
 PMM integrity, then returns to the existing halt loop. See
 `irq-timer.md` for the separate hardware IRQ layer; the exception contract below
 is preserved.
@@ -140,7 +140,7 @@ invalid DS selector 0x18, and an assembly read at the unmapped address 0x200000
 cause real faults without C undefined behavior; TF/NOP causes a real debug trap.
 Their expected frame is checked, then the handler prints `action=halt` and the
 verified marker and halts without retrying the instruction. #PF uses only the
-existing Stage 1 static mapping; no mapping allocator or paging API is added.
+existing Stage 1 static mapping and stops before the Stage 5 VM subsystem.
 
 Unarmed, repeated, wrong-vector, or mismatched-state exceptions print
 `action=halt reason=unexpected` and never a verified marker. A best-effort nested
@@ -149,8 +149,8 @@ diagnostic guard halts; it does not make a broken stack safe.
 ## Tests
 
 `python tools/build/build.py check` runs repository and integration tests through
-Stage 4. The five Stage 1 regression cases remain; the normal boot requires the
-unchanged prefix plus the complete Stage 2, PMM and timer transcripts.
+Stage 5. The five Stage 1 regression cases remain; the normal boot requires the
+unchanged prefix plus the complete Stage 2, PMM, VM and timer transcripts.
 QEMU reads actual serial output with a 10-second deadline, not a fixed boot delay.
 Tests compare each saved RIP with the appropriate actual ELF symbol; require one
 exception/verified marker, exact register/error/flag data, and controlled action;
@@ -160,8 +160,7 @@ Native artifacts remain byte-identical across independent rebuild directories.
 
 ## Known limitations / unsupported
 
-No privilege changes, TSS/IST/emergency stack, stack guard, general recovery,
-new virtual-memory facility, memory protection policy,
+No privilege changes, TSS/IST/emergency stack, safe stack-overflow recovery,
 process isolation, FPU/SIMD
 context handling, SMP, or hardware-platform coverage beyond the tested QEMU PC.
 Faults before IDT loading, invalid stacks, or exceptions during diagnostics can
@@ -169,4 +168,7 @@ still double/triple-fault. Wired non-test vectors and nesting are not execution
 coverage claims. Masked NMI is not an NMI-handling guarantee. Stage 3 adds only
 the separate PIC/PIT IRQ path described in `irq-timer.md`; bootstrap dependencies
 are unchanged. Stage 4 adds physical allocation separately in `kernel/mm/`;
-it does not alter exception recovery, privilege or paging policy.
+it does not alter exception recovery, privilege or paging policy. Stage 5 adds
+new page tables and real permissions, and routes active-kernel #PF through VM
+diagnostics. Only exact armed RO/NX/unmapped test faults resume at known assembly
+labels; unexpected faults still halt. See `virtual-memory.md`.

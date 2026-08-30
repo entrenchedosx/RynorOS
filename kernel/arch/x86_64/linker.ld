@@ -17,8 +17,13 @@ SECTIONS
     __kernel_start = .;
     .boot : { KEEP(*(.boot)) }
     .text ALIGN(16) : { *(.text.entry) *(.text .text.*) }
-    .rodata ALIGN(16) : { *(.rodata .rodata.*) }
-    .data ALIGN(16) : { *(.data .data.*) }
+    . = ALIGN(4096);
+    __text_end = .;
+    .rodata : { *(.rodata .rodata.*) }
+    . = ALIGN(4096);
+    __rodata_end = .;
+    __data_start = .;
+    .data : { *(.data .data.*) }
     __payload_end = .;
     .bss ALIGN(16) (NOLOAD) : {
         __bss_start = .;
@@ -28,6 +33,6 @@ SECTIONS
     __kernel_end = .;
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.llvm_addrsig) }
     ASSERT(boot_transition == 0x8000, "boot transition must start the flat payload")
-    ASSERT(__payload_end <= 0x10000, "Boot payload exceeds BIOS 32 KiB load window")
+    ASSERT(__payload_end <= 0x70000, "Boot payload exceeds bounded BIOS load window")
     ASSERT(__bss_end <= 0x70000, "Kernel BSS overlaps reserved stack area")
 }

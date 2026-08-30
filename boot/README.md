@@ -5,6 +5,8 @@
 Implemented Stage 1: original `sector.asm` BIOS bootstrap and `transition.asm`
 CPU-mode transition load and enter original Rynorkernel under QEMU/SeaBIOS.
 Stage 4 extends the real-mode transition with standard BIOS E820 collection.
+Stage 5 extends disk loading with bounded single-sector requests and replaces
+the temporary boot mappings later in the kernel.
 BIOS fixed-sector loading is chosen to avoid third-party loaders, filesystem
 parsers, ISO utilities, and UEFI packaging for this tiny milestone. It trades
 portability/expandability for a small, auditable path; it is not a general loader.
@@ -14,12 +16,14 @@ portability/expandability for a small, auditable path; it is not a general loade
 The generated 1 MiB raw IDE image contains a 512-byte sector with signature
 55 aa, then a flat linked payload beginning at LBA 1, then zero padding. There
 is no partition table or filesystem. NASM receives `PAYLOAD_SECTORS` from the
-actual linked payload length; counts outside 1..64 fail the build.
+actual linked payload length; counts outside 1..832 fail the build.
 
 SeaBIOS enters the boot sector at physical 0x7c00 with the drive in DL. The
 sector normalizes CS/data segments, initializes a temporary stack, checks BIOS
 extended disk support, and uses INT 13h AH=42h to load into 0800:0000 (physical
-0x8000). Disk errors print `Rynor boot: BIOS disk read failed.` to COM1 and halt.
+0x8000), one sector per call. Each successful read increments LBA and destination
+segment by 0x20, with offset zero, so no request crosses a 64 KiB boundary.
+Disk errors print `Rynor boot: BIOS disk read failed.` to COM1 and halt.
 On success it disables interrupts and jumps to `boot_transition` at 0x8000.
 
 The transition first enumerates E820 into the linker-owned 0x4000..0x5000 page,
@@ -43,7 +47,7 @@ flat binary, not ELF program headers. Entry is fixed by the linker, not a host s
 | 0x4000–0x4fff | Versioned E820 handoff, retained after boot |
 | 0x7000–0x7bff | Temporary boot stack area, top 0x7c00 |
 | 0x7c00–0x7dff | BIOS sector |
-| 0x8000–`__payload_end` | Loaded payload, linker-limited to 32 KiB |
+| 0x8000–`__payload_end` | Loaded payload, linker-bounded below 0x70000 |
 | `__bss_start`–`__bss_end` | Kernel-zeroed BSS, linker-bounded below 0x70000 |
 | 0x7c000–0x7ffff | Fixed kernel stack, top 0x80000 |
 
@@ -52,8 +56,9 @@ inferred RAM capacity. PMM validates their actual linker ranges against E820
 before publishing an allocator and conservatively reserves the first MiB.
 The physical bitmap is placed in discovered usable mapped RAM, never at a
 guessed free address. Page tables are zeroed before use. No boot/firmware memory is
-reclaimed and no virtual-memory manager exists. The first 2 MiB
-is supervisor writable/executable with no guard pages; this is not isolation.
+reclaimed. The temporary first 2 MiB is supervisor writable/executable until
+Stage 5 replaces CR3 with seven PMM-backed table pages, removes unused boot
+mappings and applies real RX/R/NX/RW permissions. See `../docs/design/virtual-memory.md`.
 
 ## Tests
 
@@ -63,9 +68,9 @@ blank disks and wrong-version payloads; source/compiler/link failure tests live
 in the repository suite. Successful QEMU runs exit normally through monitor quit.
 Stage 2 preserves this boot path and appends GDT/IDT/exception diagnostics after
 the two legacy boot lines. See `../docs/design/cpu.md` for kernel-owned tables.
-Stage 4 tests the physical frame allocator before the existing Stage 3 PIT IRQ0
-test, then checks allocator integrity again. The BIOS sector is unchanged; the
-transition now owns E820 acquisition. The icon resource package is a separate
+Stages 4/5 test physical and virtual memory before the existing Stage 3 PIT IRQ0
+test, then checks allocator integrity again. The sector uses the Stage 5 bounded
+read loop; the transition owns E820 acquisition. The icon resource package is a separate
 host-side artifact, never loaded by BIOS or inserted into the raw image.
 
 ## Known limitations

@@ -25,7 +25,7 @@ _Static_assert(__builtin_offsetof(struct exception_frame, rsp) == 160, "RSP offs
 
 int cpu_initialize(void);
 void cpu_exception_self_test(void);
-void exception_dispatch(const struct exception_frame *frame, cpu_u64 cr2);
+void exception_dispatch(struct exception_frame *frame, cpu_u64 cr2);
 __attribute__((noreturn)) void cpu_halt(void);
 
 #endif

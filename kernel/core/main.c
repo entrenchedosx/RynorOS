@@ -2,6 +2,7 @@
 #include "cpu.h"
 #include "irq.h"
 #include "pmm.h"
+#include "vm.h"
 
 /* RYNOR_VERSION is supplied from project.json, without timestamps or host paths. */
 void kernel_main(void)
@@ -16,8 +17,9 @@ void kernel_main(void)
         cpu_halt();
     cpu_exception_self_test();
     pmm_bootstrap_and_test();
+    vm_self_test();
     timer_self_test();
-    if (!pmm_check()) {
+    if (!pmm_check() || !vm_check(vm_kernel_space())) {
         serial_write("[MM] failure=post_irq_accounting\r\n");
         cpu_halt();
     }

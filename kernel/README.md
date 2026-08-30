@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Original x86-64 kernel for RynorOS. Stages 1–4 boot, print serial output, load
+Original x86-64 kernel for RynorOS. Stages 1–5 boot, print serial output, load
 kernel descriptors, diagnose one controlled exception, initialize and test E820-
-based physical frame allocation, verify three PIC/PIT
+based physical frame allocation, replace/test kernel paging, verify three PIC/PIT
 timer IRQs, mask interrupts and halt. It is not
 built on another kernel or existing OS userspace.
 
@@ -20,7 +20,8 @@ Stage 2 `include/cpu.h` declares `cpu_initialize`, `cpu_exception_self_test`,
 `exception_dispatch`, and `cpu_halt`, all kernel-internal. The kernel replaces
 the boot GDT with code selector 0x08/data selector 0x10 and installs the exception
 IDT; `docs/design/cpu.md` specifies the exact saved-frame and recovery contract.
-Only the armed default breakpoint returns; unexpected exceptions print and halt.
+The armed default breakpoint returns; Stage 5 also permits exact one-shot #PF
+test recovery. Unexpected exceptions print and halt.
 
 Stage 3 `include/irq.h` adds controller setup, static handler registration,
 mask control, separate IRQ dispatch and `timer_self_test`. See
@@ -33,7 +34,14 @@ handoff and physical frame API. `mm/README.md` and
 `../docs/design/physical-memory.md` specify normalization, bitmap ownership,
 linker/firmware reservations, explicit failure codes and statistics. Allocation
 returns 4096-byte physical frames; it does not map or zero them. PMM testing
-precedes IRQ0 testing; accounting is rechecked after the interrupts.
+precedes VM and IRQ0 testing; accounting is rechecked after the interrupts.
+
+Stage 5 `include/vm.h` and `include/paging.h` define four-level tables and a
+PMM-backed mapping API. `mm/vm.c` owns table creation/destruction, range rollback,
+permissions, queries, CR3 replacement and INVLPG; `mm/vm-test.c` handles real
+page-fault diagnostics and narrowly controlled hardware tests. The canonical
+layout, frame-window lifetime and ownership rules are in
+`../docs/design/virtual-memory.md`. There are no process address spaces yet.
 
 `include/serial.h` declares `serial_init`, `serial_write`, and `serial_flush`.
 Implementation is `arch/x86_64/serial.c`: COM1 at 0x3f8, divisor 1 (115200), 8N1,
@@ -48,7 +56,7 @@ if complete diagnostics were not delivered. No serial receiver or UART IRQ drive
 No host libc, OS APIs, dynamic loader, compiler runtime library, floating-point,
 SIMD, stack protector runtime, or red zone. Stack alignment is 16 bytes before
 CALL. IF is enabled only in the timer wait, never inside a handler. The linker enforces that
-the loaded payload ends at or below 0x10000 and BSS below 0x70000. Bootstrap state
+the loaded payload and BSS end at or below 0x70000. Bootstrap state
 is statically reserved; only real E820-usable unreserved frames enter PMM.
 
 ## Implementation status
@@ -57,9 +65,9 @@ Implemented: 64-bit entry, BSS initialization, fixed stack, C main, serial outpu
 and fixed-layout linking; kernel GDT/IDT, 32 exception entry stubs, shared C
 diagnostics in `interrupts/exceptions.c`, and an assembly-controlled self-test;
 16 IRQ stubs, `interrupts/irq.c` dispatch, `arch/x86_64/pic.c` and `timer.c`.
-`mm/` implements map validation, real frame allocation and self-tests; `drivers/` remains reserved;
+`mm/` implements map validation, real frame allocation, virtual memory and self-tests; `drivers/` remains reserved;
 device code is limited to architecture-specific serial, PIC and PIT support.
-No Stage 5 subsystem or RynorLang implementation has been added.
+No Stage 6 heap or RynorLang implementation has been added.
 
 ## Tests
 
@@ -72,14 +80,17 @@ parsing and the separate icon resource package, which no kernel code reads.
 PMM integration covers 16/64/128/256 MiB, physical writes, full-pool exhaustion,
 release/reuse, exact accounting and corrupted firmware-map rejection. All live
 linked boot/kernel ranges are checked against the reported final map.
+VM tests exercise real CR3 replacement, hardware writes/execution/faults, permission
+changes, high frames, unmapping/TLB behavior, range rollback, table zeroing and
+allocation failure, plus broken CR3/TLB/zeroing/fault-arm kernel variants.
 
 ## Known limitations
 
-Only the documented QEMU PC configuration is verified. No virtual-memory manager, heap,
+Only the documented QEMU PC configuration is verified. No heap,
 scheduler, filesystem, graphics, userspace, privilege transitions, TSS/IST,
-or general external device support beyond IRQ0. No guard page, stack-overflow detection,
-or writable/executable separation. Invalid stacks, early boot faults,
+or general external device support beyond IRQ0. No reliable stack-overflow recovery,
+process isolation or address-space switching. Invalid stacks, early boot faults,
 or faults during diagnosis can still reset the CPU; `-no-reboot` makes the runner
 fail. Other exception stubs are best-effort/unexercised, not feature-enablement
 claims. See `../docs/design/cpu.md`, `../docs/design/irq-timer.md` and
-`../docs/design/physical-memory.md`. Stage 5 remains future work.
+`../docs/design/physical-memory.md` and `../docs/design/virtual-memory.md`. Stage 6 remains future work.
