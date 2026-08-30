@@ -5,7 +5,8 @@
 Implemented Stage 5: original x86-64 four-level page tables, 4096-byte pages,
 PMM-backed table allocation, a live kernel address space, mapping/unmapping,
 translation, permissions, explicit invalidation, and real page-fault tests.
-No Stage 6 heap is included. User mode, process address spaces, context switching,
+(A bounded kernel heap is implemented separately in Stage 6; see [heap.md](heap.md).)
+User mode, process address spaces, context switching,
 copy-on-write, demand paging, swap, shared-memory policy and file-backed mappings
 are **not implemented**. Creating an empty paging hierarchy is not a process.
 
@@ -153,8 +154,12 @@ CR3 reload performs the one-time boot-to-kernel replacement with PCID/global
 pages disabled. Mapping, unmapping and permission changes use `INVLPG(va)` only
 for the active kernel space. Inactive spaces cannot have cached translations
 because this stage never activates them. Table-window changes invalidate the
-window, not every kernel address. Unmap invalidates before pruning empty tables.
-No per-operation global flush, SMP shootdown or ASID/PCID facility exists.
+window, not every kernel address. Unmap detaches empty tables before invalidation
+and frees them only after invalidation. The audit made this order explicit for
+both pruning and failed insertion: detach all affected parents, invalidate, then
+release. Correctness must not depend on later window remaps incidentally clearing
+paging-structure caches. Range rollback errors halt rather than being ignored.
+No per-operation CR3 reload, SMP shootdown or ASID/PCID facility exists.
 
 ## Fault handling
 
@@ -196,5 +201,7 @@ Known limitations: single CPU, IF=0, no NMI-safe window use, bootstrap seven-fra
 availability below 2 MiB, existing PMM metadata-placement limit, no general
 address-space activation/destruction of active spaces, no user mode/processes,
 no MMIO/cache-policy API, no large pages/PAT/PCID/global mappings, no automatic
-data ownership/refcounting, no demand paging, COW, swap or heap. No physical
+data ownership/refcounting, no demand paging, COW or swap. Dynamic kernel
+allocation is provided by the separate Stage 6 kernel-heap subsystem
+([heap.md](heap.md)), not by this VM layer. No physical
 hardware validation or general recovery from corrupted stacks/tables is claimed.

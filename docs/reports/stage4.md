@@ -1,7 +1,8 @@
 # Stage 4 — Physical memory management
 
 Historical Stage 4 snapshot. Stage 5 adds the VM subsystem and extends the BIOS
-payload limit; current behavior and verification are in `stage5.md`.
+payload limit; current behavior and verification are in `stage5.md`. (Stage 6
+adds the kernel heap; see `stage6.md`.)
 
 Implementation and verification report, 2026-08-30. Base commit:
 `726180c0559a64f46616e7944f73a9d542732b6a`. No Stage 5 work is included.
@@ -225,3 +226,4 @@ ACPI reclaim, SMP, filesystem or RynorLang. The first MiB remains conservatively
 reserved, map capacity is 64 records, and bitmap placement must fit existing
 mapped usable RAM. Reserved-address-space totals include firmware MMIO windows,
 not merely installed RAM. Next milestone is Stage 5, not started in this change.
+(Stage 6 now implements a bounded kernel heap; see `stage6.md`.)

@@ -2,10 +2,12 @@
 
 ## Scope and honesty
 
-The current implemented scope is Stage 4: boot, serial, CPU descriptors, exception
-diagnostics, PIC/PIT IRQs, real E820-based physical frame allocation, a separately
-packaged icon and host verification. Stage 5 requires a separate change;
-a virtual-memory manager, isolation and scheduler are not implemented.
+The current scope includes boot, serial, CPU descriptors/exceptions, PIC/PIT,
+real E820/physical frames, four-level virtual memory, a bounded kernel heap,
+the separately packaged icon and host verification. See
+`docs/reports/codebase-audit.md` for the audited guarantees and limitations.
+User isolation, processes and scheduling are not implemented. Do not advance
+the roadmap while an audit or correctness repair is still incomplete.
 Do not present a design, empty function, hardcoded
 demo, or TODO as working functionality. Scaffolding must say it is incomplete.
 Do not import and rename another kernel or userspace. Record the provenance,

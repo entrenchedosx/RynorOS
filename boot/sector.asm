@@ -23,7 +23,9 @@ start:
 
     mov ah, 0x41                ; Require INT 13h extended LBA reads.
     mov bx, 0x55aa
+    push ds
     int 0x13
+    pop ds
     jc disk_error
     cmp bx, 0xaa55
     jne disk_error
@@ -47,6 +49,7 @@ start:
 
 disk_error:
     cli
+    cld                         ; Do not depend on firmware's direction flag.
     ; Error-only polled COM1 diagnostics, independent of kernel serial setup.
     mov dx, 0x3fb
     mov al, 0x80

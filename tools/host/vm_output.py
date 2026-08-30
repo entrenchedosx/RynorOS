@@ -30,7 +30,7 @@ def parse_vm_output(output: bytes, pmm: dict | None = None) -> dict:
     exact("[VM] kernel mappings verified")
     exact("[TEST] VM self-test started")
     va, physical, offset = numeric(r"\[VM\] mapping va=(\d+) physical=(\d+) offset_physical=(\d+)")
-    if tables != 7 or va != 0x40000000 or physical % 4096 or root % 4096 or root == physical or offset != physical + 4088:
+    if tables != 7 or va != 0x40000000 or not physical or not root or physical % 4096 or root % 4096 or root == physical or offset != physical + 4088:
         raise ValueError("VM invalid root/mapping/translation")
     exact("[TEST] VM mapping verified")
     exact("[TEST] VM invalid mappings rejected")

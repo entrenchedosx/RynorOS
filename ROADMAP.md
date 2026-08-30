@@ -1,9 +1,13 @@
 # Roadmap
 
-Stages 0–5 are implemented. Stage 6 onward remains **planned**; language and ABI
+Stages 0–6 are implemented. Stage 7 onward remains **planned**; language and ABI
 details are **experimental** until specified and tested. Each row is a small
 delivery target with an observable exit condition, not a claim of functionality.
 Stages may be split further. Numbering is a working sequence, not a schedule.
+
+The incoming Stage 6 heap required correctness repairs despite passing its
+original suite. Current evidence and limitations are recorded in
+`docs/reports/codebase-audit.md`; stage labels do not imply production readiness.
 
 | Stage | Milestone | Exit condition |
 | --- | --- | --- |
@@ -13,7 +17,7 @@ Stages may be split further. Numbering is a working sequence, not a schedule.
 | 3 | External interrupt controller and hardware timer — implemented | PIC remap/masks/manual EOI, separate IRQ dispatch, PIT mode 2, three actual IRQ0 ticks and IRETQ returns; QEMU negative/regression tests; canonical icon packaged separately and reproducibly. No scheduler. See `docs/reports/stage3.md`. |
 | 4 | Physical memory manager — implemented | Real BIOS E820 handoff; conservative map normalization; linker/firmware/metadata reservations; 4096-byte frame allocation, release, reuse, accounting and full real-pool OOM tests; multiple-RAM QEMU and corrupted-map tests; timer works after PMM. See `docs/reports/stage4.md`. No virtual-memory manager or isolation. |
 | 5 | Virtual memory — implemented | PMM-owned four-level 4 KiB tables replace boot CR3; kernel RX/R/NX/RW layout, transactional map/unmap, permissions, translation, INVLPG, controlled real #PF, table ownership/OOM rollback, and full regressions. See `docs/reports/stage5.md`. No user mode, processes, COW, swap or heap. |
-| 6 | Kernel heap | Bounded allocation/free with alignment, failure, and stress tests. |
+| 6 | Kernel heap — implemented | Bounded allocation/free with alignment, corruption, OOM/failure, and stress tests against real frames via the Stage 5 VM map; two-sided coalescing and strict host transcript validation. See `docs/reports/stage6.md`. No user heap, realloc or grow/shrink. |
 | 7 | Hardware input | One documented keyboard device feeds a tested event queue; overflow behavior defined. |
 | 8 | Framebuffer/text output | Validated display information and bounds-safe drawing/text; serial diagnostics retained. |
 | 9 | Basic kernel runtime | Minimal strings/buffers and cooperative task lifecycle with tested context save/restore and resource ownership. |
