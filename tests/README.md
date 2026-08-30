@@ -30,7 +30,7 @@ command exits, native compile/link failures, strict diagnostic/timer/heap parsin
 canonical PNG integrity, deterministic resource package contents and PMM map/
 accounting/ownership transcript validation.
 Parser fixtures are explicitly synthetic test data, never kernel execution evidence.
-The original 26 tests remain with the metadata assertion advanced to Stage 6.
+The original 26 tests remain with the metadata assertion advanced to Stage 7.
 
 The `integration/` suite retains the five Stage 1 regression cases and adds
 real #DE/#DB/#UD/#GP/#PF execution and an unarmed-breakpoint negative case.
@@ -75,6 +75,15 @@ integration cases. The guest `heap_self_test` exercises allocation and free,
 alignment and boundary-tag coalescing, corruption detection, statistics and a
 bounded-arena OOM path, all backed by real PMM frames mapped through the kernel
 space; the host validator cross-checks the printed arena/block transcript.
+
+Stage 7 adds a strict scheduler output parser/repository test and real integration
+cases. The guest `scheduler_self_test` creates three workers with real per-thread
+kernel stacks, runs them under full PIT preemption, proves at least one genuine
+supervisor switch, distinct per-worker stack markers, join/reaping and exact PMM
+restoration, then a final idle check. Host validators record `preemptions`/`runs`;
+a normal boot plus two broken builds (no genuine preemption, PMM imbalance)
+prove the guest asserts fire with `[SCHED] failure=` halts. Logs are under
+`build/sched-tests/`.
 The audit strengthened corruption/near-full/reuse tests, actual initialization
 OOM rollback, all arena-frame ownership, and cross-subsystem accounting. A bad
 tag encoding now fails compilation rather than reaching QEMU. Tail-loss and
@@ -88,7 +97,7 @@ in `../docs/reports/codebase-audit.md`; audit logs are under `build/audit-tests/
 
 ## Known limitations
 
-No physical-hardware tests or coverage of user-mode isolation, device IRQs beyond IRQ0, scheduling,
+No physical-hardware tests or coverage of user-mode isolation, device IRQs beyond IRQ0,
 filesystem, graphics, userspace, or RynorLang execution. Serial success proves
 only this milestone. Other exception vectors, nested faults, TSS/IST, SIMD state,
 privilege transitions, BIOS disk-read error injection and forced-QEMU-cleanup fallbacks are

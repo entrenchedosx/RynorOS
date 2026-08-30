@@ -1,6 +1,7 @@
 """Hardware paging proof and independently broken kernel variants."""
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -12,7 +13,7 @@ from qemu import boot_image
 from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
 from pmm_output import PMM_END, parse_pmm_output
 from vm_output import VM_END, parse_vm_output
-from timer_output import EXCEPTION_END, TIMER_OUTPUT
+from timer_output import EXCEPTION_END
 from boot_output import POST_IRQ
 from test_boot import elf_symbol
 
@@ -36,7 +37,8 @@ class VirtualMemoryTests(unittest.TestCase):
         self.assertEqual(vm["faults"][2][2], elf_symbol(elf, "vm_test_read_fault"))
         self.assertEqual(vm["faults"][1][2], 0x40000000)
         self.assertEqual(vm["allocated"], 7 * 4096)
-        self.assertTrue(output.endswith(TIMER_OUTPUT + POST_IRQ))
+        self.assertIsNotNone(re.search(rb"\[TEST\] preemptions=(\d+) runs=(\d+)\r\n" + re.escape(POST_IRQ) + b"$",
+                                       output))
         for name in ("__text_end", "__rodata_end", "__data_start"):
             self.assertEqual(elf_symbol(elf, name) % 4096, 0)
         self.cleanup(destination / "logs")

@@ -73,9 +73,10 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/arch/x86_64/exceptions.asm", "exceptions.o"),
             ("kernel/arch/x86_64/selftest.asm", "selftest.o"),
             ("kernel/arch/x86_64/vm-test.asm", "vm-test-entry.o"),
+            ("kernel/arch/x86_64/switch.asm", "switch.o"),
         ):
             target = output / name
-            # Use NASM's default warning set as errors. Its optional -Wall
+            # NASM's default warning set becomes errors. Its optional -Wall
             # relocation-style warnings reject intentional low-address 16/32-bit
             # relocations in our mixed-mode ELF; LLD checks their actual range.
             run_tool([nasm, "-f", "elf64", "-Werror", f"-DRYNOR_TEST_VECTOR={test_vector}",
@@ -83,6 +84,7 @@ def build_image(root: Path, destination: Path | None = None, *,
             objects.append(str(target))
         for source, name in (
             ("kernel/core/main.c", "main.o"),
+            ("kernel/core/thread.c", "thread.o"),
             ("kernel/arch/x86_64/serial.c", "serial.o"),
             ("kernel/arch/x86_64/cpu.c", "cpu.o"),
             ("kernel/interrupts/exceptions.c", "exception-diagnostics.o"),
@@ -94,6 +96,7 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/mm/selftest.c", "pmm-selftest.o"),
             ("kernel/mm/vm.c", "vm.o"),
             ("kernel/mm/vm-test.c", "vm-selftest.o"),
+            ("kernel/mm/kstack.c", "kstack.o"),
             ("kernel/mm/heap.c", "heap.o"),
             ("kernel/mm/heap-test.c", "heap-test.o"),
         ):

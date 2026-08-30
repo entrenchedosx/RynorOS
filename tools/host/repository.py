@@ -59,11 +59,15 @@ REQUIRED_FILES = (
     "tests/integration/test_audit.py",
     "tests/repository/test_heap_output.py", "tests/integration/test_heap.py",
     "docs/design/heap.md", "docs/reports/stage6.md",
+    "kernel/include/ksched.h", "kernel/arch/x86_64/switch.asm", "kernel/core/thread.c",
+    "kernel/mm/kstack.c", "tools/host/sched_output.py",
+    "tests/repository/test_sched_output.py",
+    "docs/design/scheduler.md", "docs/reports/stage7.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 7 is the exact Stage 6 contract, not a build-target DSL.
+# Version 8 is the exact Stage 7 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 7,
+    "schema_version": 8,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
@@ -73,8 +77,8 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 6,
-    "status": "kernel-heap",
+    "stage": 7,
+    "status": "kernel-scheduling",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -95,6 +99,9 @@ EXPECTED_METADATA = {
         "four-level-paging", "vm-map-unmap", "vm-permissions", "vm-page-fault-tests",
         "bounded-kernel-heap", "heap-boundary-alignment", "heap-coalescing",
         "heap-stress-oom", "heap-self-test",
+        "per-thread-kernel-stacks", "kstack-guard-pages", "round-robin-scheduler",
+        "timer-preemption", "thread-abstraction", "context-switching",
+        "scheduler-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }

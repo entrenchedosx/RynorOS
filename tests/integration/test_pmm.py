@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -12,7 +13,7 @@ sys.path.insert(0, str(ROOT / "tools/host"))
 from image import build_image
 from qemu import boot_image
 from pmm_output import parse_pmm_output, PMM_END
-from timer_output import EXCEPTION_END, TIMER_OUTPUT
+from timer_output import EXCEPTION_END
 from boot_output import POST_IRQ
 from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
 from test_boot import elf_symbol
@@ -41,7 +42,8 @@ class PhysicalMemoryTests(unittest.TestCase):
                 logs = ROOT / f"build/pmm-tests/ram-{memory}"
                 output = boot_image(self.destination / "rynoros.img", logs, memory_mib=memory)
                 data = parse_pmm_output(pmm_section(output))
-                self.assertTrue(output.endswith(TIMER_OUTPUT + POST_IRQ))
+                self.assertIsNotNone(re.search(rb"\[TEST\] preemptions=(\d+) runs=(\d+)\r\n" + re.escape(POST_IRQ) + b"$",
+                                               output))
                 self.assertGreater(data["last_frame"], 0x200000)
                 self.assertEqual(data["exhausted_frames"] * 4096, data["free_bytes"])
                 # Check every frame occupied by actual linked live objects, not

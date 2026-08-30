@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "tools/host"))
 from pmm_output import validate_pmm_output, firmware_regions
 from boot_output import validate_boot_output, POST_IRQ
 from timer_output import TIMER_OUTPUT
+from sched_output import SCHED_GOOD
 from test_exception_output import parser_fixture
 from qemu import boot_image
 from test_vm_output import fixture as vm_fixture
@@ -38,8 +39,8 @@ class PmmOutputTests(unittest.TestCase):
     def test_valid_fixture_and_complete_boot(self):
         self.assertEqual(validate_pmm_output(fixture()), [])
         self.assertEqual(validate_boot_output(parser_fixture() + fixture() + vm_fixture() + heap_fixture()
-                                              + TIMER_OUTPUT + POST_IRQ), [])
-        self.assertTrue(validate_boot_output(parser_fixture() + fixture() + TIMER_OUTPUT + POST_IRQ))
+                                              + TIMER_OUTPUT + SCHED_GOOD + POST_IRQ), [])
+        self.assertTrue(validate_boot_output(parser_fixture() + fixture() + TIMER_OUTPUT + SCHED_GOOD + POST_IRQ))
         self.assertTrue(validate_boot_output(parser_fixture() + TIMER_OUTPUT))
 
     def test_every_pmm_line_is_required(self):

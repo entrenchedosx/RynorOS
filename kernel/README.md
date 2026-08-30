@@ -52,6 +52,13 @@ accounting. `heap_self_test` runs in `core/main.c` after the VM self-test and
 before the PIC/PIT timer. It requires one CPU and IF=0; it is an internal kernel
 allocator, not a libc `malloc`. See `../docs/design/heap.md`.
 
+Stage 7 `include/ksched.h`, `core/thread.c`, `mm/kstack.c` and
+`arch/x86_64/switch.asm` define bounded single-CPU kernel threads, real per-thread
+kernel stacks (each a faulting guard page below RW/NX payload frames), genuine
+context switching, and a PIT-IRQ0-driven round-robin scheduler. `scheduler_self_test`
+runs in `core/main.c` after the timer and proves real preemption; `scheduler_check`
+is part of the final integrity gate. See `../docs/design/scheduler.md`.
+
 `include/serial.h` declares `serial_init`, `serial_write`, and `serial_flush`.
 Implementation is `arch/x86_64/serial.c`: COM1 at 0x3f8, divisor 1 (115200), 8N1,
 FIFOs enabled/cleared, UART interrupts disabled. Write/flush return zero after

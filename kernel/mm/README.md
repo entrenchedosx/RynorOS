@@ -53,7 +53,8 @@ or a duplicate free list. Allocation honours power-of-two alignment (8..4096),
 and results cover OK, NOT_READY, INVALID, ALIGNMENT, OVERFLOW, OUT_OF_MEMORY,
 CORRUPT, BUSY, CONTEXT, VM_ERROR and MAPPING_CONFLICT. `heap_self_test` in
 `heap-test.c` runs from `kernel/core/main.c` after
-VM and before the PIC/PIT timer; global repository status is Stage 6. The heap
+VM and before the PIC/PIT timer; the scheduler follows the timer (
+`kernel/core/thread.c`). The heap
 requires one CPU and IF=0, and no IRQ handler may call it. See
 [heap design](../../docs/design/heap.md) for block layout, context and corruption
 checks. This is an internal kernel allocator, not a libc `malloc` or user allocator.

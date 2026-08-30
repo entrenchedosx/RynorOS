@@ -151,8 +151,8 @@ diagnostic guard halts; it does not make a broken stack safe.
 ## Tests
 
 `python tools/build/build.py check` runs repository and integration tests through
-Stage 6. The five Stage 1 regression cases remain; the normal boot requires the
-unchanged prefix plus the complete Stage 2, PMM, VM, kernel-heap and timer transcripts.
+Stage 7. The five Stage 1 regression cases remain; the normal boot requires the
+unchanged prefix plus the complete Stage 2, PMM, VM, kernel-heap, scheduler and timer transcripts.
 QEMU reads actual serial output with a 10-second deadline, not a fixed boot delay.
 Tests compare each saved RIP with the appropriate actual ELF symbol; require one
 exception/verified marker, exact register/error/flag data, and controlled action;
