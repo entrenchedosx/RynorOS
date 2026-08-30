@@ -107,8 +107,8 @@ is intentionally stopped after the test rather than silently promising uptime.
 ## Tests and known limitations
 
 The default QEMU boot must contain the unchanged boot prefix, complete Stage 2
-breakpoint diagnostics, Stage 4 PMM, Stage 5 VM and Stage 6 kernel-heap diagnostics/tests, and the exact
-ordered timer transcript followed by PMM/VM integrity checks. The harness waits
+breakpoint diagnostics, Stage 4 PMM, Stage 5 VM, Stage 6 kernel-heap and Stage 7 scheduler diagnostics/tests, and the exact
+ordered timer transcript followed by PMM/VM/scheduler integrity checks. The harness waits
 on explicit serial markers with a 10-second deadline, normally quits QEMU via
 its monitor and always reaps its owned process. Each run records cleanup/PID.
 Repository tests reject missing, changed, extra and reordered timer records.

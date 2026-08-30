@@ -52,7 +52,10 @@ class BootTests(unittest.TestCase):
         observed = boot_image(self.image, logs)
         self.assertTrue(observed.startswith(EXPECTED_OUTPUT))
         self.assertEqual(validate_boot_output(observed), [])
-        self.assertTrue(observed.endswith(TIMER_OUTPUT + POST_IRQ))
+        # The Stage 7 transcript ends with the scheduler statistics then the
+        # post-IRQ accounting line.
+        self.assertIsNotNone(re.search(rb"\[TEST\] preemptions=(\d+) runs=(\d+)\r\n" + re.escape(POST_IRQ) + b"$",
+                                       observed))
         self.assert_rip_matches_elf(observed, ROOT / "build/rynorkernel.elf", 3)
         self.assertEqual(hashlib.sha256(self.image.read_bytes()).hexdigest(), before)
         summary = json.loads((logs / "run.json").read_text(encoding="utf-8"))

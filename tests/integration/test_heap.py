@@ -1,6 +1,7 @@
 """Bounded kernel-heap proof and independently broken kernel variants."""
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -11,7 +12,6 @@ from image import build_image
 from qemu import boot_image
 from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
 from boot_output import HEAP_END, POST_IRQ
-from timer_output import TIMER_OUTPUT
 
 
 class KernelHeapTests(unittest.TestCase):
@@ -30,7 +30,8 @@ class KernelHeapTests(unittest.TestCase):
         heap = output.partition(HEAP_END)[0]
         self.assertIn(b"[HEAP] initialize arena=65536 mapped=65536", heap)
         self.assertIn(b"[TEST] HEAP self-test passed", output)
-        self.assertTrue(output.endswith(TIMER_OUTPUT + POST_IRQ))
+        self.assertIsNotNone(re.search(rb"\[TEST\] preemptions=(\d+) runs=(\d+)\r\n" + re.escape(POST_IRQ) + b"$",
+                                       output))
         self.cleanup(destination / "logs")
 
     def broken(self, name, source, old, new, reason, compile_error=False):

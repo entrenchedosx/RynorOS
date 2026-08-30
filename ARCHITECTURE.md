@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory and Stage 6 kernel heap under QEMU.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, and Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler) under QEMU.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -132,6 +132,22 @@ partition and accounting; there is no separate free list. Unsplittable tails
 belong to allocations, and only exact block payload pointers may be freed.
 It runs only in single-CPU IF=0 contexts and is an internal kernel allocator,
 not a libc `malloc` or a user allocator. See `docs/design/heap.md`.
+
+### Kernel execution infrastructure (Stage 7)
+
+Implemented: bounded single-CPU kernel threads with real per-thread kernel
+stacks. Each stack lives in a dedicated virtual slot (PML4 index 448) as one
+faulting guard page below four RW/NX payload pages, all backed by PMM frames;
+the guard stays allocated but non-present so underflow faults. Genuine context
+switching (`sched_resume`/`thread_switch`) redirects IRETQ to a different
+thread's saved frame. The PIT IRQ0 drives a deterministic round-robin scheduler
+that preempts threads; the bootstrap context is a first-class thread and can be
+preempted and resumed like any worker. Synchronization is irq-save/strict
+single-CPU (spinlocks only where the holder never yields). The bounded guest
+self-test proves real preemption, distinct per-worker stacks, join/reaping and
+exact PMM restoration; `scheduler_check` verifies the idle invariant. See
+`docs/design/scheduler.md`. No user mode, processes, SMP or address-space
+switching exists; preemption stops at a bounded tick budget.
 
 ## 5. Interrupts
 

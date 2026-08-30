@@ -53,12 +53,16 @@ exception_common:
     and rsp, -16              ; Align before CALL without moving the saved frame.
     cmp qword [rdi + 120], 32
     jb .exception
-    call irq_dispatch
-    jmp .restore
+    call irq_dispatch         ; Returns the frame to resume from in RAX (RAX is
+                              ; volatile across the C call); scheduler preemption
+                              ; redirects the IRETQ to another thread's frame.
+    jmp .switch_back
 .exception:
     call exception_dispatch
-.restore:
-    mov rsp, rbx              ; RBX is callee-saved by the C ABI.
+    mov rax, rbx              ; Synchronous faults resume from the same frame.
+.switch_back:
+    mov rsp, rax              ; RBX saved the original frame; RAX may differ only
+                              ; when the scheduler deliberately switched threads.
     pop r15
     pop r14
     pop r13

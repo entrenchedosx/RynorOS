@@ -4,6 +4,7 @@
 
 static irq_handler handlers[IRQ_COUNT];
 static int initialized;
+extern struct exception_frame *sched_tick(struct exception_frame *frame);
 
 int irq_initialize(void)
 {
@@ -26,7 +27,15 @@ int irq_set_enabled(unsigned int irq, int enabled)
     return pic_set_enabled(irq, enabled);
 }
 
-void irq_dispatch(struct exception_frame *frame)
+int irq_set_handler(unsigned int irq, irq_handler handler)
+{
+    if (!initialized || !cpu_interrupts_disabled() || irq >= IRQ_COUNT || irq == 2 ||
+        !handler || !handlers[irq]) return 0;
+    handlers[irq] = handler;
+    return 1;
+}
+
+struct exception_frame *irq_dispatch(struct exception_frame *frame)
 {
     if (frame->vector < IRQ_BASE || frame->vector >= IRQ_BASE + IRQ_COUNT)
         cpu_halt();
@@ -34,10 +43,10 @@ void irq_dispatch(struct exception_frame *frame)
     cpu_u16 active = pic_in_service();
     /* A spurious IRQ7 has no ISR bit and needs no EOI. For spurious IRQ15,
        only the master's genuine cascade service must be acknowledged. */
-    if (irq == 7 && !(active & (1u << 7))) return;
+    if (irq == 7 && !(active & (1u << 7))) return frame;
     if (irq == 15 && !(active & (1u << 15))) {
         if (active & 4) pic_eoi(2);
-        return;
+        return frame;
     }
     /* Enforce a real controller acknowledgment, not software INT injection. */
     if (!initialized || !handlers[irq] || !(active & (1u << irq)) ||
@@ -45,4 +54,8 @@ void irq_dispatch(struct exception_frame *frame)
         cpu_halt();
     handlers[irq](); /* No allocation, blocking, serial, or enabling IF here. */
     pic_eoi(irq);
+    /* The IRQ0 handler is the scheduler drive; it may redirect the resume frame.
+       All other handlers resume on the same frame. */
+    if (irq == 0) return sched_tick(frame);
+    return frame;
 }
