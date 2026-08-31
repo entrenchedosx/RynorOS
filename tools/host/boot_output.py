@@ -6,12 +6,14 @@ from timer_output import EXCEPTION_END, TIMER_OUTPUT
 from pmm_output import PMM_END, validate_pmm_output, parse_pmm_output
 from vm_output import VM_END, validate_vm_output, parse_vm_output
 from heap_output import HEAP_END, validate_heap_output, parse_heap_output
-from sched_output import SCHED_START, SCHED_END, validate_sched_output
+from sched_output import SCHED_START, SCHED_END, validate_sched_output, parse_sched_output
+from kbd_output import KBD_START, KEYS, validate_kbd_output, parse_kbd_output
+from display_output import DISPLAY_START, validate_display_output
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
 
-def validate_boot_output(output: bytes, vector: int = 3) -> list[str]:
+def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS) -> list[str]:
     if vector != 3:
         return validate_exception_output(output, vector)
     cpu, end, remaining = output.partition(EXCEPTION_END)
@@ -35,7 +37,23 @@ def validate_boot_output(output: bytes, vector: int = 3) -> list[str]:
         errors.append("Timer output missing: " + ", ".join(missing) if missing else
                       "Timer output order/count/trailing data invalid")
     stats, sep, post = after.partition(POST_IRQ)
-    errors.extend(validate_sched_output(end + stats, heap_state))
+    sched, kbd_sep, kbd = stats.partition(KBD_START)
+    sched_errors = validate_sched_output(end + sched, heap_state)
+    errors.extend(sched_errors)
+    sched_state = parse_sched_output(end + sched, heap_state) if not sched_errors else None
+    kbd_section, fb_sep, fb_section = kbd.partition(DISPLAY_START)
+    kbd_state = None
+    if kbd_sep != b"":
+        kbd_errors = validate_kbd_output(KBD_START + kbd_section, keys, sched_state)
+        errors.extend(kbd_errors)
+        if not kbd_errors:
+            kbd_state = parse_kbd_output(KBD_START + kbd_section, keys, sched_state)
+    else:
+        errors.append("Stage 8 keyboard output missing")
+    if fb_sep != b"":
+        errors.extend(validate_display_output(DISPLAY_START + fb_section, kbd_state))
+    else:
+        errors.append("Stage 9 display output missing")
     if sep == b"" or post != b"":
         errors.append("Post-IRQ accounting missing or not final")
     return errors

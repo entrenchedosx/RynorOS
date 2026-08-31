@@ -24,7 +24,8 @@ configuration. Master command/data ports are 0x20/0x21; slave 0xa0/0xa1.
 | --- | --- | --- |
 | 0..31 | Architectural CPU exceptions | Existing `exception_dispatch`, no PIC EOI |
 | 32 | Master IRQ0, PIT channel 0 | `irq_dispatch`, timer callback, master EOI |
-| 33..39 | Master IRQ1..7 | Installed gates; masked (IRQ2 reserved cascade) |
+| 33 | Master IRQ1 | Stage 8 keyboard; separately enabled/tested |
+| 34..39 | Master IRQ2..7 | Installed gates; masked (IRQ2 reserved cascade) |
 | 40..47 | Slave IRQ8..15 | Installed gates; masked; slave then master EOI |
 | 48..255 | Unassigned | Non-present gates |
 
@@ -123,10 +124,12 @@ Real negative kernel copies leave IRQ0 masked (zero ticks) or omit master EOI
 never print timer success. No fault switches are compiled into the normal
 kernel. All six CPU exception cases and original Stage 1 tests still run.
 
-Unsupported: scheduler, preemption, uptime API, variable-frequency timer API,
-APIC/SMP, device drivers other than boot/serial/PIC/PIT, TSS/IST/emergency stacks,
+Unsupported by this timer API: uptime API, variable-frequency timer API,
+APIC/SMP, TSS/IST/emergency stacks,
 physical hardware validation, nested
 interrupts and recovery from a failed stack. Guest waits have no independent
 clock-based watchdog; the host timeout detects a missing timer. No claim of
 exact host timing or lossless timer-edge accounting is made. The Stage 4 PMM
 requires IF=0 and is never called by this IRQ handler; see `physical-memory.md`.
+Stage 7 supplies kernel preemption separately; Stage 8 adds the IRQ1 keyboard
+and tests its coexistence with IRQ0. See `keyboard.md`.

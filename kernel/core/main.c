@@ -5,6 +5,8 @@
 #include "vm.h"
 #include "heap.h"
 #include "ksched.h"
+#include "kbd.h"
+#include "display.h"
 
 /* RYNOR_VERSION is supplied from project.json, without timestamps or host paths. */
 void kernel_main(void)
@@ -23,6 +25,8 @@ void kernel_main(void)
     heap_self_test();
     timer_self_test();
     scheduler_self_test();
+    keyboard_self_test();
+    display_self_test();
     if (!pmm_check() || !vm_check(vm_kernel_space()) || !heap_check() || !scheduler_check()) {
         serial_write("[MM] failure=post_irq_accounting\r\n");
         cpu_halt();

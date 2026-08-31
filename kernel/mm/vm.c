@@ -5,7 +5,8 @@
 static struct vm_space kernel_space;
 static cpu_u64 physical_limit;
 static int active;
-extern char __text_end[], __rodata_end[], __data_start[];
+#define VM_DEVICE_UC 8u /* Internal only: PAT index 3 (PCD|PWT), verified UC. */
+extern char __text_end[], __rodata_end[], __data_start[], __fb_info_start[], __fb_info_end[];
 
 int vm_canonical(cpu_u64 va)
 { return (va >> 48) == ((va & (1ULL << 47)) ? 0xffff : 0); }
@@ -116,10 +117,29 @@ static enum vm_result range_valid(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
     cpu_u64 last = va + pages * VM_PAGE_SIZE - 1;
     if (!vm_canonical(va) || !vm_canonical(last) || (va >> 47) != (last >> 47))
         return VM_NONCANONICAL;
-    /* PML4 509..511 reserved for future MMIO, the private frame window, and
-       future kernel layout. The active low bootstrap footprint is immutable. */
+    /* PML4 510..511 reserved for the private frame window and future kernel
+       layout. Slot 509 is the MMIO window served exclusively by
+       vm_map_device/vm_unmap_device (below), never by ordinary mappings or
+       unmap_range. The active low bootstrap footprint is immutable. */
     if (page_index(last, 3) >= 509 || (s == &kernel_space && va < (cpu_u64)__identity_limit))
         return VM_PERMISSION;
+    return VM_OK;
+}
+
+/* Slot-509 window validator for foreign device mappings. Requires the whole
+   range inside the one reserved MMIO slot; ordinary VM operations reject it. */
+static enum vm_result device_valid(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
+{
+    enum vm_result r = context(s);
+    if (r != VM_OK) return r;
+    if (s != &kernel_space) return VM_PERMISSION;
+    if (va % VM_PAGE_SIZE) return VM_ALIGNMENT;
+    if (!pages) return VM_INVALID;
+    if (pages > (~0ULL - va) / VM_PAGE_SIZE) return VM_OVERFLOW;
+    cpu_u64 last = va + pages * VM_PAGE_SIZE - 1;
+    if (!vm_canonical(va) || !vm_canonical(last) || (va >> 47) != (last >> 47))
+        return VM_NONCANONICAL;
+    if (page_index(va, 3) != 509 || page_index(last, 3) != 509) return VM_PERMISSION;
     return VM_OK;
 }
 
@@ -134,7 +154,8 @@ static enum vm_result permissions_valid(struct vm_space *s, unsigned int p)
 static page_entry leaf(cpu_u64 pa, unsigned int p)
 {
     return (page_entry){pa | PTE_PRESENT | ((p & VM_WRITE) ? PTE_WRITE : 0) |
-        ((p & VM_USER) ? PTE_USER : 0) | ((p & VM_EXECUTE) ? 0 : PTE_NX)};
+        ((p & VM_USER) ? PTE_USER : 0) | ((p & VM_EXECUTE) ? 0 : PTE_NX) |
+        ((p & VM_DEVICE_UC) ? PTE_PCD | PTE_PWT : 0)};
 }
 
 /* One-page transaction: on failed table allocation detach/free every new node. */
@@ -186,12 +207,16 @@ enum vm_result vm_query(struct vm_space *s, cpu_u64 va, struct vm_mapping *out)
     page_entry e = read_entry(path[0], page_index(va, 0));
     if (!pte_has(e, PTE_PRESENT)) return VM_NOT_MAPPED;
     if (pte_has(e, PTE_HUGE)) return VM_UNSUPPORTED; /* PAT is not supported either. */
-    if (e.value & ~(PTE_ADDRESS | PTE_PRESENT | PTE_WRITE | PTE_USER | PTE_ACCESS | PTE_DIRTY | PTE_NX))
+    if (e.value & ~(PTE_ADDRESS | PTE_PRESENT | PTE_WRITE | PTE_USER | PTE_ACCESS | PTE_DIRTY | PTE_NX | PTE_PCD | PTE_PWT))
         return VM_UNSUPPORTED;
+    cpu_u64 cache = e.value & (PTE_PCD | PTE_PWT);
+    if (cache && (cache != (PTE_PCD | PTE_PWT) || s != &kernel_space ||
+        page_index(va, 3) != 509 || !pte_has(e, PTE_WRITE) ||
+        !pte_has(e, PTE_NX) || pte_has(e, PTE_USER))) return VM_CORRUPT;
     if (pte_address(e) >= physical_limit) return VM_CORRUPT;
     *out = (struct vm_mapping){pte_address(e) + va % VM_PAGE_SIZE,
         (pte_has(e, PTE_WRITE) ? VM_WRITE : 0) | (pte_has(e, PTE_USER) ? VM_USER : 0) |
-        (pte_has(e, PTE_NX) ? 0 : VM_EXECUTE), pte_has(e, PTE_ACCESS), pte_has(e, PTE_DIRTY)};
+        (pte_has(e, PTE_NX) ? 0 : VM_EXECUTE), pte_has(e, PTE_ACCESS), pte_has(e, PTE_DIRTY), cache != 0};
     return VM_OK;
 }
 
@@ -204,23 +229,40 @@ enum vm_result vm_translate(struct vm_space *s, cpu_u64 va, cpu_u64 *physical)
     return r;
 }
 
-enum vm_result vm_map_range(struct vm_space *s, cpu_u64 va, cpu_u64 pa, cpu_u64 pages, unsigned int p)
+/* Frame ownership preflight: normal mappings require PMM-owned data frames;
+   device mappings require physical memory the PMM will never hand out again
+   (firmware-reserved or wholly undescribed MMIO), rejecting usable RAM. */
+static int physical_allowed(cpu_u64 pa, int device)
 {
-    enum vm_result r = range_valid(s, va, pages);
-    if (r != VM_OK) return r;
-    if ((r = permissions_valid(s, p)) != VM_OK) return r;
+    enum pmm_state state;
+    if (pmm_query(pa, &state) != PMM_OK) return 0;
+    if (!device) return state == PMM_STATE_ALLOCATED;
+    if (pa < 0x100000 || state == PMM_STATE_FREE || state == PMM_STATE_ALLOCATED) return 0;
+    unsigned int count;
+    const struct pmm_region *regions = pmm_regions(&count);
+    if (!regions) return 0;
+    for (unsigned int i = 0; i < count; ++i)
+        if (pa < regions[i].end && pa + VM_PAGE_SIZE > regions[i].base &&
+            regions[i].kind != PMM_HOLE && regions[i].kind != PMM_RESERVED) return 0;
+    return 1; /* Driver must additionally establish a real device aperture. */
+}
+
+static enum vm_result unmap_pages(struct vm_space *s, cpu_u64 va, cpu_u64 pages);
+
+static enum vm_result map_pages(struct vm_space *s, cpu_u64 va, cpu_u64 pa,
+                                cpu_u64 pages, unsigned int p, int device)
+{
     if (pa % VM_PAGE_SIZE) return VM_ALIGNMENT;
     if (pa >= physical_limit || pages > (physical_limit - pa) / VM_PAGE_SIZE) return VM_PHYSICAL;
     for (cpu_u64 i = 0; i < pages; ++i) {
-        enum pmm_state state;
-        if (pmm_query(pa + i * VM_PAGE_SIZE, &state) != PMM_OK || state != PMM_STATE_ALLOCATED)
-            return VM_PHYSICAL;
+        if (!physical_allowed(pa + i * VM_PAGE_SIZE, device)) return VM_PHYSICAL;
         struct vm_mapping m;
-        r = vm_query(s, va + i * VM_PAGE_SIZE, &m);
+        enum vm_result r = vm_query(s, va + i * VM_PAGE_SIZE, &m);
         if (r == VM_OK) return VM_EXISTS;
         if (r != VM_NOT_MAPPED) return r;
     }
     cpu_u64 done = 0;
+    enum vm_result r = VM_OK;
     for (; done < pages; ++done) {
         r = insert(s, va + done * VM_PAGE_SIZE, pa + done * VM_PAGE_SIZE, p);
         if (r != VM_OK) break;
@@ -228,34 +270,68 @@ enum vm_result vm_map_range(struct vm_space *s, cpu_u64 va, cpu_u64 pa, cpu_u64 
     if (done != pages) {
         while (done) {
             --done;
-            if (vm_unmap(s, va + done * VM_PAGE_SIZE) != VM_OK) cpu_halt();
+            if (unmap_pages(s, va + done * VM_PAGE_SIZE, 1) != VM_OK) cpu_halt();
         }
         return r;
     }
     return VM_OK;
 }
-enum vm_result vm_map(struct vm_space *s, cpu_u64 va, cpu_u64 pa, unsigned int p)
-{ return vm_map_range(s, va, pa, 1, p); }
 
-enum vm_result vm_unmap_range(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
+enum vm_result vm_map_range(struct vm_space *s, cpu_u64 va, cpu_u64 pa, cpu_u64 pages, unsigned int p)
 {
     enum vm_result r = range_valid(s, va, pages);
     if (r != VM_OK) return r;
+    if ((r = permissions_valid(s, p)) != VM_OK) return r;
+    return map_pages(s, va, pa, pages, p, 0);
+}
+enum vm_result vm_map(struct vm_space *s, cpu_u64 va, cpu_u64 pa, unsigned int p)
+{ return vm_map_range(s, va, pa, 1, p); }
+
+enum vm_result vm_map_device(struct vm_space *s, cpu_u64 va, cpu_u64 pa, cpu_u64 pages, unsigned int p)
+{
+    enum vm_result r = device_valid(s, va, pages);
+    if (r != VM_OK) return r;
+    if (p != VM_WRITE) return VM_PERMISSION;
+    cpu_u32 a, b, c, d;
+    __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1), "c"(0));
+    if (d & (1u << 16)) {
+        __asm__ volatile ("rdmsr" : "=a"(a), "=d"(d) : "c"(0x277));
+        if ((a >> 24) != 0) return VM_UNSUPPORTED; /* PAT3 must be UC, not UC-. */
+    }
+    return map_pages(s, va, pa, pages, p | VM_DEVICE_UC, 1);
+}
+
+static enum vm_result unmap_pages(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
+{
     for (cpu_u64 i = 0; i < pages; ++i) {
         struct vm_mapping m;
-        r = vm_query(s, va + i * VM_PAGE_SIZE, &m);
+        enum vm_result r = vm_query(s, va + i * VM_PAGE_SIZE, &m);
         if (r != VM_OK) return r;
     }
     for (cpu_u64 i = 0; i < pages; ++i) {
         cpu_u64 address = va + i * VM_PAGE_SIZE, path[VM_LEVELS];
-        r = walk(s, address, path);
+        enum vm_result r = walk(s, address, path);
         if (r != VM_OK) return r;
         write_entry(path[0], page_index(address, 0), (page_entry){0});
         prune(s, address, path);
     }
     return VM_OK;
 }
+
+enum vm_result vm_unmap_range(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
+{
+    enum vm_result r = range_valid(s, va, pages);
+    if (r != VM_OK) return r;
+    return unmap_pages(s, va, pages);
+}
 enum vm_result vm_unmap(struct vm_space *s, cpu_u64 va) { return vm_unmap_range(s, va, 1); }
+
+enum vm_result vm_unmap_device(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
+{
+    enum vm_result r = device_valid(s, va, pages);
+    if (r != VM_OK) return r;
+    return unmap_pages(s, va, pages);
+}
 
 enum vm_result vm_protect(struct vm_space *s, cpu_u64 va, unsigned int p)
 {
@@ -296,7 +372,10 @@ static int inspect(cpu_u64 table, unsigned int level, cpu_u64 *count)
         if (!e.value) continue;
         if (!level) {
             if (!(e.value & PTE_PRESENT) || (e.value & ~(PTE_ADDRESS | PTE_PRESENT | PTE_WRITE |
-                PTE_USER | PTE_ACCESS | PTE_DIRTY | PTE_NX)) || pte_address(e) >= physical_limit) return 0;
+                PTE_USER | PTE_ACCESS | PTE_DIRTY | PTE_NX | PTE_PCD | PTE_PWT)) || pte_address(e) >= physical_limit) return 0;
+            cpu_u64 cache = e.value & (PTE_PCD | PTE_PWT);
+            if (cache && (cache != (PTE_PCD | PTE_PWT) || !(e.value & PTE_WRITE) ||
+                !(e.value & PTE_NX) || (e.value & PTE_USER))) return 0;
         } else if (child(e) != VM_OK || !inspect(pte_address(e), level - 1, count)) return 0;
     }
     return 1;
@@ -373,6 +452,7 @@ enum vm_result vm_initialize(void)
                  (va >= (cpu_u64)__kernel_stack_start && va < (cpu_u64)__kernel_stack_end) ||
                  (va >= stats.metadata_base && va < stats.metadata_base + stats.metadata_bytes)) { mapped = 1; p = VM_WRITE; }
         else if (va >= (cpu_u64)__boot_map_start && va < (cpu_u64)__boot_map_end) mapped = 1;
+        else if (va >= (cpu_u64)__fb_info_start && va < (cpu_u64)__fb_info_end) mapped = 1;
         if (mapped) write_entry(f[3], page_index(va, 0), leaf(va, p));
     }
     /* Enable NX before publishing NX-bearing entries, then replace all boot tables. */

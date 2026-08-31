@@ -13,6 +13,7 @@ from qemu import boot_image
 from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
 from boot_output import POST_IRQ
 from sched_output import SCHED_START, SCHED_END, parse_sched_output
+from kbd_output import KBD_START
 from timer_output import TIMER_OUTPUT
 from test_boot import elf_symbol
 
@@ -35,7 +36,7 @@ class SchedulerTests(unittest.TestCase):
             finally:
                 self.cleanup(logs)
             self.assertIn(TIMER_OUTPUT, output)
-            section = SCHED_START + output.partition(SCHED_START)[2].partition(POST_IRQ)[0]
+            section = SCHED_START + output.partition(SCHED_START)[2].partition(KBD_START)[0]
             parsed = parse_sched_output(section)
             self.assertEqual(parsed["preemptions"], 48)
             elf = destination / "rynorkernel.elf"

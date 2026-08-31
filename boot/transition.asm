@@ -5,6 +5,7 @@ bits 16
 global boot_transition
 extern rynorkernel_entry
 extern __boot_map_start
+extern __fb_info_start
 extern __boot_stack_end
 extern __page_tables_start
 extern __page_tables_end
@@ -18,6 +19,7 @@ boot_transition:
     mov ss, ax
     mov sp, __boot_stack_end
     call acquire_e820
+    call acquire_display
     ; Mask legacy IRQs and NMI while no kernel exception/interrupt system exists.
     mov al, 0xff
     out 0x21, al
@@ -92,6 +94,184 @@ acquire_e820:
     mov dword [__boot_map_start + 20], 2
     cld
     ret                      ; Kernel emits a diagnostic and refuses PMM init.
+
+; Pinned QEMU stdvga at 00:02.0, not a general PCI enumerator or BIOS VBE call.
+; Validate identity, 32-bit prefetchable BAR, actual aperture and mode readback.
+; PCI memory decode is disabled while sizing BAR0; restore BAR and command
+; before ANY failure exit. Status W1C bits are never written back as ones.
+%macro pci_read 1
+    mov eax, 0x80001000 + %1
+    call .pci_read
+%endmacro
+%macro pci_write 1
+    mov eax, 0x80001000 + %1
+    call .pci_write
+%endmacro
+%macro bga_write 2
+    mov ax, %1
+    mov cx, %2
+    call .bga_write
+%endmacro
+%macro bga_read 1
+    mov ax, %1
+    call .bga_read
+%endmacro
+acquire_display:
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    cld
+    mov di, __fb_info_start
+    mov cx, 4096 / 2
+    rep stosw
+    mov dword [__fb_info_start], 0x44484246 ; 'FBHD'
+    mov dword [__fb_info_start + 4], 2      ; version
+    mov dword [__fb_info_start + 8], 2      ; pending failure
+    pci_read 0
+    cmp eax, 0x11111234
+    jne .fail
+    mov [__fb_info_start + 60], eax
+    pci_read 8
+    shr eax, 16
+    cmp ax, 0x0300
+    jne .fail
+    pci_read 4
+    movzx ebp, ax
+    and ax, 3
+    cmp ax, 3
+    jne .fail
+    pci_read 0x10
+    mov ebx, eax
+    and eax, 15
+    cmp eax, 8                 ; memory, 32-bit, prefetchable
+    jne .fail
+    mov ecx, ebp
+    and ecx, 0xfffffffd
+    pci_write 4
+    mov ecx, 0xffffffff
+    pci_write 0x10
+    pci_read 0x10
+    and eax, 0xfffffff0
+    neg eax
+    mov esi, eax               ; actual BAR aperture size
+    mov ecx, ebx
+    pci_write 0x10
+    mov ecx, ebp
+    pci_write 4
+    pci_read 0x10
+    cmp eax, ebx
+    jne .fail
+    pci_read 4
+    movzx eax, ax
+    cmp eax, ebp
+    jne .fail
+    and ebx, 0xfffffff0
+    cmp ebx, 0x100000
+    jb .fail
+    cmp esi, 4096
+    jb .fail
+    cmp esi, 0x10000000
+    ja .fail
+    mov eax, esi
+    dec eax
+    test eax, esi
+    jnz .fail
+    test ebx, eax
+    jnz .fail
+    mov eax, ebx
+    add eax, esi
+    jnc .extent_ok
+    test eax, eax              ; exclusive end of exactly 4 GiB is valid
+    jnz .fail
+.extent_ok:
+    mov [__fb_info_start + 36], ebx
+    mov [__fb_info_start + 56], esi
+    bga_read 0
+    cmp ax, 0xb0c0
+    jb .fail
+    cmp ax, 0xb0c5
+    ja .fail
+    bga_write 4, 0
+    bga_write 0, 0xb0c5
+    bga_read 0
+    cmp ax, 0xb0c5
+    jne .fail
+    mov [__fb_info_start + 12], ax
+    bga_read 0x0a
+    movzx eax, ax
+    shl eax, 16
+    cmp eax, esi
+    jne .fail
+    bga_write 1, 1024
+    bga_write 2, 768
+    bga_write 3, 32
+    bga_write 4, 0x41
+    bga_write 6, 1024           ; virtual width: pitch comes from readback
+    bga_write 8, 0
+    bga_write 9, 0
+    bga_read 4
+    cmp ax, 0x41
+    jne .fail
+    bga_read 8
+    test ax, ax
+    jnz .fail
+    bga_read 9
+    test ax, ax
+    jnz .fail
+    bga_read 1
+    cmp ax, 1024
+    jne .fail
+    mov [__fb_info_start + 16], ax
+    bga_read 2
+    cmp ax, 768
+    jne .fail
+    mov [__fb_info_start + 20], ax
+    bga_read 3
+    cmp ax, 32
+    jne .fail
+    mov [__fb_info_start + 28], ax
+    bga_read 6
+    cmp ax, 1024
+    jb .fail
+    movzx eax, ax
+    shl eax, 2
+    mov [__fb_info_start + 24], eax
+    imul eax, 768
+    cmp eax, esi
+    ja .fail
+    mov byte  [__fb_info_start + 32], 6       ; memory model 6 = direct color
+    mov dword [__fb_info_start + 40], 0xff0000 ; known QEMU x86 BGRX format
+    mov dword [__fb_info_start + 44], 0xff00   ; green mask
+    mov dword [__fb_info_start + 48], 0xff     ; blue mask
+    mov dword [__fb_info_start + 8], 1        ; publish complete handoff
+.fail:
+    ret
+.pci_read:
+    mov dx, 0xcf8
+    out dx, eax
+    mov dx, 0xcfc
+    in eax, dx
+    ret
+.pci_write:
+    mov dx, 0xcf8
+    out dx, eax
+    mov dx, 0xcfc
+    mov eax, ecx
+    out dx, eax
+    ret
+.bga_read:
+    mov dx, 0x1ce
+    out dx, ax
+    mov dx, 0x1cf
+    in ax, dx
+    ret
+.bga_write:
+    mov dx, 0x1ce
+    out dx, ax
+    mov dx, 0x1cf
+    mov ax, cx
+    out dx, ax
+    ret
 
 bits 32
 protected_entry:

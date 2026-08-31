@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, and Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler) under QEMU.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), and Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence) under QEMU.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -16,7 +16,10 @@ the physical frame allocator from the handoff map, creates/activates/tests the
 new kernel page tables, initializes/tests the bounded kernel heap, then initializes
 the PIC/PIT and verifies three real IRQ0 ticks. Stage 7 then verifies stack
 ownership, lifecycle and timer-driven execution with four, two and one runnable
-contexts, before masking IRQs, rechecking PMM/VM/heap/scheduler state and halting.
+contexts and verifying preemption, then, in Stage 8, explicitly configures the
+i8042/keyboard and consumes eight host-selected keys while IRQ0 schedules a worker,
+then, in Stage 9, consumes the boot-collected PCI/BGA handoff and paints/verifies
+a pattern with interrupts disabled, rechecks memory/execution state and halts.
 The image contains no third-party loader or OS. SeaBIOS is external emulator
 firmware, not RynorOS code; host tools never execute as guest OS services.
 
@@ -27,7 +30,9 @@ crosses a 64 KiB boundary. BSS is zeroed separately below the fixed stack, not r
 disk. See `boot/README.md` for the exact contract. Stage 4 adds a bounded/versioned
 E820 handoff at linker-owned 0x4000..0x5000, with actual returned entry lengths
 and completion status. Planned: reclamation and more capable loading when needed.
-No framebuffer handoff or general boot-argument protocol exists yet.
+Stage 9 adds a version-2, 64-byte display handoff in the reserved page
+0x5000..0x6000, collected by the real-mode transition and mapped read-only/NX.
+No general boot-argument protocol exists yet.
 
 ## 2. CPU architecture
 
@@ -118,7 +123,8 @@ are implemented. Only table frames are VM-owned; data mappings borrow caller-own
 PMM frames. All calls require one CPU and IF=0. See
 `docs/design/virtual-memory.md` for layout, formats, APIs, errors and ownership.
 No generic address-space switching, user mode/processes, COW, demand paging,
-swap, new large pages or MMIO mapping API exists.
+swap or new large pages exist. Stage 9 adds a narrowly scoped MMIO mapping API
+with firmware-type/device-ownership checks and validated UC cache encoding.
 
 ### Kernel heap (Stage 6)
 
@@ -186,19 +192,33 @@ switching; the separately audited Stage 7 scheduler supplies that mechanism.
 
 Implemented: bounded polled 16550-compatible COM1 transmit at 0x3f8, 115200 baud,
 8N1, FIFO enabled, UART interrupts disabled; also architecture-specific PIC/PIT
-configuration and IRQ0 handling. No input or general driver framework exists.
+configuration and IRQ0 handling, plus the Stage 8 PS/2 keyboard on the i8042
+controller at port 0x60/0x64 on IRQ1. The keyboard ISR pushes raw scan codes into
+a bounded drop-newest ring (no allocation/serial/blocking); a set-1 decoder maps
+the tested key table to press/release events. See `docs/design/keyboard.md`.
+
+Stage 9 adds a Bochs VBE linear frame buffer: real-mode handoff programs the BGA
+registers (1024x768x32, ENABLE 0x41) and reads the LFB base from PCI BAR0, then
+the kernel driver validates the 64-byte version-2 handoff and matches actual
+PCI/BGA state, maps the whole frame uncached supervisor RW/NX at
+`VM_MMIO_BASE` (PML4 slot 509) with `vm_map_device`, and exposes a clipped,
+bounds-checked rect/pixel/text API over BGRX. Host pixel evidence is captured
+independently via full QEMU HMP `pmemsave` and actual `screendump` scanout,
+including every supported glyph. See `docs/design/framebuffer.md`.
+No general driver framework exists beyond that layout.
 
 The official icon at `assets/branding/icon.png` is an original-byte-preserving
 project resource. Host builds package it and a manifest in a separate deterministic
 `rynoros-resources.zip`; it is not in the kernel/boot image. No guest reads or
-renders it. Graphics, a PNG decoder, resource loading and conversion are future work.
+renders it. A GUI, PNG decoder, resource loading and conversion are future work.
 
-Plan: minimal keyboard, display, and block-device
+Plan: keyboard/display coverage beyond the documented subsets, and block-device
 support for a documented emulator configuration. Drivers validate device inputs
 and expose narrow internal interfaces. Polling can precede interrupts where it
 simplifies bring-up, with limitations documented. DMA requires reserved buffers
 and address/lifetime rules before use. Real hardware, USB, networking, and broad
-driver coverage are deferred. Device models and register contracts remain open.
+driver coverage are deferred. Future device models and register contracts remain
+open; the current keyboard and framebuffer contracts are documented above.
 
 ## 7. Filesystem
 
@@ -267,8 +287,9 @@ and real QEMU integration tests. Native code is assembled, compiled, and linked;
 independent output directories yield byte-identical artifacts. QEMU captures
 the original boot prefix plus ordered CPU initialization, real state diagnostics,
 real E820/PMM initialization/full-pool tests, VM mapping/permission/fault/OOM tests,
-then heap, timer setup/three real ticks, Stage 7 execution tests and
-post-IRQ accounting within 10 seconds. Six required exception vectors are
+then heap, timer setup/three real ticks, Stage 7 execution tests, Stage 8
+keyboard `sendkey` handshake and Stage 9 framebuffer pixel evidence, then
+post-IRQ accounting within 30 seconds. Six required exception vectors are
 actually triggered in separate images; saved RIP is compared with the linked ELF
 symbol and register/error/flag values are checked. Default breakpoint return also
 verifies GPR/RSP/RFLAGS restoration. Blank/wrong-version/unarmed images must fail.
@@ -287,7 +308,8 @@ test actual RX/RO/NX accesses, and reject broken CR3/TLB/zeroing/fault-arm build
 Scheduler probes compare hardware IRQ RIPs with a non-yielding assembly loop,
 test register/flags/stack restoration, and reject broken handoffs and ownership.
 These checks prove neither general hardware support nor language execution
-or user-mode isolation. Current evidence is in `docs/reports/stage7-audit.md`.
+or user-mode isolation. Current evidence is in `docs/reports/stage9-audit.md`;
+the Stage 7 and Stage 8 audits retain their historical findings.
 
 Plan: host unit tests for pure algorithms and language passes; emulator tests
 for faults, allocation, interrupts, and native application execution; disposable
