@@ -45,6 +45,7 @@ flat binary, not ELF program headers. Entry is fixed by the linker, not a host s
 | 0x2000–0x2fff | PDPT |
 | 0x3000–0x3fff | Page directory, one identity-mapped 2 MiB page |
 | 0x4000–0x4fff | Versioned E820 handoff, retained after boot |
+| 0x5000–0x5fff | Version-2 PCI/BGA display handoff, retained read-only/NX |
 | 0x7000–0x7bff | Temporary boot stack area, top 0x7c00 |
 | 0x7c00–0x7dff | BIOS sector |
 | 0x8000–`__payload_end` | Loaded payload, linker-bounded below 0x70000 |
@@ -70,7 +71,9 @@ Stage 2 preserves this boot path and appends GDT/IDT/exception diagnostics after
 the two legacy boot lines. See `../docs/design/cpu.md` for kernel-owned tables.
 Stages 4/5 test physical and virtual memory before the existing Stage 3 PIT IRQ0
 test, then checks allocator integrity again. The sector uses the Stage 5 bounded
-read loop; the transition owns E820 acquisition. The icon resource package is a separate
+read loop; the transition owns E820 acquisition. Stage 9 also validates the
+QEMU standard-VGA PCI BAR/aperture and BGA mode before publishing display
+metadata; see `../docs/design/framebuffer.md`. The icon resource package is a separate
 host-side artifact, never loaded by BIOS or inserted into the raw image.
 
 ## Known limitations

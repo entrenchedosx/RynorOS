@@ -20,8 +20,8 @@ not a guest filesystem or an in-memory boot resource. No kernel code reads it.
 Tests: PNG header validation, package contents/hash/dimensions, identical repeated
 packages/builds, and missing/corrupt asset rejection.
 
-Limitations: the current OS is serial-only; the icon is **packaged, not rendered**.
-There is no PNG decoder, graphics subsystem, guest archive reader, small-icon
+Limitations: Stage 9 renders a framebuffer test and bounded text, but the icon
+is still **packaged, not rendered**. There is no PNG decoder, graphical UI, guest archive reader, small-icon
 variant, or resource-loader ABI. Future graphics work must choose size/decoding
 requirements and can derive variants from this canonical original explicitly.
 
@@ -29,5 +29,5 @@ Stage 7 identity integration uses this exact PNG in a 56-pixel README title
 lockup, not a replacement image or resized binary resource. The guest's serial
 startup presentation pairs the same names, RynorOS and Rynorkernel, with its
 current execution stage. The original two-line boot regression prefix is kept;
-the later `[SYSTEM]` line identifies Stage 7. No raster art or fake graphics
+later `[SYSTEM]` lines identify the execution, keyboard and framebuffer stages. No raster art or fake graphics
 are sent to serial, and package bytes remain unchanged.

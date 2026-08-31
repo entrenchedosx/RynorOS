@@ -4,6 +4,8 @@ __page_tables_start = 0x1000;
 __page_tables_end = 0x4000;
 __boot_map_start = 0x4000;
 __boot_map_end = 0x5000;
+__fb_info_start = 0x5000;
+__fb_info_end = 0x6000;
 __boot_stack_start = 0x7000;
 __boot_stack_end = 0x7c00;
 __boot_sector_start = 0x7c00;
@@ -25,7 +27,7 @@ SECTIONS
     __data_start = .;
     .data : { *(.data .data.*) }
     __payload_end = .;
-    .bss ALIGN(16) (NOLOAD) : {
+    .bss ALIGN(32) (NOLOAD) : {
         __bss_start = .;
         *(.bss .bss.*) *(COMMON)
         __bss_end = .;

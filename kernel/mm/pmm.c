@@ -56,6 +56,7 @@ enum pmm_result pmm_initialize(const struct boot_memory_map *map, unsigned int b
     const cpu_u64 owned[][2] = {
         {(cpu_u64)__page_tables_start, (cpu_u64)__page_tables_end},
         {(cpu_u64)__boot_map_start, (cpu_u64)__boot_map_end},
+        {(cpu_u64)__fb_info_start, (cpu_u64)__fb_info_end},
         {(cpu_u64)__boot_stack_start, (cpu_u64)__boot_stack_end},
         {(cpu_u64)__boot_sector_start, (cpu_u64)__boot_sector_end},
         {(cpu_u64)__kernel_start, (cpu_u64)__kernel_end},

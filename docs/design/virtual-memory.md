@@ -6,7 +6,7 @@ Implemented Stage 5: original x86-64 four-level page tables, 4096-byte pages,
 PMM-backed table allocation, a live kernel address space, mapping/unmapping,
 translation, permissions, explicit invalidation, and real page-fault tests.
 (A bounded kernel heap is implemented separately in Stage 6; see [heap.md](heap.md).)
-User mode, process address spaces, context switching,
+User mode, process address spaces, address-space switching,
 copy-on-write, demand paging, swap, shared-memory policy and file-backed mappings
 are **not implemented**. Creating an empty paging hierarchy is not a process.
 
@@ -52,7 +52,7 @@ not inherited. A huge-page bit in a walked hierarchy is rejected; bit 7 in a
 | PMM-discovered bitmap extent | Identity-mapped supervisor RW/NX |
 | 0xffffff0000000000 | Temporary one-frame access window, supervisor RW/NX |
 | 0xffffff0000001000 | Window PT's own page, supervisor RW/NX |
-| PML4 slot 509 | Reserved/unmapped future MMIO area; no MMIO API yet |
+| PML4 slot 509 | Exclusive Stage 9 foreign-device MMIO; supervisor RW/NX UC, ordinary APIs reject |
 | PML4 slot 511 | Reserved/unmapped future kernel layout |
 | 0x40000000 and nearby pages; 0xffff800000000000 | Temporary self-test mappings, removed on completion |
 
@@ -200,8 +200,17 @@ tests. Reproducibility includes the unchanged separate icon package.
 Known limitations: single CPU, IF=0, no NMI-safe window use, bootstrap seven-frame
 availability below 2 MiB, existing PMM metadata-placement limit, no general
 address-space activation/destruction of active spaces, no user mode/processes,
-no MMIO/cache-policy API, no large pages/PAT/PCID/global mappings, no automatic
+no general cache-policy/PAT programming API, no large pages/PCID/global mappings, no automatic
 data ownership/refcounting, no demand paging, COW or swap. Dynamic kernel
 allocation is provided by the separate Stage 6 kernel-heap subsystem
 ([heap.md](heap.md)), not by this VM layer. No physical
 hardware validation or general recovery from corrupted stacks/tables is claimed.
+
+Stage 9 adds `vm_map_device` / `vm_unmap_device`, kernel-space/IF=0 only, inside
+slot 509. Non-RAM eligibility is checked against normalized PMM kinds, not
+just a FREE bit. Driver must prove actual device ownership. Leaves use
+PCD=PWT=1/PAT=0 (PAT3 checked UC when present); `vm_mapping.uncached` exposes
+the actual entry state. Ordinary map/unmap/protect cannot alter this slot.
+Tables still come from PMM, foreign device pages never do. Full preflight and
+rollback reuse the existing implementation. See [framebuffer.md](framebuffer.md)
+for ownership, validation and real OOM/partial-mapping tests.

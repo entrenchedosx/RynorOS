@@ -45,7 +45,8 @@ image and resource ZIP; tested across different temporary output directories. No
 code generation across compiler versions is promised. The build manifest records
 tool versions and artifact hashes; it is not an OS runtime component.
 
-QEMU has no display, VGA, network, or parallel port, uses a snapshot disk, and
+QEMU uses a headless host display backend with an emulated standard VGA device,
+no network or parallel port, a snapshot disk, and
 has serial output separate from monitor stdio. Each run truncates old logs,
 requires the exact legacy boot prefix, complete ordered Stage 2 diagnostics and
 Stage 4 E820/PMM, Stage 5 VM, Stage 6 kernel-heap, Stage 7 scheduler and Stage 3 IRQ/timer markers (fatal CPU variants stop before PMM),
@@ -57,7 +58,7 @@ guaranteed to do so. `run.json` records PID, command, exit, and cleanup.
 
 ## Implementation status and tests
 
-Implemented through Stage 7. `host/repository.py` owns the schema; `host/image.py` the
+Implemented through Stage 9. `host/repository.py` owns the schema; `host/image.py` the
 fixed-layout image build; `host/qemu.py` the execution harness and
 `host/exception_output.py`, `host/timer_output.py`, `host/pmm_output.py`,
 `host/vm_output.py`, `host/heap_output.py`, `host/sched_output.py` and `host/boot_output.py` the captured-output validators. The PMM parser independently
@@ -100,12 +101,19 @@ Stage 7 scheduler checks validate the thread/preemption transcript with
 `host/sched_output.py` and strict repository fixtures; the integration cases prove
 non-yielding preemption and hardware fault/state/ownership failures. These variants
 break implementations, not the truth value of assertions.
-Current counts and measured results are in `../docs/reports/stage7-audit.md`.
+Current counts and measured results are in `../docs/reports/stage9-audit.md`.
 Audit-only QEMU options select `max` or `qemu64,-nx`, and a below-4G RAM limit
 to test real high physical addresses. Defaults are unchanged. These configure
 emulated hardware, not kernel success flags or substitute firmware maps.
 The loader reads a real payload larger than the original 32 KiB bound using
 one-sector BIOS requests; raw disk format and separate icon packaging are unchanged.
+
+Stage 8 validates host-selected PS/2 input against serial events and QEMU device,
+PIC and port-read traces. Stage 9 additionally requires standard VGA and compares
+complete framebuffer bytes plus actual scanout (`pmemsave` / `screendump`) with
+an independent reference. Evidence is stored as display.pmem/display.ppm beside
+serial/cleanup logs. TCG cache is bounded to 32 MiB. All mutation sources live
+in temporary copies; ordinary production code has no fake-success switches.
 
 ## Known limitations
 

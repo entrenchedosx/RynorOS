@@ -66,11 +66,22 @@ REQUIRED_FILES = (
     "tests/integration/test_scheduler.py",
     "tests/repository/test_sched_output.py",
     "docs/design/scheduler.md", "docs/reports/stage7.md",
+    "kernel/include/kbd.h", "kernel/drivers/keyboard.c",
+    "kernel/drivers/keyboard-test.c", "kernel/drivers/keyboard-internal.h",
+    "tools/host/kbd_output.py", "tests/integration/test_keyboard.py",
+    "tests/repository/test_kbd_output.py", "docs/design/keyboard.md",
+    "kernel/include/display.h", "kernel/drivers/display.c",
+    "kernel/drivers/display-internal.h", "kernel/drivers/display-font.h",
+    "kernel/drivers/display-surface.c", "kernel/drivers/display-surface-test.c",
+    "kernel/drivers/display-test.c", "tools/host/display_output.py",
+    "tests/integration/test_display.py",
+    "tests/repository/test_fb_output.py", "docs/design/framebuffer.md",
+    "docs/reports/stage9.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 8 is the exact Stage 7 contract, not a build-target DSL.
+# Version 9 is the exact Stage 8 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 8,
+    "schema_version": 9,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
@@ -80,8 +91,8 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 7,
-    "status": "kernel-scheduling",
+    "stage": 9,
+    "status": "kernel-display-output",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -105,6 +116,10 @@ EXPECTED_METADATA = {
         "per-thread-kernel-stacks", "kstack-guard-pages", "round-robin-scheduler",
         "timer-preemption", "thread-abstraction", "context-switching",
         "scheduler-self-test",
+        "ps2-keyboard", "i8042-controller", "irq1-driver", "bounded-keyboard-event-queue",
+        "keyboard-sendkey-injection", "keyboard-self-test",
+        "bochs-vbe-framebuffer", "pci-bar0-lfb-discovery", "framebuffer-mapping",
+        "bounds-safe-rect-text", "framebuffer-pixel-evidence", "framebuffer-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }

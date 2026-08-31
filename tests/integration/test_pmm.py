@@ -42,14 +42,14 @@ class PhysicalMemoryTests(unittest.TestCase):
                 logs = ROOT / f"build/pmm-tests/ram-{memory}"
                 output = boot_image(self.destination / "rynoros.img", logs, memory_mib=memory)
                 data = parse_pmm_output(pmm_section(output))
-                self.assertIsNotNone(re.search(rb"\[TEST\] preemptions=(\d+) runs=(\d+)\r\n" + re.escape(POST_IRQ) + b"$",
+                self.assertIsNotNone(re.search(re.escape(POST_IRQ) + b"$",
                                                output))
                 self.assertGreater(data["last_frame"], 0x200000)
                 self.assertEqual(data["exhausted_frames"] * 4096, data["free_bytes"])
                 # Check every frame occupied by actual linked live objects, not
                 # just a hardcoded kernel base or an expected serial marker.
                 elf = self.destination / "rynorkernel.elf"
-                for name in ("kernel", "kernel_stack", "boot_stack", "boot_sector", "boot_map", "page_tables"):
+                for name in ("kernel", "kernel_stack", "boot_stack", "boot_sector", "boot_map", "fb_info", "page_tables"):
                     start, end = (elf_symbol(elf, f"__{name}_{edge}") for edge in ("start", "end"))
                     for address in range(start // 4096 * 4096, (end + 4095) // 4096 * 4096, 4096):
                         self.assertFalse(any(kind == 1 and a <= address < b for a, b, kind in data["regions"]),

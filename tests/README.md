@@ -30,7 +30,7 @@ command exits, native compile/link failures, strict diagnostic/timer/heap parsin
 canonical PNG integrity, deterministic resource package contents and PMM map/
 accounting/ownership transcript validation.
 Parser fixtures are explicitly synthetic test data, never kernel execution evidence.
-The original 26 tests remain with the metadata assertion advanced to Stage 7.
+The original 26 tests remain with the metadata assertion advanced to Stage 8.
 
 The `integration/` suite retains the five Stage 1 regression cases and adds
 real #DE/#DB/#UD/#GP/#PF execution and an unarmed-breakpoint negative case.
@@ -91,17 +91,44 @@ tag encoding now fails compilation rather than reaching QEMU. Tail-loss and
 forged-interior-free mutants must fail their guest assertions. The former
 image-size-growth assertion was removed: binary bloat is not functionality.
 
+The Stage 8 audit replaced count-only ring tests and assertion-inversion
+mutations. Local queue instances check exact FIFO contents, capacity, wraps,
+overflow retention/reuse and loss boundaries; decoder tests check supported keys
+and prefix isolation. Real boots report eight host-selected keys, including
+reordered/repeated keys, shifts and an explicitly UNKNOWN key. The same image is
+used for different sequences; no expected key order is compiled into the guest.
+Independent QEMU device, PIC IRQ1 and port-read traces must match every byte.
+IRQ0 schedules a busy worker concurrently, and resource accounting must balance.
+Actual masked/discard/no-read/counter/ring/decoder/loss/initialization and replay
+mutations must fail. Some failures are intentionally detected by the HOST despite
+a guest success marker; earlier-stage failure cannot substitute for that evidence.
+Logs are under `build/kbd-tests/`; exact results are in the Stage 8 audit report.
+
+Stage 9 adds framebuffer validation: the repository display output suite requires
+the handoff/geometry/accounting records in order and gates the mapping VA and
+table accounting against the keyboard baseline. The integration `test_display.py`
+boots the real image and compares every framebuffer byte (`pmemsave`) and every
+actual scanout pixel (`screendump`) against an independent host pattern/font
+specification. Padded stride and paths with spaces are exercised. Corrupted boot
+metadata and mutations breaking bounds/stride/clipping/glyphs/device ownership/
+cache/mapping/text writes must fail in the display stage, not an earlier test.
+Canned success cannot satisfy these evidence gates. Guarded local-buffer tests
+are explicitly synthetic; device writes and PMM exhaustion/rollback execute in
+QEMU. Logs are under `build/fb-tests/`; exact results are in the Stage 9 audit.
+
 `test_audit.py` adds 8/512 MiB boots, the `max` CPU, NX-disabled rejection, and
 real firmware RAM above 4 GiB using a 32 MiB below-4G limit. No guest memory
 map is fabricated for that test. Current exact counts and command results are
-in `../docs/reports/stage7-audit.md`; audit logs are under `build/audit-tests/`.
+in `../docs/reports/stage9-audit.md`; audit logs are under `build/audit-tests/`.
 
 ## Known limitations
 
-No physical-hardware tests or coverage of user-mode isolation, device IRQs beyond IRQ0,
-filesystem, graphics, userspace, or RynorLang execution. Serial success proves
+No physical-hardware tests or coverage of user-mode isolation, device IRQs beyond
+IRQ0 (timer), the single IRQ1 PS/2 keyboard, console, windowing, filesystem, userspace,
+or RynorLang execution. Serial success proves
 only this milestone. Other exception vectors, nested faults, TSS/IST, SIMD state,
 privilege transitions, BIOS disk-read error injection and forced-QEMU-cleanup fallbacks are
 not separately exercised; normal monitor cleanup is asserted on success/timeout.
-Slave PIC and spurious IRQ7/15 branches are implemented but not independently
-injected. Packaging the icon is not a test or implementation of graphical output.
+Slave PIC delivery is not independently hardware-injected. Stage 7's software
+INT probes exercise the spurious IRQ7/15 return paths, not external delivery.
+Packaging the icon is not a test or implementation of graphical output.

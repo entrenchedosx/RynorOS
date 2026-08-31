@@ -1,6 +1,6 @@
 # Bootstrap dependencies
 
-## Actual requirements (unchanged from Stage 1 through the Stage 7 audit)
+## Actual requirements and Stage 8/9 device-verification additions
 
 All tools were already present on the Windows verification host. Nothing was
 downloaded, installed, or copied from another operating-system project for this
@@ -27,7 +27,10 @@ synchronization uses Git and available host credentials, not guest OS code.
 No Linux/WSL, Make, GCC, objcopy, ISO builder, GRUB/Limine, target libc,
 compiler runtime, or Python packages are used. LLD emits both ELF and binary
 from the same original object files. QEMU needs its normal packaged DLLs/data
-and SeaBIOS; no VGA option ROM is needed because VGA is disabled. None of the
+and SeaBIOS. Stage 9 enables standard VGA (`-vga std`) and uses its normally
+packaged VGA firmware, BGA/PCI device, HMP `pmemsave` and `screendump`; VGA is
+no longer disabled. TCG's translation cache is bounded to 32 MiB per emulator.
+Stage 8 also requires the documented PS/2/PIC trace events. None of the
 emulator or firmware code becomes Rynorkernel.
 
 ## Setup and provenance
