@@ -12,7 +12,7 @@ from exception_output import BOOT_PREFIX, VECTOR_NAMES
 from boot_output import validate_boot_output
 from kbd_output import KEYS, KBD_END, key_sequence, validate_keyboard_trace, validate_irq0_trace
 from display_output import DISPLAY_END, DISPLAY_START, parse_display_output, verify_display_pixels, verify_display_scanout
-from shell_output import SHELL_KEYS, SCANS as SHELL_SCANS
+from shell_output import SHELL_END, SHELL_KEYS, SCANS as SHELL_SCANS
 from kernel_elf import read_symbols
 from runtime_output import verify_runtime_memory, verify_runtime_trace
 
@@ -116,9 +116,14 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                memory_mib: int = 64, cpu_model: str = "qemu64",
                max_ram_below_4g_mib: int | None = None,
                keys: tuple[str, ...] = KEYS, inject_keys: bool = True,
-               shell_interactive: bool = False) -> bytes:
+               shell_interactive: bool = False, shell_keys=None) -> bytes:
     keys = key_sequence(keys)
-    shell_keys = tuple(SHELL_KEYS) if shell_interactive else ()
+    if shell_keys is not None and not shell_interactive:
+        raise ValueError("shell_keys requires shell_interactive")
+    shell_keys = tuple(SHELL_KEYS if shell_keys is None else shell_keys) if shell_interactive else ()
+    if shell_interactive and (len(shell_keys) != len(SHELL_KEYS) or
+                              any(key not in SHELL_SCANS for key in shell_keys)):
+        raise ValueError("shell_keys must contain exactly 39 supported keys")
     if not math.isfinite(timeout) or not 0 < timeout <= 60:
         raise ValueError("Boot timeout must be finite and in (0, 60] seconds")
     if type(test_vector) is not int or test_vector not in VECTOR_NAMES:
@@ -188,11 +193,24 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                 if driver_failure is not None:
                     failure = driver_failure.decode('ascii', errors='replace')
                     break
+                # Fail-fast for completed-but-invalid shell transcript: do not wait for timeout.
+                # Negative tests whose intended behavior is timeout (masked IRQ, missing EOI, bad image)
+                # fail before any shell output, so they never have b"[SHELL] " in observed.
+                # Only fail fast when the shell section is present and complete but mismatched
+                # (not just incomplete while the guest is still running).
+                if b"[SHELL] " in observed:
+                    early_errors = validate_boot_output(observed, test_vector, keys,
+                                                        require_shell=shell_interactive,
+                                                        shell_script=shell_keys)
+                    if early_errors and any("mismatch" in e for e in early_errors):
+                        failure = "; ".join(early_errors)
+                        break
                 if inject_keys:
                     _inject_pending_keys(process, observed, list(keys), next_key,
                                          list(shell_keys), shell_key)
                 if not validate_boot_output(observed, test_vector, keys,
-                                            require_shell=shell_interactive):
+                                            require_shell=shell_interactive,
+                                            shell_script=shell_keys):
                     if test_vector == 3 and next_key[0] != len(keys):
                         failure = "Keyboard completed without all host inputs"
                     elif test_vector == 3:
@@ -211,7 +229,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                 failure = (f"Boot timed out after {timeout:g}s: " +
                            "; ".join(validate_boot_output(
                                observed, test_vector, keys,
-                               require_shell=shell_interactive)))
+                               require_shell=shell_interactive,
+                               shell_script=shell_keys)))
         finally:
             # HMP quit gives QEMU a normal shutdown; terminate/kill are bounded
             # fallbacks only. Always reap this exact child, never other QEMU PIDs.
@@ -250,7 +269,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
         failure = failure or f"QEMU did not shut down normally: {cleanup}, exit {process.returncode}"
     observed = serial.read_bytes()
     errors = validate_boot_output(observed, test_vector, keys,
-                                  require_shell=shell_interactive)
+                                  require_shell=shell_interactive,
+                                  shell_script=shell_keys)
     if test_vector == 3 and KBD_END in observed and not errors:
         trace = debug.read_text(encoding="utf-8", errors="replace")
         try:

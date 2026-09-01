@@ -60,6 +60,7 @@ def digest_hex(data: bytes) -> str:
 # Synthetic evidence that always appears, in order. Each element is either a
 # literal line or a record; 'exec' lines are compared after tokenization.
 def _synthetic_lines() -> list[str]:
+    big_digits = "1" * 30
     return [
         "[SHELL] tokenizer, bounds and empty line verified (synthetic)",
         "[SHELL] exec=version", "RynorOS 0.1.0",
@@ -72,15 +73,28 @@ def _synthetic_lines() -> list[str]:
         "[SHELL] exec=clear", "[SHELL] clear: display redraw requested",
         "[SHELL] exec=bogus", "error: unknown command",
         "[SHELL] error: empty command",
+        "[SHELL] error: too many arguments",
+        "[SHELL] error: invalid command line",
+        '[SHELL] exec=echo arg="hi"', "error: echo requires one argument",
+        '[SHELL] exec=upper arg="hi"', "error: upper requires one argument",
+        '[SHELL] exec=count arg="hi"', "error: count requires one argument",
+        '[SHELL] exec=digest arg="hi"', "error: digest requires one argument",
+        '[SHELL] exec=version arg="extra"', "error: version takes no arguments",
+        '[SHELL] exec=help arg="extra"', "error: help takes no arguments",
+        f'[SHELL] exec=count arg="{big_digits}"', "30",
+        "[SHELL] exec=bogus", "error: unknown command",
+        "[SHELL] exec=version", "RynorOS 0.1.0",
         "[SHELL] dispatch and error rejection verified (synthetic)",
     ]
 
 
-def _interactive_lines() -> list[tuple[str, str]]:
+def _interactive_lines(script=SCRIPT) -> list[tuple[str, str]]:
     """Returns (exact line label, expected line) pairs emitted by the session."""
     out = []
     buf = ""
-    for i, key in enumerate(SCRIPT):
+    for i, key in enumerate(script):
+        if key not in SCANS or key not in ASCII_OF:
+            raise ValueError("unsupported shell key %r" % (key,))
         scan = SCANS[key]
         ascii_ch = ASCII_OF[key] if ASCII_OF[key] is not None else "?"
         out.append(("literal", f"[SHELL] waiting for input={i}"))
@@ -90,19 +104,21 @@ def _interactive_lines() -> list[tuple[str, str]]:
             exec_line = "[SHELL] exec=" + head + (' arg="%s"' % arg if arg else "")
             out.append(("literal", f'[SHELL] line="{buf}"'))
             out.append(("literal", exec_line))
-            if buf == "upper hello":
-                out.append(("literal", "HELLO"))
-            elif buf == "count a1b2":
-                out.append(("literal", "2"))
-            elif buf == "digest ab":
-                out.append(("literal", "0x" + digest_hex(b"ab")))
-            elif buf == "bogus":
+            if head == "echo" and arg:
+                out.append(("literal", arg))
+            elif head == "upper" and arg:
+                out.append(("literal", arg.upper()))
+            elif head == "count" and arg:
+                out.append(("literal", str(sum(ch.isdigit() for ch in arg))))
+            elif head == "digest" and arg:
+                out.append(("literal", "0x" + digest_hex(arg.encode("ascii"))))
+            else:
                 out.append(("literal", "error: unknown command"))
             buf = ""
         else:
             buf += ascii_ch
     out.append(("literal", "[SHELL] interactive session complete"))
-    out.append(("literal", f"[SHELL] keys={KEY_BUDGET} received_scan_bytes={2 * KEY_BUDGET}"))
+    out.append(("literal", f"[SHELL] keys={len(script)} received_scan_bytes={2 * len(script)}"))
     out.append(("literal", "[SHELL] real keyboard session verified"))
     return out
 
@@ -119,7 +135,7 @@ def _fixture() -> bytes:
 SHELL_GOOD = _fixture()
 
 
-def parse_shell_output(output: bytes, previous=None) -> dict:
+def parse_shell_output(output: bytes, previous=None, script=SCRIPT) -> dict:
     if len(output) > 65536:
         raise ValueError("SHELL output too large")
     text = output.decode("ascii").splitlines()
@@ -144,7 +160,7 @@ def parse_shell_output(output: bytes, previous=None) -> dict:
     interactive = text[pos] == "[SHELL] interactive session started"
     if interactive:
         pos += 1
-        for _, expected in _interactive_lines():
+        for _, expected in _interactive_lines(script):
             got = next_line()
             if got != expected:
                 raise ValueError("SHELL interactive mismatch: got %r want %r" % (got, expected))
@@ -169,12 +185,12 @@ def parse_shell_output(output: bytes, previous=None) -> dict:
     if pos != len(text):
         raise ValueError("SHELL unexpected trailing records")
     return dict(allocated=allocated, free=free, tables=tables, interactive=interactive,
-                keys=KEY_BUDGET)
+                keys=len(script))
 
 
-def validate_shell_output(output: bytes, previous=None):
+def validate_shell_output(output: bytes, previous=None, script=SCRIPT):
     try:
-        parse_shell_output(output, previous)
+        parse_shell_output(output, previous, script)
     except (ValueError, IndexError, UnicodeDecodeError) as error:
         return [str(error)]
     return []

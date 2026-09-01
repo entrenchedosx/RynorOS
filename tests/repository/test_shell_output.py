@@ -54,8 +54,9 @@ class ShellOutputTests(unittest.TestCase):
     def test_python_optimized_mode_still_fails_closed(self):
         # The parser must raise ValueError, never rely on assert statements that
         # python -O disables.
-        self.assertNotIn("assert", open(Path(__file__).resolve().parents[2] /
-                                        "tools/host/shell_output.py").read())
+        source = (Path(__file__).resolve().parents[2] /
+                  "tools/host/shell_output.py").read_text(encoding="utf-8")
+        self.assertNotIn("assert", source)
         with self.assertRaises(ValueError):
             parse_shell_output(b"not a shell section\r\n")
 

@@ -31,7 +31,7 @@ class KeyboardTests(unittest.TestCase):
             parsed=parse_kbd_output(section,keys)
             self.assertEqual((parsed["received"],parsed["dropped"]),(16,0))
             self.assertGreater(parsed["ticks"],0)
-            self.assertTrue(output.endswith(POST_IRQ))
+            self.assertIn(POST_IRQ, output)
             validate_keyboard_trace((logs/"guest-errors.log").read_text(),keys)
     def variant(self,name,source,old,new,reason,*,guest_halt=True,keys=KEYS,success=False):
         with tempfile.TemporaryDirectory(prefix="kbd-fault-",dir=ROOT/"build") as tmp:

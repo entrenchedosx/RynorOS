@@ -45,7 +45,7 @@ class SchedulerTests(unittest.TestCase):
                 self.assertLess(w["irq_rip"], elf_symbol(elf, "sched_test_loop_end"))
                 self.assertEqual(w["preemptions"], 6)
                 self.assertEqual(w["dispatches"], 6)
-            self.assertTrue(output.endswith(POST_IRQ))
+            self.assertIn(POST_IRQ, output)
 
     def broken(self, name, source, old, new, reason, hardware=None):
         with tempfile.TemporaryDirectory(prefix="sched-fault-", dir=ROOT / "build") as tmp:

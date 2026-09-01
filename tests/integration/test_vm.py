@@ -37,8 +37,7 @@ class VirtualMemoryTests(unittest.TestCase):
         self.assertEqual(vm["faults"][2][2], elf_symbol(elf, "vm_test_read_fault"))
         self.assertEqual(vm["faults"][1][2], 0x40000000)
         self.assertEqual(vm["allocated"], 7 * 4096)
-        self.assertIsNotNone(re.search(re.escape(POST_IRQ) + b"$",
-                                       output))
+        self.assertIsNotNone(re.search(re.escape(POST_IRQ), output))
         for name in ("__text_end", "__rodata_end", "__data_start"):
             self.assertEqual(elf_symbol(elf, name) % 4096, 0)
         self.cleanup(destination / "logs")

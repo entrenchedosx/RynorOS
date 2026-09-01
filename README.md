@@ -4,7 +4,7 @@ An original operating-system project: **Rynorkernel**, with **RynorLang** (`.rl`
 planned as its native language. Inspired by the simplicity of TempleOS, not based
 on its implementation, Linux, BSD, or an existing userspace.
 
-## Current state — Stage 10 basic kernel runtime
+## Current state — Stage 11 shell / monitor (verified)
 
 This is a single-CPU kernel development platform, **not a usable or
 production-ready OS**. The independently [audited Stage 7 scheduler](docs/reports/stage7-audit.md)
@@ -12,7 +12,11 @@ production-ready OS**. The independently [audited Stage 7 scheduler](docs/report
 and the [Stage 9 display](docs/reports/stage9-audit.md) are the prior verified
 milestones. Stage 10 adds bounded strings/byte buffers and ring-0 runtime
 services driven from real worker threads; see [docs/reports/stage10.md](docs/reports/stage10.md)
-and [docs/design/runtime.md](docs/design/runtime.md).
+and [docs/design/runtime.md](docs/design/runtime.md). **Stage 11 adds a verified
+ring-0 kernel monitor** (`kernel/shell/`) with real `IRQ1` input, bounded `64`-byte
+line and `12`-token parsing, strict `help`/`version`/`echo`/`clear` + `upper`/`count`/`digest` via
+Stage 10 services, and a deterministic `39`-key QEMU interactive session; see
+[docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md).
 
 Implemented and exercised in QEMU:
 
@@ -37,9 +41,10 @@ Implemented and exercised in QEMU:
   services reject IRQ calls and require valid, caller-owned objects.
 
 There is no user mode, process address-space switching, scheduler sleep/wake,
-filesystem, shell, GUI/desktop, networking or RynorLang compiler.
-The language examples cannot execute. No SMP, SIMD thread context, COW, swap,
-demand paging or new large-page support exists.
+filesystem, GUI/desktop, networking or RynorLang compiler beyond the kernel
+monitor. The language examples cannot execute. No SMP, SIMD thread context, COW,
+swap, demand paging or new large-page support exists. The shell is a
+`Ring 0` trusted monitor, not protected userspace (`Stage 18a`).
 
 ## What the image actually does
 
@@ -104,13 +109,13 @@ comparisons and byte-identical rebuilds. `check` runs build and both suites.
 Artifacts under ignored `build/`: `boot.bin`, `rynorkernel.bin`,
 `rynorkernel.elf`, `rynoros.img`, `rynoros-resources.zip` and
 `build-manifest.json`. Logs include serial transcripts and owned-QEMU cleanup
-records. Exact current counts, commands and evidence are in the
-[Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
+records. The current suite contains 110 repository and 155 integration test
+methods (147 non-shell + 8 shell). Exact commands and evidence are in the
+[Stage 11 report](docs/reports/stage11.md) and [Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
 Display evidence is retained as `display.pmem` and `display.ppm` beside each
 successful normal boot's serial log; this is emulator, not physical-hardware evidence.
 Runtime execution evidence is `runtime.pmem` plus CPU interrupt records in
-`guest-errors.log`. Preserved opt-in Stage 11 shell work is not part of the
-normal Stage 10 image and is not certified by this audit.
+`guest-errors.log`. Shell evidence is per-key `scan`/`ascii`/`line` and per-command `exec`/`result` in the serial log, plus QEMU `sendkey`/`pic_interrupt` trace for the `39`-key session.
 
 All evidence lives only in the git-ignored `build/` tree; a clean checkout
 contains no runtime evidence and must regenerate it with the pinned tools.
@@ -139,5 +144,34 @@ uses the same OS identity in text, not an invented icon conversion.
 
 Start with [architecture](ARCHITECTURE.md), [roadmap](ROADMAP.md),
 [contributing](CONTRIBUTING.md), and [project metadata](project.json)
-(Stage 10/schema 10). Implemented means present and verified under stated
+(Stage 11/schema 11). Implemented means present and verified under stated
 conditions; planned/experimental does not mean executable.
+
+## Windows Compatibility Program — planned (21a–21m)
+
+After the native foundation (Stages 0–20, self-hosting), RynorOS will host a
+Windows-compatible execution environment **under Rynorkernel** — not as a
+replacement for it. See [ROADMAP](ROADMAP.md) (21a–21m) and
+[Windows compatibility design](docs/design/windows-compatibility.md).
+
+Conceptually:
+
+```text
+CPU / hardware
+      │
+      ▼
+┌───────────────────────┐
+│      Rynorkernel      │  owns CR3/IDT/GDT/TSS/PMM/VM/devices
+└──────────┬────────────┘
+           │  isolation / virtualization boundary
+           ▼
+┌─────────────────────────────┐
+│ Windows Compatibility Layer │  Win32/NT semantics, PE loader, handles,
+│                             │ sync, virtual devices, DXGI/D3D translation
+└─────────────┬───────────────┘
+              ├──────────┬──────────┐
+              ▼          ▼          ▼
+        Windows apps  Windows games  (certified per matrix)
+```
+
+The program is staged `21a PE format → 21b ABI → 21c Win32 → 21d GUI → 21e graphics → 21f audio/input → 21g loader/DLL → 21h runtime → 21i game harness → 21j network → 21k driver containment → 21l advanced games → 21m certification`, with an explicit **security/anti-cheat classification** `A–E` (no bypass: `A` pure user-mode, `B` runtime deps, `C` kernel-driver semantics, `D` vendor-approved attestation, `E` unsupported). Rynorkernel is not “a ring above ring 0” — the boundary is `CPL0/CPL3 + U/S paging` (and optionally `VMX Root/Non-Root + EPT/IOMMU`). Every stage requires protected userspace (18a), storage (17a/b) and the graphics stack; no game is *supported* until it passes the certification framework. See the design doc for bare-metal (`VT-x/SVM, IOMMU, APIC, PCIe, GPU`) and testing requirements.

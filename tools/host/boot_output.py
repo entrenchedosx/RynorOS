@@ -10,13 +10,13 @@ from sched_output import SCHED_START, SCHED_END, validate_sched_output, parse_sc
 from kbd_output import KBD_START, KEYS, validate_kbd_output, parse_kbd_output
 from display_output import DISPLAY_START, DISPLAY_END, validate_display_output, parse_display_output
 from runtime_output import validate_runtime_output, parse_runtime_output
-from shell_output import SHELL_START, SHELL_END, validate_shell_output
+from shell_output import SHELL_START, SHELL_END, SCRIPT, validate_shell_output
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
 
 def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
-                         require_shell: bool = False) -> list[str]:
+                         require_shell: bool = False, shell_script=SCRIPT) -> list[str]:
     if vector != 3:
         return validate_exception_output(output, vector)
     cpu, end, remaining = output.partition(EXCEPTION_END)
@@ -84,7 +84,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             if runtime_state is None:
                 errors.append("Shell baseline accounting missing")
             else:
-                errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state))
+                errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state,
+                                                    shell_script))
     elif require_shell:
         errors.append("Required interactive shell output missing")
     elif post != b"":

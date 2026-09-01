@@ -21,8 +21,9 @@ i8042/keyboard and consumes eight host-selected keys while IRQ0 schedules a work
 then, in Stage 9, consumes the boot-collected PCI/BGA handoff and paints/verifies
 a pattern with interrupts disabled, then, in Stage 10, runs bounded string/buffer
 and runtime-service self-tests on seven worker threads under re-enabled IRQ0,
-rechecks memory/execution state and halts. The optional preserved Stage 11 shell
-build appends a host-driven interactive session after the integrity gate.
+rechecks memory/execution state, then runs the Stage 11 synthetic shell tests.
+Dedicated interactive images additionally append a bounded host-driven session;
+normal images print the explicit interactive-skip marker and halt.
 The image contains no third-party loader or OS. SeaBIOS is external emulator
 firmware, not RynorOS code; host tools never execute as guest OS services.
 
@@ -250,17 +251,7 @@ No multicore execution, binary compatibility, or multi-user security is promised
 
 ## 9. Shell
 
-Experimental and opt-in, not a completed milestone: a small ring-0 kernel monitor in
-`kernel/shell/` reads real keyboard input, builds bounded command lines, and
-exposes only the services that actually exist (the Stage 10 runtime services
-DIGEST/UPPER/COUNT_DIGITS) plus the honest built-ins help/version/echo/clear.
-It rejects unsupported commands honestly and is excluded from the certified
-Stage 10 image (`RYNOR_SHELL_INTERACTIVE`). Its dedicated QEMU probe exercises
-the current input path, but Stage 11 remains planned. The eventual shell in
-`user/shell/` launches native programs and accesses files via documented OS
-interfaces. It can migrate out of the kernel once userspace exists.
-Language evaluation is unavailable until the compiler/runtime exists; the
-shell must never simulate program execution with canned responses.
+Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, isolates `E0`/`E1`, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The suite contains `110` repository and `155` integration test methods (`147` non-shell + `8` shell), plus a 9-configuration QEMU matrix and deterministic rebuild check. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
 
 ## 10. RynorLang
 
@@ -339,7 +330,80 @@ on crashes or missing results. Serial messages alone are not proof of a memory
 manager or compiler. Hardware smoke tests supplement, not replace, emulator
 coverage. Keep reports under `docs/reports/` with exact commands and limitations.
 
-## 14. Eventual self-hosting strategy
+## 14. Windows Compatibility Architecture
+
+Planned — no implementation claimed. The design hosts a Windows-compatible execution environment under Rynorkernel; Rynorkernel remains the sole trusted computing base and owner of the machine. See `docs/design/windows-compatibility.md` for the full contract.
+
+```
+                         APPLICATIONS
+                              │
+             ┌────────────────┴────────────────┐
+             │                                 │
+       Native RynorOS                     Windows software
+             │                                 │
+             │                      ┌──────────┴──────────┐
+             │                      │ Windows compatibility│
+             │                      │ runtime / ABI / APIs │
+             │                      │ drivers / devices   │
+             │                      └──────────┬──────────┘
+             │                                 │
+             └────────────────┬────────────────┘
+                              ▼
+                        RYNORKERNEL
+                              │
+                    ┌─────────┼─────────┐
+                    │         │         │
+                   CPU       VM       devices
+                    │         │         │
+                    └─────────┴─────────┘
+                              │
+                           HARDWARE
+```
+
+**CPU privilege vs. architectural trust.** x86-64 `CPL0` is maximal CPU privilege; there is no `ring above ring 0`. RynorOS today runs only `CPL0` (`GDT 0x08/0x10`, no TSS/IST, no ring 3). The Windows environment is not “above” Rynorkernel in ring terms. The intended boundary is:
+
+```text
+Hardware
+   │
+   ▼
+Rynorkernel privileged layer  (Ring 0, owns CR3/IDT/GDT/TSS/PMM/VM/IOMMU)
+   │
+   ├── isolation / virtualization boundary
+   │
+   ▼
+Windows-compatible execution environment
+   │
+   ├── Windows user-mode compatibility (Ring 3, U/S=1, per-process PML4)
+   ├── Windows kernel/driver compatibility (contained, not direct Rynorkernel access)
+   └── virtual device model (virtio-GPU/virgl or Vulkan translation or passthrough)
+```
+
+Two honest implementations satisfy this without false ring claims:
+
+* **Native isolated subsystem** (preferred, matches Stage 18a): Rynorkernel stays sole Ring 0; Windows code is deprivileged to Ring 3 behind a validated syscall gate + `U/S` paging (`vm_create` activation, `TSS.RSP0`, `syscall/sysret`). No VT-x required. This is OS-level isolation, not virtualization.
+* **Type-1 hypervisor** (alternative): Rynorkernel in VMX Root Ring 0; an unmodified Windows kernel runs in VMX Non-Root Ring 0 with EPT/NPT, vAPIC/vPIC, vPCI and IOMMU isolation. Requires `VT-x + EPT + VPID + IOMMU` and a full device model. Both are described as *architectural trust boundary ≠ CPU privilege level*.
+
+**Windows execution environment — what must be reproduced vs. virtualized.** User-mode: PE/COFF loader, `ntdll` syscall thunks, PEB/TEB, handle/object manager, `VirtualAlloc` (reserve/commit/`PAGE_GUARD`), dispatcher objects (`Event`/`Mutex`/`Semaphore`/`WaitableTimer` with blocking `THREAD_WAITING` queues), registry hives (fake or host-backed), TLS/FSBASE/GSBASE, SEH/VEH/`KiUserExceptionDispatcher` with x64 `pdata/xdata` unwind. Kernel/driver: WDM/WDF `DriverEntry`, `IRP`/`MDL`, DMA/scatter-gather via IOMMU, PnP, NDIS, `DxgKrnl`/`VidMm`/`VidSch`. Current RynorOS has none of this — only supervisor `PMM/VM/heap/kstack` and `FNV-1a` ring-0 services; all pointers are trusted.
+
+**Isolation.** `PMM` frames and `VM` tables are per-address-space, never shared writable host↔guest; `IOMMU` isolates DMA; `SMEP/SMAP/PKE` (future) and `W^X` (`NX` already enforced) block `U→K` access; handle tables and `PML4 509/510/511` (MMIO/window) are kernel-private. No `vm_frame_access` to userspace, no `W+X` leaves.
+
+**Graphics.** Stage 9 provides only a single uncached BGRX LFB at `VM_MMIO_BASE` (slot 509). Windows graphics needs a staged path: (1) `llvmpipe`/`WARP` software rasterizer into the LFB (proves DXGI without GPU), (2) `virtio-gpu` virgl/venus paravirt queue, (3) `DXVK`/`vkd3d-proton` → Vulkan (`vkQueueSubmit`) with shader compilation (`HLSL→DXIL→SPIR-V`, `DXC`), (4) VFIO passthrough / SR-IOV with native vendor KMD. Each step needs PCIe enumeration (`MSI-X`, `Resizable BAR`), display KMS atomic modeset, and a `TTM`/`GEM`-like video-memory manager — none of which Stage 9 provides.
+
+**Security / anti-cheat — compatibility vs. bypass.** See `docs/windows-compatibility-program.md` for the mandatory classification:
+
+```text
+A — no kernel components          (pure Win32, achievable with user-mode env)
+B — supported runtime deps         (VC++/DirectX redist, still user-mode)
+C — requires kernel-driver semantics (needs contained NT driver env or Windows VM)
+D — requires vendor approval       (Vanguard/EAC-HVCI+TPM attestation, whitelist)
+E — unsupported (would require hide/spoof/disable CI/PatchGuard/VBS)
+```
+
+RynorOS will **not** spoof `CPUID` hypervisor bit, hide `MSR 0x40000000`, forge `TPM2_Quote` PCRs, patch `PatchGuard`, or disable `DSE`/`HVCI`. For C/D the legitimate architecture hosts a **genuine Windows kernel** under a hypervisor (`EPT`/`IOMMU`/`fTPM`) so the anti-cheat sees a real `ntoskrnl`/`CI.dll`; for D the vendor must explicitly support the `RynorOS-Hv` platform. Claims use `planned/research/prototype/QEMU-verified/bare-metal-verified/vendor-supported`, never `Fortnite works` before certification.
+
+**Dependencies.** No Windows stage is placed before `18a Protected userspace` and `17a/b` storage; `21b/c` additionally need blocking scheduler waits and syscall/CR3 switching; `21e`/`21k` need PCIe/IOMMU/APIC/HPET and the graphics stack. Until then every Windows milestone is `research-only`.
+
+## 15. Eventual self-hosting strategy
 
 Plan: (1) bootstrap enough OS and compiler support on a documented host;
 (2) add language data structures, file I/O, memory facilities, and linking needed
@@ -352,7 +416,7 @@ instructions. Compiler self-hosting and whole-system self-hosting are separate
 claims. Replacing host tools incrementally is essential; merely calling them
 from a RynorOS shell does not meet the goal.
 
-## Documentation contract
+## 16. Documentation contract
 
 Every subsystem document must state purpose, public interfaces, invariants,
 implementation status, tests, and known limitations. Use

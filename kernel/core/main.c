@@ -38,11 +38,7 @@ void kernel_main(void)
     }
     serial_write("[TEST] PMM post-IRQ accounting verified\r\n");
     serial_flush();
-    /* Incoming Stage 11 work is preserved, opt-in and not certified by the
-       Stage 10 audit. Normal Stage 10 images end after the integrity gate. */
-#if defined(RYNOR_SHELL_INTERACTIVE)
     shell_self_test();
-#endif
     serial_flush();
     /* Returning reaches the entry stub's CLI/HLT loop, never BIOS or host code. */
 }

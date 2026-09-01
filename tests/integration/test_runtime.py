@@ -90,7 +90,7 @@ class RuntimeTests(unittest.TestCase):
         runtime = parse_runtime_output(self.section(output, RUNTIME_START, RUNTIME_END), display)
         self.assertEqual(runtime["total"], total_fold())
         self.assertEqual(runtime["allocated"], display["allocated"])
-        self.assertTrue(output.endswith(POST_IRQ))
+        self.assertIn(POST_IRQ, output)
 
     def test_worker_accounts_match_host_folds(self):
         # The emitted per-worker acc values must equal an independent host fold.

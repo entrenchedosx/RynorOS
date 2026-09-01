@@ -17,12 +17,12 @@
 
 enum shell_result {
     SHELL_OK = 0,
-    SHELL_INVALID,     /* null pointer or impossible bounds */
-    SHELL_TOO_LONG,    /* a command line exceeded SHELL_LINE_MAX */
-    SHELL_TOO_MANY,    /* too many tokens on a line */
-    SHELL_UNKNOWN,     /* unknown command name */
-    SHELL_ARGS,        /* wrong number of arguments for a command */
-    SHELL_SERVICE,     /* a runtime service returned a non-OK result */
+    SHELL_INVALID = -1,     /* null pointer or impossible bounds */
+    SHELL_TOO_LONG = -2,    /* a command line exceeded SHELL_LINE_MAX */
+    SHELL_TOO_MANY = -3,    /* too many tokens on a line */
+    SHELL_UNKNOWN = -4,     /* unknown command name */
+    SHELL_ARGS = -5,        /* wrong number of arguments for a command */
+    SHELL_SERVICE = -6,     /* a runtime service returned a non-OK result */
 };
 
 /* Separates a command line into up to SHELL_ARG_MAX tokens on whitespace.
@@ -38,11 +38,16 @@ int shell_tokenize(char *line, cpu_u64 cap, char *tokens[SHELL_ARG_MAX]);
    validator. Used by the synthetic self-test and by the live session. */
 int shell_execute(char *cmd_line, cpu_u64 cap);
 
+/* Decodes an 8-byte little-endian buffer to a u64. Requires len==8 and
+    non-null buf; used by the count command to interpret KRST_SVC_COUNT_DIGITS. */
+cpu_u64 shell_decode_u64_le(const cpu_u8 *buf, cpu_u64 len);
+
 /* Public shell entry: runs the interactive monitor loop. It does not return
-   until the requested number of command lines has been serviced (bounded
-   budget for the host harness) so the shell can be driven deterministically;
-   lines==0 means run forever. Requires IF=0 and an initialized keyboard. */
-void shell_run(cpu_u64 lines);
+    until the requested number of key presses has been serviced (bounded
+    key_budget for the host harness). key_budget is a count of host sendkey
+    events (each with make+break); zero performs zero iterations. Requires
+    IF=0 and an initialized keyboard. */
+void shell_run(cpu_u64 key_budget);
 
 /* Stage 11 self-test: synthetic tokenizer/parser/error tests, then a real
    interactive session driven from the host through kbd_poll, verifying that
