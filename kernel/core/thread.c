@@ -296,6 +296,9 @@ cpu_u64 irq_save(void)
 void irq_restore(cpu_u64 flags)
 {
     require(!(flags & 0x200) || !held_locks, "restore_with_lock");
+    /* IRQ context must never enable interrupts inside dispatch; a nested
+       delivery would corrupt the in-service/EOI protocol. */
+    require(!(flags & 0x200) || !irq_in_context(), "restore_in_irq");
     if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
     else __asm__ volatile ("cli" ::: "memory");
 }

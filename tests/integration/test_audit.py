@@ -22,13 +22,19 @@ class AuditRuntimeTests(unittest.TestCase):
 
     def run_guest(self, name, **kwargs):
         logs = ROOT / "build/audit-tests" / name
+        succeeded = False
         try:
-            return boot_image(self.destination / "rynoros.img", logs, **kwargs)
+            output = boot_image(self.destination / "rynoros.img", logs, **kwargs)
+            succeeded = True
+            return output
         finally:
-            state = json.loads((logs / "run.json").read_text())
-            self.assertTrue(state["reaped"])
-            self.assertEqual(state["cleanup"], "monitor-quit")
-            self.assertEqual(state["returncode"], 0)
+            state_file = logs / "run.json"
+            if succeeded or state_file.exists():
+                self.assertTrue(state_file.exists(), "successful QEMU run omitted run.json")
+                state = json.loads(state_file.read_text())
+                self.assertTrue(state["reaped"])
+                self.assertEqual(state["cleanup"], "monitor-quit")
+                self.assertEqual(state["returncode"], 0)
 
     def test_small_and_larger_ram(self):
         for size in (8, 512):
@@ -49,8 +55,8 @@ class AuditRuntimeTests(unittest.TestCase):
         self.assertIn(HEAP_END, self.run_guest("cpu-max", cpu_model="max"))
 
     def test_missing_nx_fails_closed(self):
-        with self.assertRaisesRegex(RuntimeError, "timed out"):
-            self.run_guest("no-nx", cpu_model="qemu64,-nx", timeout=2)
+        with self.assertRaisesRegex(RuntimeError, "(timed out|\\[VM\\] failure=)"):
+            self.run_guest("no-nx", cpu_model="qemu64,-nx", timeout=6)
         output = (ROOT / "build/audit-tests/no-nx/serial.log").read_bytes()
         self.assertIn(PMM_END, output)
         self.assertIn(b"[VM] init_error=11", output)

@@ -56,7 +56,9 @@ class KeyboardTests(unittest.TestCase):
             output=(logs/"serial.log").read_bytes()
             self.assertIn(KBD_START,output)
             if not success:
-                self.assertIn(reason,str(error.exception)+output.decode("ascii"))
+                reasons = reason if isinstance(reason, tuple) else (reason,)
+                diagnostic = str(error.exception)+output.decode("ascii")
+                self.assertTrue(any(r in diagnostic for r in reasons), diagnostic)
                 if guest_halt:
                     self.assertNotIn(KBD_END,output); self.assertNotIn(POST_IRQ,output)
     def test_masked_irq1_cannot_receive_any_key(self):
@@ -68,9 +70,11 @@ class KeyboardTests(unittest.TestCase):
                      "if (kbd_ring_put(&input, scan) < 0) cpu_halt();","(void)scan;",
                      "[KBD] waiting for input=0")
     def test_no_port_read_cannot_pass(self):
+        # With overrun classification, the never-read 0x00 byte is rejected as a
+        # controller error instead of being queued, so the loss is also caught.
         self.variant("no-read","kernel/drivers/keyboard.c",
                      "cpu_u8 scan = io_in8(KBD_DATA);","cpu_u8 scan = 0;",
-                     "[KBD] event=0 scan=0")
+                     ("[KBD] event=0 scan=0", "[KBD] failure=input_loss"))
     def test_live_read_counter_not_assertion_inversion(self):
         self.variant("counter","kernel/drivers/keyboard.c",
                      "increment(&stats.reads);","/* omitted real read accounting */",
@@ -130,6 +134,14 @@ class KeyboardTests(unittest.TestCase):
                      "cpu_u8 status = io_in8(KBD_CMD);\n    if (!(status",
                      "cpu_u8 status = io_in8(KBD_CMD) & ~STATUS_OBF;\n    if (!(status",
                      "[KBD] waiting for input=0")
+    def test_empty_irq_accounting_cannot_be_removed(self):
+        """The startup empty IRQ must still be counted: the only irqs increment
+        site is shared with empty-IRQ accounting, so removing the branch leaves
+        irqs == 0 and the guest's irqs == reads + empty invariant halts."""
+        self.variant("empty-irq","kernel/drivers/keyboard.c",
+                     "increment(&stats.irqs);\n    cpu_u8 status = io_in8(KBD_CMD);\n    if (!(status & STATUS_OBF)) { increment(&stats.empty_irqs); return; }",
+                     "cpu_u8 status = io_in8(KBD_CMD);\n    if (!(status & STATUS_OBF)) { return; }",
+                     "[KBD] failure=hardware_counts")
     def test_bad_controller_reply_masks_and_latches_failure(self):
         self.variant("controller-fail","kernel/drivers/keyboard.c",
                      "command(0xaa) || !read_reply(&reply) || reply != 0x55",
@@ -176,4 +188,12 @@ class KeyboardTests(unittest.TestCase):
         self.variant("canned-output","kernel/drivers/keyboard-test.c",
                      "void keyboard_self_test(void)\n{",
                      "void keyboard_self_test(void)\n{\n    text("+json.dumps(canned)+"); return;",
-                     "Keyboard completed without all host inputs",guest_halt=False)
+                     ("Keyboard completed without all host inputs",
+                      "QEMU data-port reads do not match injected input"),guest_halt=False)
+        logs = ROOT / 'build/kbd-tests/canned-output'
+        self.assertIn(POST_IRQ, (logs / 'serial.log').read_bytes())
+        # Later runtime work can outlast all eight injections. Never depend on
+        # the race to finish first: the real I/O trace must independently reject
+        # this forgery, regardless of which host gate notices it first.
+        with self.assertRaisesRegex(ValueError, 'QEMU (keyboard trace missing input events|data-port reads do not match injected input)'):
+            validate_keyboard_trace((logs / 'guest-errors.log').read_text())

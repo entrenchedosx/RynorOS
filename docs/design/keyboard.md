@@ -32,6 +32,10 @@ The device produces Set 2; the controller translates it to Set 1 at port 60h.
 This no longer inherits the BIOS translation or keyboard scan-set settings.
 Reading back the IRQ-enabled command byte can latch one startup IRQ with no
 remaining output byte. The ISR diagnoses/counts this without reading stale data.
+On the pinned QEMU build this latch deterministically yields exactly one empty
+IRQ, and the host validator requires `empty == 1` so the accounting cannot be
+silently removed; the guest-side invariant remains the general `irqs == reads +
+empty`.
 
 Every input-buffer/output-buffer wait is limited to 100000 polls with port-80
 recovery delays; flush is limited to 256 reads. These are bounded iteration
@@ -49,6 +53,9 @@ checks real PIC in-service state and IF=0 before calling the private ISR.
 The ISR counts the IRQ, reads status at 64h, and reads 60h only when OBF is set.
 Empty IRQs are counted. AUX bytes are consumed/discarded, never keyboard input.
 Timeout/parity bytes are consumed/discarded and mark a stream discontinuity.
+Set-1 overrun/self-test response bytes (00h/FFh) are likewise consumed,
+counted as errors and mark a stream discontinuity rather than appearing as
+phantom UNKNOWN keys.
 A valid byte goes through the same bounded ring primitive used in local tests.
 The dispatcher issues master PIC EOI after the ISR; it never enables IF.
 No driver IRQ path allocates, polls, prints, blocks or calls the scheduler.

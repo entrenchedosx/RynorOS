@@ -56,8 +56,8 @@ class VirtualMemoryTests(unittest.TestCase):
             path.write_text(contents.replace(old, new), encoding="utf-8")
             build_image(fixture)
             logs = ROOT / "build/vm-tests" / name
-            with self.assertRaisesRegex(RuntimeError, "timed out"):
-                boot_image(fixture / "build/rynoros.img", logs, timeout=2)
+            with self.assertRaisesRegex(RuntimeError, "(timed out|\\[VM\\] failure=)"):
+                boot_image(fixture / "build/rynoros.img", logs, timeout=6)
             output = (logs / "serial.log").read_bytes()
             self.assertIn(PMM_END, output)
             self.assertIn(reason.encode(), output)

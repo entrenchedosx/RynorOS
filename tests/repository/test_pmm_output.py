@@ -39,9 +39,11 @@ def fixture():
 
 class PmmOutputTests(unittest.TestCase):
     def test_valid_fixture_and_complete_boot(self):
+        from runtime_output import RUNTIME_GOOD
         self.assertEqual(validate_pmm_output(fixture()), [])
         self.assertEqual(validate_boot_output(parser_fixture() + fixture() + vm_fixture() + heap_fixture()
-                                              + TIMER_OUTPUT + SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD + POST_IRQ), [])
+                                              + TIMER_OUTPUT + SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD
+                                              + RUNTIME_GOOD + POST_IRQ), [])
         self.assertTrue(validate_boot_output(parser_fixture() + fixture() + TIMER_OUTPUT + SCHED_GOOD + POST_IRQ))
         self.assertTrue(validate_boot_output(parser_fixture() + TIMER_OUTPUT))
 

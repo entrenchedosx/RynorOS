@@ -143,6 +143,11 @@ void vm_self_test(void)
             vm_translate(k, VM_TEST_BASE + 4088, &translated) == VM_OK && translated == data[0] + 4088 &&
             vm_query(k, VM_TEST_BASE, &m) == VM_OK && m.accessed && m.dirty && m.permissions == VM_WRITE,
             "hardware_translation_write");
+    /* The transient window slot holds a live frame after the access above; it
+       must never be reported as an owned mapping or pollute the tree walk. */
+    require(vm_query(k, VM_WINDOW, &m) == VM_NOT_MAPPED &&
+            vm_query(k, VM_WINDOW + VM_PAGE_SIZE - 1, &m) == VM_NOT_MAPPED &&
+            vm_check(k), "window_transient");
     field("[VM] mapping va=", VM_TEST_BASE); field(" physical=", data[0]); field(" offset_physical=", translated); text("\r\n");
     text("[TEST] VM mapping verified\r\n");
     require(vm_map(k, VM_TEST_BASE, data[1], VM_WRITE) == VM_EXISTS &&

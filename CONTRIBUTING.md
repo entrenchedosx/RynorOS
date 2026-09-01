@@ -3,10 +3,11 @@
 ## Scope and honesty
 
 The current scope includes boot, serial, CPU descriptors/exceptions, PIC/PIT,
-real E820/physical frames, four-level virtual memory, a bounded kernel heap and
-single-CPU kernel threads/preemption,
-the separately packaged icon and host verification. See
-`docs/reports/stage7-audit.md` for current guarantees and limitations.
+real E820/physical frames, four-level virtual memory, a bounded kernel heap,
+single-CPU kernel threads/preemption, PS/2 keyboard input, the validated
+framebuffer, bounded strings/byte rings and ring-0 runtime services on worker
+threads, the separately packaged icon and host verification. See
+`docs/reports/stage10-audit.md` for current guarantees and limitations.
 User isolation and processes are not implemented. Do not advance
 the roadmap while an audit or correctness repair is still incomplete.
 Do not present a design, empty function, hardcoded
@@ -16,9 +17,10 @@ license, version, and purpose of any introduced bootstrap dependency.
 
 ## Changes
 
-Commits created by the coding agent must use **r1ra** for both author and
-committer names. Verify commit metadata and configured origin/main after push;
-do not change global Git identity or rewrite unrelated history.
+Repository contributions must use the **entrenchedosx** GitHub identity. Verify
+the configured remote and authenticated GitHub identity before any push; do not
+impersonate another account, change global Git identity unnecessarily, or
+rewrite unrelated history.
 
 - Keep changes small and explain their milestone and acceptance criteria.
 - Preserve unrelated work. Do not commit generated output or credentials.

@@ -97,6 +97,12 @@ No different OS/Python/tool version matrix has been tested.
 
 ## Technical references and replacement strategy
 
+Stage 10 additionally checks QEMU's `-d int` CPU interrupt records against
+physical worker evidence (`pmemsave`) and symbols in the linked ELF64 file.
+The pinned QEMU build must expose the documented RIP/RSP/IRQ debug record
+format; missing or nonmatching records fail verification. This is a host-only
+test dependency, not an emulator interface used by runtime service algorithms.
+
 The [Intel architecture manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 describe the protected/long-mode transition contract.
 [NASM output formats](https://www.nasm.us/doc/nasm09.html),

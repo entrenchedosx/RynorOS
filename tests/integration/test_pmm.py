@@ -76,8 +76,11 @@ class PhysicalMemoryTests(unittest.TestCase):
             source.write_text(contents.replace(original, original + injection), encoding="utf-8")
             build_image(fixture)
             logs = ROOT / "build/pmm-tests" / name
+            # Six-second budget: BIOS-phase boot variance (SMM cycles, timer
+            # probing) must not outrun the deadline on a busy host; the guest
+            # halts immediately after printing the expected failure marker.
             with self.assertRaisesRegex(RuntimeError, "timed out"):
-                boot_image(fixture / "build/rynoros.img", logs, timeout=2)
+                boot_image(fixture / "build/rynoros.img", logs, timeout=6)
             output = (logs / "serial.log").read_bytes()
             self.assertIn(b"[TEST] exception handling verified", output)
             self.assertIn(reason.encode("ascii"), output)
@@ -102,3 +105,39 @@ class PhysicalMemoryTests(unittest.TestCase):
     def test_firmware_reserved_kernel_memory_is_rejected(self):
         self.corrupted_handoff("kernel-not-ram", "    mov dword [__boot_map_start + 32 + 16], 2\n",
                                "[MM] init_error=8")
+
+    def allocator_variant(self, name, old, new, reason):
+        """Mutate the allocator itself, not the firmware handoff: the guest's
+        own accounting and uniqueness checks must reject the defect."""
+        with tempfile.TemporaryDirectory(prefix="bad-pmm-", dir=ROOT / "build") as temporary:
+            fixture = Path(temporary)
+            for directory in REQUIRED_DIRECTORIES:
+                (fixture / directory).mkdir(parents=True, exist_ok=True)
+            for filename in REQUIRED_FILES:
+                shutil.copyfile(ROOT / filename, fixture / filename)
+            source = fixture / "kernel/mm/pmm.c"
+            contents = source.read_text(encoding="utf-8")
+            self.assertEqual(contents.count(old), 1)
+            source.write_text(contents.replace(old, new), encoding="utf-8")
+            build_image(fixture)
+            logs = ROOT / "build/pmm-tests" / name
+            # Six-second budget for BIOS-phase boot variance; see corrupted_handoff.
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                boot_image(fixture / "build/rynoros.img", logs, timeout=6)
+            output = (logs / "serial.log").read_bytes()
+            self.assertIn(b"[TEST] exception handling verified", output)
+            self.assertIn(reason.encode("ascii"), output)
+            self.assertNotIn(b"[TEST] PMM self-test passed", output)
+            self.verify_cleanup(logs)
+
+    def test_allocator_bitmap_set_cannot_be_omitted(self):
+        self.allocator_variant("skip-bitmap",
+            "        allocated[index / 8] |= (cpu_u8)(1u << (index % 8));",
+            "        /* Bitmap set deliberately omitted. */",
+            "[MM] failure=allocate_unique_frames")
+
+    def test_allocator_cursor_pull_cannot_be_omitted(self):
+        self.allocator_variant("release-cursor",
+            "    if (index < search_cursor) search_cursor = index;",
+            "    /* Cursor pull deliberately omitted. */",
+            "[MM] failure=reuse")

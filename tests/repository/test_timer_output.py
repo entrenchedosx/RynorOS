@@ -10,6 +10,7 @@ from timer_output import TIMER_OUTPUT
 from sched_output import SCHED_GOOD
 from kbd_output import KBD_GOOD
 from display_output import DISPLAY_GOOD
+from runtime_output import RUNTIME_GOOD
 from boot_output import validate_boot_output, POST_IRQ
 from test_exception_output import parser_fixture
 from test_pmm_output import fixture as pmm_fixture
@@ -19,7 +20,7 @@ from test_heap_output import fixture as heap_fixture
 
 def complete_transcript():
     return (parser_fixture() + pmm_fixture() + vm_fixture() + heap_fixture()
-            + TIMER_OUTPUT + SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD + POST_IRQ)
+            + TIMER_OUTPUT + SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD + RUNTIME_GOOD + POST_IRQ)
 
 
 def base_prefix():
@@ -27,7 +28,7 @@ def base_prefix():
 
 
 def sched_and_kbd():
-    return SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD
+    return SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD + RUNTIME_GOOD
 
 
 class TimerOutputTests(unittest.TestCase):

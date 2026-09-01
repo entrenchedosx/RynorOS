@@ -10,7 +10,7 @@ Host tools are not guest RynorOS functionality.
 
 `python tools/build/build.py COMMAND`:
 
-- `validate`: required paths, nonempty files, exact Stage 7/schema-8 metadata,
+- `validate`: required paths, nonempty files, exact Stage 10/schema-10 metadata,
   canonical icon header/hash and `.rl` recognition. Python only; not execution proof.
 - `build`: validate, compile all host/test Python to temporary bytecode, assemble
   NASM sources, compile freestanding C with Clang, link ELF and flat payload with
@@ -19,8 +19,14 @@ Host tools are not guest RynorOS functionality.
 - `test`: repository/layout/parser/CLI/resource tests, including real build failures; requires
   native build tools but not QEMU.
 - `boot-test`: build then verify boot prefix, breakpoint diagnostics, real E820/PMM,
-  VM, kernel-heap and scheduler tests and three real timer ticks with post-IRQ PMM/VM/SCHED checking; `--timeout SECONDS` defaults
-  to 10, must be finite and greater than zero and at most 60.
+  VM, kernel-heap and scheduler tests and three real timer ticks with post-IRQ PMM/VM/SCHED checking; the timer and scheduler phases are additionally
+  supplemented by the QEMU `pic_interrupt irq 0` trace (all 75 early IRQ0
+  deliveries must precede the first IRQ1 delivery, so canned timer/scheduler
+  transcripts cannot replace the expected interrupt source). Stage 7's
+  frame/RIP/stack checks, not this count alone, establish preemption;
+  `--timeout SECONDS` defaults to 10, must be finite and greater than zero and
+  at most 60. Completed boots may receive up to five additional seconds for
+  framebuffer/runtime evidence capture before bounded cleanup.
 - `integration-test`: build, QEMU/ELF/reproducibility tests including all six required exceptions, real IRQ0, real PMM/VM/kernel-heap/scheduler and independent
   byte-for-byte rebuild; requires all bootstrap dependencies.
 - `check`: build, test, integration-test; short-circuits on failure.
@@ -58,7 +64,7 @@ guaranteed to do so. `run.json` records PID, command, exit, and cleanup.
 
 ## Implementation status and tests
 
-Implemented through Stage 9. `host/repository.py` owns the schema; `host/image.py` the
+Implemented through Stage 10. `host/repository.py` owns the schema; `host/image.py` the
 fixed-layout image build; `host/qemu.py` the execution harness and
 `host/exception_output.py`, `host/timer_output.py`, `host/pmm_output.py`,
 `host/vm_output.py`, `host/heap_output.py`, `host/sched_output.py` and `host/boot_output.py` the captured-output validators. The PMM parser independently
@@ -116,6 +122,12 @@ serial/cleanup logs. TCG cache is bounded to 32 MiB. All mutation sources live
 in temporary copies; ordinary production code has no fake-success switches.
 
 ## Known limitations
+
+Stage 10 adds a bounded ELF symbol reader and mandatory `runtime.pmem` evidence.
+The host corroborates worker results/stacks with independent QEMU hardware IRQ
+RIP/RSP records (`-d int`). Accurate canned serial, absent physical records,
+missing CPU traces and worker service bypasses are negative tests. Full scope,
+mutation results and hardware limitations are in `docs/reports/stage10-audit.md`.
 
 No RynorLang compiler, incremental cache, package manager, filesystem builder,
 or general-purpose image format. Python 3.10+ is declared; verification used

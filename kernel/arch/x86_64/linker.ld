@@ -18,7 +18,11 @@ SECTIONS
     . = 0x8000;
     __kernel_start = .;
     .boot : { KEEP(*(.boot)) }
-    .text ALIGN(16) : { __text_start = .; *(.text.entry) *(.text .text.*) }
+    .text ALIGN(16) : {
+        __text_start = .; *(.text.entry)
+        __runtime_service_start = .; *(.text.runtime_service)
+        __runtime_service_end = .; *(.text .text.*)
+    }
     . = ALIGN(4096);
     __text_end = .;
     .rodata : { *(.rodata .rodata.*) }
@@ -27,7 +31,7 @@ SECTIONS
     __data_start = .;
     .data : { *(.data .data.*) }
     __payload_end = .;
-    .bss ALIGN(32) (NOLOAD) : {
+    .bss ALIGN(4096) (NOLOAD) : {
         __bss_start = .;
         *(.bss .bss.*) *(COMMON)
         __bss_end = .;

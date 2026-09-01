@@ -80,6 +80,12 @@ static void kbd_isr(void)
     if (status & STATUS_ERROR) {
         increment(&stats.errors); increment(&input.epoch); return;
     }
+    /* Set-1 overrun/self-test bytes are controller diagnostics, not keys.
+       Consume them, count the error, and advance the epoch so consumers
+       report a loss instead of a phantom unknown key. */
+    if (scan == 0x00 || scan == 0xff) {
+        increment(&stats.errors); increment(&input.epoch); return;
+    }
     if (kbd_ring_put(&input, scan) < 0) cpu_halt();
     /* IRQ dispatcher owns EOI. No polling, allocation, serial or STI here. */
 }

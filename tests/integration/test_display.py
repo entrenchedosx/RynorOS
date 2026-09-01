@@ -155,14 +155,31 @@ class DisplayTests(unittest.TestCase):
     def test_canned_success_output_cannot_prove_hardware(self):
         from display_output import DISPLAY_GOOD
         # The real 64 MiB keyboard baseline free is 65818624; the display adds
-        # 16384 bytes. Correct the canned accounting so boot validation passes
-        # and only the independent pmemsave pixel gate can catch the forgery.
+        # 16384 bytes. Correct the canned accounting so the display section
+        # alone passes boot validation.
         canned = (DISPLAY_GOOD.replace(b"free_bytes=921600", b"free_bytes=65802240")
                   .decode("ascii"))
-        self.run_failure("display pixel evidence failed",
-                         [("void display_self_test(void)\n{\n",
-                           "void display_self_test(void)\n{\n    text(" + json.dumps(canned) + "); return;\n")],
-                         source="kernel/drivers/display-test.c")
+        root = self.mutate(self.build_fixture(),
+                           "kernel/drivers/display-test.c",
+                           [("void display_self_test(void)\n{\n",
+                             "void display_self_test(void)\n{\n    text(" + json.dumps(canned) + "); return;\n")])
+        build_image(root)
+        logs = ROOT / "build/fb-tests" / self._testMethodName
+        try:
+            with self.assertRaises(RuntimeError) as error:
+                boot_image(root / "build/rynoros.img", logs, timeout=12)
+        finally:
+            self.cleanup(logs)
+        logged = (logs / "serial.log").read_bytes()
+        self.assertIn(DISPLAY_START, logged, 'Mutation failed before the display stage')
+        combined = str(error.exception) + logged.decode("ascii")
+        # Because display_self_test returns before allocating the framebuffer,
+        # the real Stage 10 runtime reports the keyboard baseline, which cannot
+        # match the forged display baseline: the forgery is also rejected by the
+        # runtime accounting gate. Accept either host-side forgery-detection gate.
+        self.assertTrue("display pixel evidence failed" in combined or
+                        "Runtime accounting does not match display baseline" in combined,
+                        combined)
 
     def test_hardware_pitch_padding(self):
         self.run_success([('bga_write 6, 1024','bga_write 6, 1040')], source='boot/transition.asm')
@@ -213,6 +230,15 @@ class DisplayTests(unittest.TestCase):
         self.run_failure('[FB] failure=mmio_pte_state',
             [('return map_pages(s, va, pa, pages, p | VM_DEVICE_UC, 1);',
               'return map_pages(s, va, pa, pages, p, 1);')], source='kernel/mm/vm.c')
+
+    def test_pat3_verification_is_consulted(self):
+        """The full PAT3 byte (EAX bits 31:24) must be consulted before the
+        first device mapping; QEMU supplies UC there, so requiring another
+        value must fail closed before pixel work."""
+        self.run_failure('[FB] failure=mmio_invalid_ranges',
+            [('if ((a >> 24) != 0) return VM_UNSUPPORTED;',
+              'if ((a >> 24) != 1) return VM_UNSUPPORTED;')],
+            source='kernel/mm/vm.c')
 
     def test_ordinary_api_cannot_edit_mmio_slot(self):
         self.run_failure('[FB] failure=mmio_slot_exclusive',

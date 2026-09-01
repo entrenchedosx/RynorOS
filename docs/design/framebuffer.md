@@ -53,9 +53,11 @@ ACPI/NVS/persistent/bad ranges. Only undescribed holes or firmware-reserved
 regions above 1 MiB are eligible; eligibility alone does not establish device
 ownership, so the driver must prove an actual aperture.
 
-Leaves are supervisor RW/NX and UC: PCD=PWT=1, PAT bit=0. If CPUID reports PAT,
-IA32_PAT entry 3 must already be UC (0); otherwise map fails unsupported. No
-global PAT modification, write combining, or cache-policy negotiation exists.
+Leaves are supervisor RW/NX and UC: PCD=PWT=1, PAT bit=0. These page-entry bits
+select IA32_PAT index 3, the fourth byte of the MSR (`EAX[31:24]`). If CPUID
+reports PAT, `vm_map_device` requires that complete byte to be UC (0) and fails
+unsupported otherwise. The kernel does not modify the global PAT, negotiate a
+different index, or enable write combining.
 Every installed leaf is queried for correct PA/permissions/cache mode. Mapping
 failure rolls back before publishing the surface. VM owns and allocates tables
 through PMM; device pages are foreign, never allocated/freed through PMM.

@@ -46,11 +46,14 @@ def make_image(boot: bytes, payload: bytes) -> bytes:
 
 
 def build_image(root: Path, destination: Path | None = None, *,
-                test_vector: int = 3, test_armed: bool = True) -> dict:
+                test_vector: int = 3, test_armed: bool = True,
+                shell_interactive: bool = False) -> dict:
     if type(test_vector) is not int or test_vector not in (0, 1, 3, 6, 13, 14):
         raise ValueError("Unsupported CPU self-test vector")
     if type(test_armed) is not bool:
         raise ValueError("test_armed must be boolean")
+    if type(shell_interactive) is not bool:
+        raise ValueError("shell_interactive must be boolean")
     destination = destination or root / "build"
     destination.mkdir(parents=True, exist_ok=True)
     # Invalidate only named generated deliverables: an unsuccessful rebuild must
@@ -92,6 +95,13 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/drivers/display-surface.c", "display-surface.o"),
             ("kernel/drivers/display-surface-test.c", "display-surface-test.o"),
             ("kernel/drivers/display-test.c", "display-test.o"),
+            ("kernel/runtime/kstring.c", "kstring.o"),
+            ("kernel/runtime/kbuf.c", "kbuf.o"),
+            ("kernel/runtime/krst.c", "krst.o"),
+            ("kernel/runtime/runtime-test.c", "runtime-test.o"),
+            ("kernel/runtime/boundary-test.c", "runtime-boundary-test.o"),
+            ("kernel/shell/shell.c", "shell.o"),
+            ("kernel/shell/shell-test.c", "shell-test.o"),
             ("kernel/core/thread.c", "thread.o"),
             ("kernel/core/scheduler-test.c", "scheduler-test.o"),
             ("kernel/arch/x86_64/serial.c", "serial.o"),
@@ -109,7 +119,10 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/mm/heap.c", "heap.o"),
             ("kernel/mm/heap-test.c", "heap-test.o"),
         ):
+            if source.startswith("kernel/shell/") and not shell_interactive:
+                continue  # Preserve Stage 11 sources without putting them in the Stage 10 image.
             target = output / name
+            shell_flags = [f"-DRYNOR_SHELL_INTERACTIVE={int(shell_interactive)}"] if shell_interactive else []
             run_tool([
                 clang, "--target=x86_64-none-elf", "-std=c11", "-ffreestanding",
                 "-fno-builtin", "-fno-stack-protector", "-fno-pic", "-fno-pie",
@@ -117,7 +130,8 @@ def build_image(root: Path, destination: Path | None = None, *,
                 "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
                 "-Wall", "-Wextra", "-Werror", "-O2", "-Ikernel/include",
                 f'-DRYNOR_VERSION="{version}"', f"-DRYNOR_TEST_VECTOR={test_vector}",
-                f"-DRYNOR_TEST_ARMED={int(test_armed)}", "-c", source, "-o", str(target),
+                f"-DRYNOR_TEST_ARMED={int(test_armed)}",
+                *shell_flags, "-c", source, "-o", str(target),
             ], root)
             objects.append(str(target))
         link = [linker, "-m", "elf_x86_64", "-T", "kernel/arch/x86_64/linker.ld",
@@ -136,6 +150,7 @@ def build_image(root: Path, destination: Path | None = None, *,
         manifest = {
             "version": version,
             "cpu_self_test": {"vector": test_vector, "armed": test_armed},
+            "experimental_shell_interactive": shell_interactive,
             "target": "x86_64-none-elf",
             "payload_sectors": sectors,
             "tools": {"clang": run_tool([clang, "--version"], root).splitlines()[0],

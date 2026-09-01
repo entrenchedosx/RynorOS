@@ -3,6 +3,7 @@
 #include "io.h"
 
 static struct vm_space kernel_space;
+static cpu_u64 window_pt;
 static cpu_u64 physical_limit;
 static int active;
 #define VM_DEVICE_UC 8u /* Internal only: PAT index 3 (PCD|PWT), verified UC. */
@@ -89,7 +90,10 @@ static enum vm_result walk(struct vm_space *s, cpu_u64 va, cpu_u64 path[VM_LEVEL
 static int empty(cpu_u64 physical)
 {
     volatile struct page_table *t = access_table(physical);
-    for (unsigned int i = 0; i < VM_ENTRIES; ++i) if (t->entry[i].value) return 0;
+    for (unsigned int i = 0; i < VM_ENTRIES; ++i) {
+        if (physical == window_pt && i == 0) continue;
+        if (t->entry[i].value) return 0;
+    }
     return 1;
 }
 
@@ -201,6 +205,10 @@ enum vm_result vm_query(struct vm_space *s, cpu_u64 va, struct vm_mapping *out)
     if (r != VM_OK) return r;
     if (!out) return VM_INVALID;
     if (!vm_canonical(va)) return VM_NONCANONICAL;
+    /* The private frame window is internal scratch, not a real mapping; it must
+       not be reported as an owned leaf even while entry 0 holds a stale frame. */
+    if (s == &kernel_space && (va & ~(VM_PAGE_SIZE - 1)) == VM_WINDOW)
+        return VM_NOT_MAPPED;
     cpu_u64 path[VM_LEVELS];
     r = walk(s, va, path);
     if (r != VM_OK) return r;
@@ -370,6 +378,9 @@ static int inspect(cpu_u64 table, unsigned int level, cpu_u64 *count)
     for (unsigned int i = 0; i < VM_ENTRIES; ++i) {
         page_entry e = read_entry(table, i);
         if (!e.value) continue;
+        /* The kernel window PT's entry 0 is a transient access slot rewritten
+           on every table access; it is not a mapping the VM API owns. */
+        if (!level && table == window_pt && i == 0) continue;
         if (!level) {
             if (!(e.value & PTE_PRESENT) || (e.value & ~(PTE_ADDRESS | PTE_PRESENT | PTE_WRITE |
                 PTE_USER | PTE_ACCESS | PTE_DIRTY | PTE_NX | PTE_PCD | PTE_PWT)) || pte_address(e) >= physical_limit) return 0;
@@ -435,6 +446,7 @@ enum vm_result vm_initialize(void)
         }
     }
     kernel_space.root = f[0]; kernel_space.identity = &kernel_space;
+    window_pt = f[6];
     write_entry(f[0], 0, (page_entry){f[1] | PTE_TABLE_FLAGS});
     write_entry(f[1], 0, (page_entry){f[2] | PTE_TABLE_FLAGS});
     write_entry(f[2], 0, (page_entry){f[3] | PTE_TABLE_FLAGS});
