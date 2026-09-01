@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), and Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence) under QEMU.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), and Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence) under QEMU.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -19,12 +19,16 @@ ownership, lifecycle and timer-driven execution with four, two and one runnable
 contexts and verifying preemption, then, in Stage 8, explicitly configures the
 i8042/keyboard and consumes eight host-selected keys while IRQ0 schedules a worker,
 then, in Stage 9, consumes the boot-collected PCI/BGA handoff and paints/verifies
-a pattern with interrupts disabled, rechecks memory/execution state and halts.
+a pattern with interrupts disabled, then, in Stage 10, runs bounded string/buffer
+and runtime-service self-tests on seven worker threads under re-enabled IRQ0,
+rechecks memory/execution state and halts. The optional preserved Stage 11 shell
+build appends a host-driven interactive session after the integrity gate.
 The image contains no third-party loader or OS. SeaBIOS is external emulator
 firmware, not RynorOS code; host tools never execute as guest OS services.
 
 The small BIOS approach avoids UEFI packaging, ISO tools, and a separate loader
-dependency, at the cost of a QEMU-only fixed low-memory layout. Stage 5 extends
+dependency, at the cost of a fixed legacy-BIOS low-memory layout tested only on
+the pinned QEMU PC and unverified on physical hardware. Stage 5 extends
 the loader to bounded one-sector reads into 0x8000..0x70000; no BIOS transfer
 crosses a 64 KiB boundary. BSS is zeroed separately below the fixed stack, not read from
 disk. See `boot/README.md` for the exact contract. Stage 4 adds a bounded/versioned
@@ -169,7 +173,10 @@ Vectors 0..31 retain the CPU diagnostic path; hardware IRQ0..15 use vectors
 return. Static handler registration rejects duplicate/invalid/cascade/null
 requests; enabled lines require registered handlers and configuration requires IF=0.
 The 8259 PIC uses manual EOI (slave before master); ISR readback distinguishes
-spurious IRQ7/15. Only IRQ0 is enabled; no APIC/SMP complexity is introduced.
+spurious IRQ7/15. Only IRQ0 is enabled during the timer test; Stage 8 enables
+IRQ1 (keyboard) and Stage 10 re-enables IRQ0 (scheduler/runtime) for their
+bounded test phases; every line is masked again before the next phase and on the
+final halt. No APIC/SMP complexity is introduced.
 PIT channel 0 mode 2 uses divisor 11932 with QEMU's 1193182 Hz clock, giving
 1193182/11932 Hz (about 99.9984914516 Hz). The non-blocking IRQ handler alone
 increments a static 64-bit tick counter and records three samples. Foreground
@@ -243,10 +250,15 @@ No multicore execution, binary compatibility, or multi-user security is promised
 
 ## 9. Shell
 
-Plan: a small kernel monitor first provides input, help, and real diagnostics
-for services that exist. It must reject unsupported commands honestly. The
-eventual shell in `user/shell/` launches native programs and accesses files via
-documented OS interfaces. It can migrate out of the kernel once userspace exists.
+Experimental and opt-in, not a completed milestone: a small ring-0 kernel monitor in
+`kernel/shell/` reads real keyboard input, builds bounded command lines, and
+exposes only the services that actually exist (the Stage 10 runtime services
+DIGEST/UPPER/COUNT_DIGITS) plus the honest built-ins help/version/echo/clear.
+It rejects unsupported commands honestly and is excluded from the certified
+Stage 10 image (`RYNOR_SHELL_INTERACTIVE`). Its dedicated QEMU probe exercises
+the current input path, but Stage 11 remains planned. The eventual shell in
+`user/shell/` launches native programs and accesses files via documented OS
+interfaces. It can migrate out of the kernel once userspace exists.
 Language evaluation is unavailable until the compiler/runtime exists; the
 shell must never simulate program execution with canned responses.
 
@@ -288,7 +300,8 @@ independent output directories yield byte-identical artifacts. QEMU captures
 the original boot prefix plus ordered CPU initialization, real state diagnostics,
 real E820/PMM initialization/full-pool tests, VM mapping/permission/fault/OOM tests,
 then heap, timer setup/three real ticks, Stage 7 execution tests, Stage 8
-keyboard `sendkey` handshake and Stage 9 framebuffer pixel evidence, then
+keyboard `sendkey` handshake, Stage 9 framebuffer pixel evidence, and the
+Stage 10 runtime worker-fold evidence, then
 post-IRQ accounting within 30 seconds. Six required exception vectors are
 actually triggered in separate images; saved RIP is compared with the linked ELF
 symbol and register/error/flag values are checked. Default breakpoint return also
@@ -308,8 +321,15 @@ test actual RX/RO/NX accesses, and reject broken CR3/TLB/zeroing/fault-arm build
 Scheduler probes compare hardware IRQ RIPs with a non-yielding assembly loop,
 test register/flags/stack restoration, and reject broken handoffs and ownership.
 These checks prove neither general hardware support nor language execution
-or user-mode isolation. Current evidence is in `docs/reports/stage9-audit.md`;
-the Stage 7 and Stage 8 audits retain their historical findings.
+or user-mode isolation. Current evidence is in `docs/reports/stage10-audit.md`;
+the Stage 7, 8 and 9 audits retain their historical findings.
+
+Stage 10 services are allocation-free foreground calls (IF preserved, IRQ
+context rejected), not syscalls. Strings/rings rely on trusted live extents and
+caller synchronization; arithmetic checks are not process isolation. Runtime
+tests explicitly unmask IRQ0 and require CPU-traced preemption inside service
+code on worker-owned stacks, then mask IRQ0 and reap all workers. Fixed serial
+folds alone are insufficient evidence. See `docs/design/runtime.md`.
 
 Plan: host unit tests for pure algorithms and language passes; emulator tests
 for faults, allocation, interrupts, and native application execution; disposable

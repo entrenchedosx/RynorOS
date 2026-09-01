@@ -158,7 +158,9 @@ diagnostic guard halts; it does not make a broken stack safe.
 `python tools/build/build.py check` runs repository and integration tests through
 Stage 7. The five Stage 1 regression cases remain; the normal boot requires the
 unchanged prefix plus the complete Stage 2, PMM, VM, kernel-heap, scheduler and timer transcripts.
-QEMU reads actual serial output with a 10-second deadline, not a fixed boot delay.
+QEMU reads actual serial output with a 10-second guest-completion deadline, not
+a fixed boot delay. Missing-interrupt `HLT` paths are bounded by that host
+deadline, not by a guest counter that cannot run while halted.
 Tests compare each saved RIP with the appropriate actual ELF symbol; require one
 exception/verified marker, exact register/error/flag data, and controlled action;
 verify missing/altered records cannot pass; and assert normal QEMU quit/reaping.

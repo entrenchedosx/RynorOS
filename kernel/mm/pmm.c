@@ -138,7 +138,13 @@ enum pmm_result pmm_allocate(cpu_u64 *physical)
     if (!stats.free_bytes) return PMM_OUT_OF_MEMORY;
     cpu_u64 index = search_cursor;
     while (index < frame_count && bit(index)) ++index;
-    if (index == frame_count) return PMM_INVALID; /* Accounting/cursor corruption. */
+    if (index == frame_count) {
+        /* Cursor-invariant fallback: a free frame below the cursor (released
+           without the cursor being pulled down) must still be found. Never
+           allocate a set bit, and never report OOM as an invalid argument. */
+        for (index = 0; index < search_cursor && bit(index); ++index) {}
+    }
+    if (index >= frame_count || bit(index)) return PMM_OUT_OF_MEMORY;
     cpu_u64 remaining = index;
     for (unsigned int i = 0; i < region_count; ++i) {
         const struct pmm_region *r = &regions[i];

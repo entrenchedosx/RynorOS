@@ -49,7 +49,9 @@ void timer_self_test(void)
         !irq_set_enabled(0, 1)) cpu_halt();
     for (unsigned int reported = 0; reported < TEST_TICKS; ++reported) {
         /* Check with IF=0, then atomically enable-and-sleep. STI's interrupt
-           shadow prevents a lost wakeup between the condition and HLT. */
+           shadow prevents a lost wakeup between the condition and HLT. If no
+           interrupt arrives HLT cannot advance an in-guest counter; the host
+           boot deadline is the only honest timeout at this bootstrap stage. */
         while (ticks <= reported)
             __asm__ volatile ("sti; hlt; cli" : : : "memory");
         if (samples[reported] != reported + 1 || !write_tick(samples[reported])) cpu_halt();

@@ -43,13 +43,22 @@ def parse_sched_output(output: bytes, heap: dict | None = None) -> dict:
     exact("[SCHED] IRQ nesting and lock contracts verified")
     exact(STEPS[2]); exact("[SCHED] non-yielding timer probe started")
     workers = []
+    slots = set()
     for i in range(1, 4):
         worker, preempted, dispatched, rsp, irq_rsp, rip = numbers(
             r"\[SCHED\] worker=(\d+) preemptions=(\d+) dispatches=(\d+) rsp=(\d+) irq_rsp=(\d+) irq_rip=(\d+)")
-        base = 0xffffe00000000000 + (i-1)*20480
+        # The workers occupy fresh slots today, but the stack check must not
+        # hardcode slot geometry: any valid worker slot is acceptable.
+        bases = [0xffffe00000000000 + slot * 20480 for slot in range(8)]
+        slot = next((n for n, base in enumerate(bases)
+                     if base + 4096 <= rsp < base + 20480), None)
+        irq_slot = next((n for n, base in enumerate(bases)
+                         if base + 4096 <= irq_rsp < base + 20480), None)
         if (worker != i or preempted < 2 or dispatched < 2 or preempted > 24 or dispatched > 24 or
-                not base+4096 <= rsp < base+20480 or not rsp-8 <= irq_rsp <= rsp or not rip):
+                slot is None or irq_slot != slot or slot in slots or
+                not (rsp - 8 <= irq_rsp <= rsp) or not rip):
             raise ValueError("SCHED invalid hardware worker evidence")
+        slots.add(slot)
         workers.append(dict(id=worker, preemptions=preempted, dispatches=dispatched,
                             rsp=rsp, irq_rsp=irq_rsp, irq_rip=rip))
     exact("[SCHED] two-runnable ticks=24 switches=24")

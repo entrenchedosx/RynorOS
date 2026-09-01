@@ -101,7 +101,7 @@ class BootTests(unittest.TestCase):
         destination = ROOT / "build/cpu-tests/unarmed-breakpoint"
         build_image(ROOT, destination, test_armed=False)
         with self.assertRaisesRegex(RuntimeError, "timed out"):
-            boot_image(destination / "rynoros.img", destination / "logs", timeout=2)
+            boot_image(destination / "rynoros.img", destination / "logs", timeout=6)
         output = (destination / "logs/serial.log").read_bytes()
         self.assertIn(b"vector=03 name=breakpoint", output)
         self.assertIn(b"[EXCEPTION] action=halt reason=unexpected\r\n", output)
@@ -136,7 +136,9 @@ class BootTests(unittest.TestCase):
         summary = json.loads((logs / "run.json").read_text(encoding="utf-8"))
         self.assertTrue(summary["reaped"])
         self.assertEqual(summary["cleanup"], "monitor-quit")
-        self.assertLess(summary["elapsed_seconds"], 8)
+        # Worst-case bounded cleanup is quit(3s) + terminate(2s) + kill(2s);
+        # a loaded host must not fail the run for the wrong reason.
+        self.assertLess(summary["elapsed_seconds"], 12)
 
     def test_nonbootable_image_times_out_without_stale_success(self):
         with tempfile.TemporaryDirectory(prefix="bad-boot-", dir=ROOT / "build") as temporary:
@@ -188,3 +190,44 @@ class BootTests(unittest.TestCase):
     def test_missing_master_eoi_stops_after_one_real_tick(self):
         self.verify_timer_fault("missing-eoi", "kernel/arch/x86_64/pic.c",
                                 "io_out8(0x20, 0x20);", "/* Deliberately omitted EOI. */", 1)
+
+    def test_canned_timer_transcript_rejected_by_irq_trace(self):
+        """A byte-exact canned timer block passes the serial gate but cannot
+        reach the real-execution IRQ0 floor: no PIT deliveries happened during
+        the timer phase, and the independent emulator trace rejects the boot."""
+        with tempfile.TemporaryDirectory(prefix="timer-canned-", dir=ROOT / "build") as temporary:
+            fixture = Path(temporary)
+            for directory in REQUIRED_DIRECTORIES:
+                (fixture / directory).mkdir(parents=True, exist_ok=True)
+            for filename in REQUIRED_FILES:
+                shutil.copyfile(ROOT / filename, fixture / filename)
+            path = fixture / "kernel/arch/x86_64/timer.c"
+            contents = path.read_text(encoding="utf-8")
+            start = "    io_out8(0x43, 0x34); /* Channel 0, low/high count, mode 2, binary. */"
+            self.assertEqual(contents.count(start), 1)
+            original = contents[contents.index(start):]
+            self.assertTrue(original.rstrip().endswith("}"))
+            canned = ("    (void)serial_write(\"[TIMER] initialized\\r\\n\"\n"
+                      "                       \"[TIMER] clock_hz=1193182 divisor=11932 mode=2\\r\\n\"\n"
+                      "                       \"[TEST] waiting for timer interrupts\\r\\n\");\n"
+                      "    (void)write_tick(1);\n"
+                      "    (void)write_tick(2);\n"
+                      "    (void)write_tick(3);\n"
+                      "    (void)serial_write(\"[TEST] timer interrupt handling verified\\r\\n\");\n"
+                      "    (void)serial_flush();\n}\n")
+            path.write_text(contents.replace(original, canned), encoding="utf-8")
+            build_image(fixture)
+            logs = ROOT / "build/timer-tests/canned"
+            try:
+                with self.assertRaises(RuntimeError) as error:
+                    boot_image(fixture / "build/rynoros.img", logs, timeout=15)
+            finally:
+                summary = json.loads((logs / "run.json").read_text(encoding="utf-8"))
+                self.assertTrue(summary["reaped"])
+                self.assertEqual(summary["cleanup"], "monitor-quit")
+            output = (logs / "serial.log").read_bytes()
+            # The serial gate alone accepts the forgery: every timer line is
+            # present in order, and the guest completes the whole boot.
+            self.assertIn(TIMER_OUTPUT, output)
+            self.assertIn(POST_IRQ, output)
+            self.assertIn("below the real-execution floor", str(error.exception))

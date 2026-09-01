@@ -8,12 +8,15 @@ from vm_output import VM_END, validate_vm_output, parse_vm_output
 from heap_output import HEAP_END, validate_heap_output, parse_heap_output
 from sched_output import SCHED_START, SCHED_END, validate_sched_output, parse_sched_output
 from kbd_output import KBD_START, KEYS, validate_kbd_output, parse_kbd_output
-from display_output import DISPLAY_START, validate_display_output
+from display_output import DISPLAY_START, DISPLAY_END, validate_display_output, parse_display_output
+from runtime_output import validate_runtime_output, parse_runtime_output
+from shell_output import SHELL_START, SHELL_END, validate_shell_output
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
 
-def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS) -> list[str]:
+def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
+                         require_shell: bool = False) -> list[str]:
     if vector != 3:
         return validate_exception_output(output, vector)
     cpu, end, remaining = output.partition(EXCEPTION_END)
@@ -50,10 +53,40 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS) -> list[str]
             kbd_state = parse_kbd_output(KBD_START + kbd_section, keys, sched_state)
     else:
         errors.append("Stage 8 keyboard output missing")
+    display_state = None
+    runtime_state = None
     if fb_sep != b"":
-        errors.extend(validate_display_output(DISPLAY_START + fb_section, kbd_state))
+        display_head, run_sep, run_tail = (DISPLAY_START + fb_section).partition(DISPLAY_END)
+        display_section = display_head + DISPLAY_END
+        display_errors = validate_display_output(display_section, kbd_state)
+        errors.extend(display_errors)
+        display_state = parse_display_output(display_section, kbd_state) if not display_errors else None
+        if run_sep != b"":
+            run_errors = validate_runtime_output(run_tail, display_state)
+            errors.extend(run_errors)
+            runtime_state = parse_runtime_output(run_tail, display_state) if not run_errors else None
+        else:
+            errors.append("Stage 10 runtime output missing")
+            runtime_state = None
     else:
         errors.append("Stage 9 display output missing")
-    if sep == b"" or post != b"":
+    if sep == b"":
         errors.append("Post-IRQ accounting missing or not final")
+        return errors
+    # Stage 11 shell output is optional and follows POST_IRQ. When present it
+    # must be a complete shell section with nothing before or after it.
+    shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
+    if shell_sep != b"":
+        shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
+        if shell_head != b"" or tail_sep == b"" or tail != b"":
+            errors.append("Shell output incomplete or not final")
+        else:
+            if runtime_state is None:
+                errors.append("Shell baseline accounting missing")
+            else:
+                errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state))
+    elif require_shell:
+        errors.append("Required interactive shell output missing")
+    elif post != b"":
+        errors.append("Unexpected output after Post-IRQ accounting")
     return errors

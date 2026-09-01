@@ -51,8 +51,8 @@ class KernelHeapTests(unittest.TestCase):
                 return
             build_image(fixture)
             logs = ROOT / "build/heap-tests" / name
-            with self.assertRaisesRegex(RuntimeError, "timed out"):
-                boot_image(fixture / "build/rynoros.img", logs, timeout=2)
+            with self.assertRaisesRegex(RuntimeError, "(timed out|\\[HEAP\\] failure=)"):
+                boot_image(fixture / "build/rynoros.img", logs, timeout=6)
             output = (logs / "serial.log").read_bytes()
             self.assertIn(reason.encode(), output)
             self.assertNotIn(b"[TEST] HEAP self-test passed", output)

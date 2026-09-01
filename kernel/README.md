@@ -2,12 +2,14 @@
 
 ## Purpose
 
-Original x86-64 kernel for RynorOS. Stages 1–8 boot, print serial output, load
+Original x86-64 kernel for RynorOS. Stages 1–10 boot, print serial output, load
 kernel descriptors, diagnose one controlled exception, initialize and test E820-
 based physical frame allocation, replace/test kernel paging, run a bounded kernel-
 heap self-test, verify three PIC/PIT
 timer IRQs, verify kernel threads and preemption, receive/decode real PS/2
-keyboard input on IRQ1, mask interrupts and halt. It is not
+keyboard input on IRQ1, validate and paint the framebuffer, run bounded
+strings/byte rings and ring-0 runtime services on worker threads, then run the
+final integrity gate, mask interrupts and halt. It is not
 built on another kernel or existing OS userspace.
 
 ## Public interfaces
@@ -83,6 +85,20 @@ tests table/mapping rollback. Supported text is A-Z, 0-9, space and .-:/?, with
 newline/carriage return, clipped transparent 5x7 glyphs and a 128-character cap.
 See `../docs/design/framebuffer.md`.
 
+Stage 10 `include/kstring.h`, `include/kbuf.h`, `include/krst.h` and the
+`runtime/` sources provide the basic kernel runtime: bounded strings and a
+transactional two-pass `kstr_format`, bounded byte rings, and ring-0 services
+(FNV-1a 64 digest, uppercase, digit count) dispatched through `krst_call` with
+overlap/undersize/bad-op/bad-arg rejection. `runtime/runtime-test.c` first runs
+synthetic bounds tests, then drives the services from seven worker threads via
+the Stage 7 scheduler, folding 40 digests per worker and reporting the result.
+The host independently recomputes every worker fold, the total, the format
+outputs and the buffer wrap payload. Mandatory physical worker records also
+prove saved hardware IRQ RIP/RSP within service code/owned stacks; fixed
+serial values alone cannot reject canned output. `runtime_self_test` runs from `core/main.c` after display and before the
+final integrity gate. This is ring-0 runtime infrastructure only; there is no
+userspace or syscall (Stage 18). See `../docs/design/runtime.md`.
+
 `include/serial.h` declares `serial_init`, `serial_write`, and `serial_flush`.
 Implementation is `arch/x86_64/serial.c`: COM1 at 0x3f8, divisor 1 (115200), 8N1,
 FIFOs enabled/cleared, UART interrupts disabled. Write/flush return zero after
@@ -108,7 +124,8 @@ diagnostics in `interrupts/exceptions.c`, and an assembly-controlled self-test;
 16 IRQ stubs, `interrupts/irq.c` dispatch, `arch/x86_64/pic.c` and `timer.c`.
 `mm/` implements map validation, real frame allocation, virtual memory, the
 bounded kernel heap and self-tests; `drivers/` holds the Stage 8 keyboard and
-Stage 9 framebuffer drivers;
+Stage 9 framebuffer drivers; `runtime/` holds the Stage 10 bounded
+string/buffer/service sources;
 device code covers architecture-specific serial, PIC, PIT and keyboard support.
 No RynorLang implementation has been added.
 
@@ -130,7 +147,7 @@ allocation failure, plus broken CR3/TLB/zeroing/fault-arm kernel variants.
 ## Known limitations
 
 Only the documented QEMU PC configuration is verified. No
-filesystem, graphics, userspace, privilege transitions, TSS/IST,
+filesystem, GUI or general graphics stack, userspace, privilege transitions, TSS/IST,
 or general external device support beyond IRQ0, the single PS/2 keyboard on
 IRQ1. No reliable stack-overflow recovery,
 process isolation or address-space switching. Invalid stacks, early boot faults,

@@ -8,7 +8,7 @@ from resources import read_icon
 SOURCE_EXTENSION = ".rl"
 REQUIRED_DIRECTORIES = (
     "kernel", "kernel/arch", "kernel/core", "kernel/mm", "kernel/interrupts",
-    "kernel/drivers", "kernel/include", "boot", "rynorlang", "rynorlang/lexer",
+    "kernel/drivers", "kernel/runtime", "kernel/shell", "kernel/include", "boot", "rynorlang", "rynorlang/lexer",
     "rynorlang/parser", "rynorlang/ast", "rynorlang/compiler", "rynorlang/runtime",
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
     "user/apps", "tools", "tools/build", "tools/host", "tests", "tests/repository",
@@ -77,11 +77,23 @@ REQUIRED_FILES = (
     "tests/integration/test_display.py",
     "tests/repository/test_fb_output.py", "docs/design/framebuffer.md",
     "docs/reports/stage9.md",
+    "kernel/include/kstring.h", "kernel/include/kbuf.h", "kernel/include/krst.h",
+    "kernel/runtime/kstring.c", "kernel/runtime/kbuf.c", "kernel/runtime/krst.c",
+    "kernel/runtime/runtime-test.c", "kernel/runtime/README.md",
+    "kernel/runtime/region.h", "kernel/runtime/boundary-test.c",
+    "tools/host/runtime_output.py", "tests/integration/test_runtime.py",
+    "tools/host/kernel_elf.py",
+    "tests/repository/test_runtime_output.py", "docs/design/runtime.md",
+    "docs/reports/stage10.md", "docs/reports/stage10-audit.md",
+    # Preserve the incoming, not independently audited Stage 11 wiring in
+    # copied build fixtures too. Presence is not a Stage 11 completion claim.
+    "kernel/include/shell.h", "kernel/shell/shell.c", "kernel/shell/shell-test.c",
+    "tools/host/shell_output.py",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 9 is the exact Stage 8 contract, not a build-target DSL.
+# Version 10 is the exact Stage 10 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 9,
+    "schema_version": 10,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
@@ -91,8 +103,8 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 9,
-    "status": "kernel-display-output",
+    "stage": 10,
+    "status": "kernel-runtime",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -120,6 +132,9 @@ EXPECTED_METADATA = {
         "keyboard-sendkey-injection", "keyboard-self-test",
         "bochs-vbe-framebuffer", "pci-bar0-lfb-discovery", "framebuffer-mapping",
         "bounds-safe-rect-text", "framebuffer-pixel-evidence", "framebuffer-self-test",
+        "bounded-strings", "string-format-primitives", "bounded-byte-rings",
+        "runtime-services", "fnv1a-64-digest", "runtime-service-dispatch",
+        "runtime-on-worker-threads", "runtime-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }

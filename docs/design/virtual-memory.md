@@ -31,9 +31,10 @@ they do not restrict leaf permissions. Leaf present means readable on x86; there
 is no read-disable or execute-only API. Writable, user and NX control real
 hardware access. Accessed and dirty are reported by query and preserved across
 permission changes. PWT/PCD flag constants and the generic `pte_has` helper
-identify those hardware bits, but **cache-policy mappings are not exposed**:
-ordinary allocated RAM uses write-back caching. PAT and global mappings are not
-supported. Software changes to table memory outside this implementation violate
+identify those hardware bits, but **cache-policy mappings are not exposed for
+ordinary RAM**: ordinary allocated RAM uses write-back caching. The Stage 9
+device-only API uses a validated PAT-index-3 UC encoding; there is no generic
+PAT-policy API or global-page support. Software changes to table memory outside this implementation violate
 the API contract; detected unsupported or malformed encodings are rejected.
 
 There are no new large pages. The Stage 1 2 MiB bootstrap leaf is replaced,

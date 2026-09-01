@@ -98,10 +98,12 @@ class FbOutputTests(unittest.TestCase):
         from timer_output import TIMER_OUTPUT
         from sched_output import SCHED_GOOD
         before=parser_fixture()+pmm_fixture()+vm_fixture()+heap_fixture()+TIMER_OUTPUT+SCHED_GOOD
-        compose=before+KBD_GOOD+DISPLAY_GOOD+POST_IRQ
+        from runtime_output import RUNTIME_GOOD
+        compose=before+KBD_GOOD+DISPLAY_GOOD+RUNTIME_GOOD+POST_IRQ
         self.assertEqual(validate_boot_output(compose),[])
         for broken in (before+DISPLAY_GOOD+KBD_GOOD+POST_IRQ, compose.replace(DISPLAY_GOOD,b''),
-                       compose.replace(DISPLAY_GOOD,DISPLAY_GOOD*2), compose+DISPLAY_GOOD):
+                       compose.replace(DISPLAY_GOOD,DISPLAY_GOOD*2), compose+DISPLAY_GOOD,
+                       compose.replace(RUNTIME_GOOD,b'')):
             self.assertTrue(validate_boot_output(broken))
 
     def test_full_image_rejects_absent_text_and_extra_bytes(self):

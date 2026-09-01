@@ -30,7 +30,7 @@ command exits, native compile/link failures, strict diagnostic/timer/heap parsin
 canonical PNG integrity, deterministic resource package contents and PMM map/
 accounting/ownership transcript validation.
 Parser fixtures are explicitly synthetic test data, never kernel execution evidence.
-The original 26 tests remain with the metadata assertion advanced to Stage 8.
+The original 26 tests remain with the metadata assertion advanced to Stage 10/schema 10.
 
 The `integration/` suite retains the five Stage 1 regression cases and adds
 real #DE/#DB/#UD/#GP/#PF execution and an unarmed-breakpoint negative case.
@@ -114,12 +114,35 @@ metadata and mutations breaking bounds/stride/clipping/glyphs/device ownership/
 cache/mapping/text writes must fail in the display stage, not an earlier test.
 Canned success cannot satisfy these evidence gates. Guarded local-buffer tests
 are explicitly synthetic; device writes and PMM exhaustion/rollback execute in
-QEMU. Logs are under `build/fb-tests/`; exact results are in the Stage 9 audit.
+QEMU. Logs are under `build/fb-tests/`; the Stage 9 audit is historical evidence.
+
+Stage 10 adds basic kernel runtime validation: the repository `test_runtime_output.py`
+requires the string/buffer/service records in order and re-derives every worker
+FNV-1a fold, the total, the format outputs and the buffer wrap payload from the
+constants, and gates the final accounting against the display baseline. The
+integration `test_runtime.py` boots the real image, recomputes each worker's
+`acc` and the total on the host, and confirms the accounting matches the display
+state. Mutations that break the FNV constant (caught only by the host), the
+worker fold, the upper/count services, the bounded-copy overflow guard, the
+buffer no-partial-write rule, or that bypass worker rounds, plus a canned forged
+transcript, must all fail. Logs are under `build/rt-tests/`; exact results are
+in the Stage 10 audit report.
+
+The independent Stage 10 audit strengthens that evidence: exact-fit/alias and
+real guard-page tests, genuine ring wraps, actual OOM/repeated worker lifetimes,
+and timer preemption during service calls. `runtime.pmem` is mandatory alongside
+serial: every worker's ID, stack, completed count, result and hardware IRQ
+RIP/RSP are checked against the linked ELF. An accurate canned transcript is
+tested too, not only a deliberately incorrect digest. This is mutation-sensitive
+verification of reviewed code, not remote attestation against arbitrary kernel
+and verifier forgery. Preserved Stage 11 shell code is excluded from normal
+Stage 10 images and is not certified by this audit.
 
 `test_audit.py` adds 8/512 MiB boots, the `max` CPU, NX-disabled rejection, and
 real firmware RAM above 4 GiB using a 32 MiB below-4G limit. No guest memory
-map is fabricated for that test. Current exact counts and command results are
-in `../docs/reports/stage9-audit.md`; audit logs are under `build/audit-tests/`.
+map is fabricated for that test. Historical Stage 9 results remain in
+`../docs/reports/stage9-audit.md`; current run counts belong in the active
+stabilization report. Audit logs are under `build/audit-tests/`.
 
 ## Known limitations
 

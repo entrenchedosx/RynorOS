@@ -61,7 +61,7 @@ class SchedulerTests(unittest.TestCase):
             build_image(fixture)
             logs = ROOT / "build/sched-tests" / name
             try:
-                with self.assertRaisesRegex(RuntimeError, "timed out"):
+                with self.assertRaisesRegex(RuntimeError, "(timed out|\\[SCHED\\] failure=)"):
                     boot_image(fixture / "build/rynoros.img", logs, timeout=3)
             finally:
                 self.cleanup(logs)

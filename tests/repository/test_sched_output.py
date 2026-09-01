@@ -50,3 +50,10 @@ class SchedOutputTests(unittest.TestCase):
     def test_missing_completion_and_identity(self):
         for token in (SCHED_END, b"[SYSTEM] RynorOS 0.1.0 | Rynorkernel | stage7 kernel execution\r\n"):
             self.assertTrue(validate_sched_output(fixture().replace(token, b"")))
+
+    def test_workers_cannot_claim_the_same_stack_slot(self):
+        first = (b"rsp=18446708889337483008 irq_rsp=18446708889337483008")
+        second = (b"rsp=18446708889337503488 irq_rsp=18446708889337503488")
+        self.assertEqual(fixture().count(first), 1)
+        self.assertEqual(fixture().count(second), 1)
+        self.assertTrue(validate_sched_output(fixture().replace(second, first)))

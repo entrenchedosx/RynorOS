@@ -51,7 +51,11 @@ def parse_kbd_output(output: bytes, keys=KEYS, previous=None) -> dict:
             if actual!=(j,*events[j]): raise ValueError("KBD event does not match host input")
     irqs,reads,received,dropped,errors,aux,empty=rec(
         r"\[KBD\] irqs=(\d+) reads=(\d+) received=(\d+) dropped=(\d+) errors=(\d+) auxiliary=(\d+) empty=(\d+)")
-    if reads!=16 or received!=16 or dropped or errors or aux or irqs!=reads+empty or empty>1:
+    # The pinned QEMU controller deterministically latches exactly one startup
+    # IRQ without an output byte (documented in keyboard.md). Requiring it means
+    # the empty-IRQ accounting cannot be silently removed: a variant that stops
+    # counting empty deliveries shifts irqs and is rejected here.
+    if reads!=16 or received!=16 or dropped or errors or aux or irqs!=reads+empty or empty!=1:
         raise ValueError("KBD hardware counters invalid")
     ticks,runs=rec(r"\[KBD\] concurrent timer_ticks=(\d+) worker_runs=(\d+)")
     if not ticks or not runs: raise ValueError("KBD concurrent execution missing")
@@ -67,25 +71,54 @@ def validate_kbd_output(output, keys=KEYS, previous=None):
     try: parse_kbd_output(output,keys,previous)
     except (ValueError,UnicodeDecodeError) as error: return [str(error)]
     return []
-def validate_keyboard_trace(trace, keys=KEYS):
+def validate_keyboard_trace(trace, keys=KEYS, extra_scans=()):
     """Independent emulator evidence: device events, PIC acknowledgments, I/O reads.
     Trace event support is required from the documented QEMU build."""
-    start=trace.find("ps2_keyboard_event ")
-    if start<0: raise ValueError("QEMU keyboard trace missing input events")
-    trace=trace[start:]
-    reads=[int(v,16) for v in re.findall(r"pckbd_kbd_read_data 0x([0-9a-f]+)",trace)]
-    if reads!=[ev[0] for ev in expected_events(keys)]:
+    start = trace.find("ps2_keyboard_event ")
+    if start < 0:
+        raise ValueError("QEMU keyboard trace missing input events")
+    trace = trace[start:]
+    expected_scans = [ev[0] for ev in expected_events(keys)]
+    for scan in extra_scans:
+        if type(scan) is not int or not 0 < scan < 0x80:
+            raise ValueError("QEMU extra keyboard scan invalid")
+        expected_scans.extend((scan, scan | 0x80))
+    reads = [int(v, 16) for v in re.findall(r"pckbd_kbd_read_data 0x([0-9a-f]+)", trace)]
+    if reads != expected_scans:
         raise ValueError("QEMU data-port reads do not match injected input")
-    events=re.findall(r"ps2_keyboard_event [^\r\n]* down ([01]) [^\r\n]* set (\d+) xlate (\d+)",trace)
-    if events!=[(str(i%2==0 and 1 or 0),"2","1") for i in range(16)]:
+    events = re.findall(r"ps2_keyboard_event [^\r\n]* down ([01]) [^\r\n]* set (\d+) xlate (\d+)", trace)
+    count = len(expected_scans)
+    if events != [(str(i % 2 == 0 and 1 or 0), "2", "1") for i in range(count)]:
         raise ValueError("QEMU keyboard make/break or scan configuration mismatch")
-    if len(re.findall(r"pic_interrupt irq 1 intno 33\b",trace))!=16:
+    if len(re.findall(r"pic_interrupt irq 1 intno 33\b", trace)) != count:
         raise ValueError("QEMU IRQ1 acknowledgment count mismatch")
     positions = [[m.start() for m in re.finditer(pattern, trace)] for pattern in
                  (r"ps2_keyboard_event ", r"pic_interrupt irq 1 intno 33\b", r"pckbd_kbd_read_data ")]
-    for i in range(16):
+    for i in range(count):
         if not positions[0][i] < positions[1][i] < positions[2][i]:
             raise ValueError("QEMU input/IRQ1/read ordering invalid")
         # A release may already be queued before the guest consumes the make.
         # FIFO byte order and each byte's device -> IRQ -> read chain above are
         # required; no cross-byte timing assumption is valid here.
+
+
+# Minimum genuine IRQ0 deliveries that must precede the first IRQ1 (keyboard)
+# delivery in the time-ordered trace: exactly 3 timer ticks plus 72 scheduler
+# ticks (24+24+24, each phase's guest self-test waits for its budget then
+# masks IRQ0). All of these happen before the keyboard phase enables IRQ1, so
+# a guest printing canned timer or scheduler text without real PIT deliveries
+# cannot reach this count, even though later phases (keyboard, runtime)
+# legitimately deliver many more IRQ0s of their own.
+IRQ0_BEFORE_KEYBOARD = 3 + 72
+
+
+def validate_irq0_trace(trace):
+    """Independent emulator evidence that the timer and scheduler phases were
+    driven by real PIC IRQ0 deliveries, not canned serial text."""
+    irq0 = [m.start() for m in re.finditer(r"pic_interrupt irq 0 intno 32\b", trace)]
+    irq1 = re.search(r"pic_interrupt irq 1 intno 33\b", trace)
+    before = len(irq0) if irq1 is None else sum(1 for p in irq0 if p < irq1.start())
+    if irq1 is None:
+        raise ValueError("QEMU trace missing IRQ1 keyboard deliveries")
+    if before < IRQ0_BEFORE_KEYBOARD:
+        raise ValueError(f"QEMU IRQ0 deliveries before keyboard {before} below the real-execution floor {IRQ0_BEFORE_KEYBOARD}")

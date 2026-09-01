@@ -100,6 +100,8 @@ the setup/wait markers, unmasks IRQ0 and waits for samples. Conditions are
 checked with IF=0, followed by adjacent `STI; HLT; CLI`. STI's interrupt shadow
 prevents an interrupt-before-HLT lost-wakeup race. Spurious wakeups simply
 recheck the counter. There is no arbitrary delay or busy-wait for a tick.
+If IRQ0 never arrives, `HLT` cannot advance an in-guest timeout counter. The
+owned QEMU process deadline is the honest bound for that failure path.
 
 Each `[TIMER] tick=N` formats a recorded counter value in decimal; the numbers
 are not canned serial strings. The completion marker requires three samples,
@@ -115,7 +117,7 @@ this does not silently promise an uptime service.
 The default QEMU boot must contain the unchanged boot prefix, complete Stage 2
 breakpoint diagnostics, Stage 4 PMM, Stage 5 VM, Stage 6 kernel-heap and Stage 7 scheduler diagnostics/tests, and the exact
 ordered timer transcript followed by PMM/VM/scheduler integrity checks. The harness waits
-on explicit serial markers with a 10-second deadline, normally quits QEMU via
+on explicit serial markers with a 10-second guest-completion deadline, normally quits QEMU via
 its monitor and always reaps its owned process. Each run records cleanup/PID.
 Repository tests reject missing, changed, extra and reordered timer records.
 

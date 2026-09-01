@@ -1,6 +1,6 @@
 # Roadmap
 
-Stages 0–9 are implemented. Stage 10 onward remains **planned**; language and ABI
+Stages 0–10 are implemented. Stage 11 onward remains **planned**; language and ABI
 details are **experimental** until specified and tested. Each row is a small
 delivery target with an observable exit condition, not a claim of functionality.
 Stages may be split further. Numbering is a working sequence, not a schedule.
@@ -23,7 +23,7 @@ defects and repaired them. Current evidence is in `docs/reports/stage7-audit.md`
 | 7 | Kernel execution infrastructure — implemented and audited | PMM-backed RW/NX worker stacks with unbacked guards and checked ownership; real context switching and PIT-driven round-robin preemption; non-reused thread IDs and safe reap; tested rollback, hardware guard/NX faults, invalid handoffs and non-yielding worker execution. See `docs/reports/stage7-audit.md` for evidence and limits. No user mode, processes or SMP. |
 | 8 | Hardware input — implemented, bounded subset | Explicit i8042/keyboard scan setup; IRQ1 status/data handling; 31-sample FIFO/drop-newest queue with loss notification; physical Set-1 subset; host-selected input checked against QEMU device/PIC/I/O traces while IRQ0 schedules a worker. See `docs/reports/stage8-audit.md` for independent evidence and limitations. No full text input, USB or physical-hardware certification. |
 | 9 | Framebuffer/text output — implemented, audit evidence in report | Validated PCI/BGA device handoff; uncached RW/NX framebuffer; bounds-safe pixels/rectangles and bounded text subset; serial retained. Guarded algorithm tests, MMIO/OOM rollback and complete QEMU physical-byte/scanout evidence. See `docs/reports/stage9-audit.md`. No GUI, console, resizing or general GPU driver. |
-| 10 | Basic kernel runtime | Bounded strings/buffers and runtime services built on the tested kernel threads; protected user tasks remain Stage 18. |
+| 10 | Basic kernel runtime — implemented | Bounded strings/buffers and runtime services built on the tested kernel threads; digest/format/wrap evidence independently recomputed on the host; mutation and regression gates. See `docs/reports/stage10-audit.md` (the superseded `stage10.md` is the milestone record). Protected user tasks remain Stage 18; no userspace or syscalls. |
 | 11 | Shell/monitor | Kernel monitor accepts real input and exposes only implemented services; parsing/error tests. |
 | 12 | RynorLang lexer | Freeze lexical subset; tokenize `.rl` input with spans and invalid-token tests; no execution claim. |
 | 13 | RynorLang parser | Parse selected syntax into a documented temporary syntax tree; reject malformed input with locations. |

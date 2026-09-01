@@ -4,7 +4,8 @@ import sys
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"tools/host"))
 from kbd_output import (KBD_START,KBD_END,KBD_GOOD,KEYS,fixture,expected_events,
-                        parse_kbd_output,validate_kbd_output,validate_keyboard_trace,key_sequence)
+                        parse_kbd_output,validate_kbd_output,validate_keyboard_trace,
+                        validate_irq0_trace,IRQ0_BEFORE_KEYBOARD,key_sequence)
 from qemu import _inject_pending_keys
 
 class KbdOutputTests(unittest.TestCase):
@@ -59,3 +60,35 @@ class KbdOutputTests(unittest.TestCase):
                     trace.replace("pckbd_kbd_read_data 0x1e","pckbd_kbd_read_data 0x00"),
                     trace.replace("set 2 xlate 1","set 2 xlate 0"),""):
             with self.assertRaises(ValueError): validate_keyboard_trace(bad)
+    def test_trace_validates_optional_follow_on_input(self):
+        records=[]
+        scans=[scan for scan,_,_ in expected_events(KEYS)]
+        extra=(0x16,0x19,0x1c)
+        for scan in extra: scans.extend((scan,scan|0x80))
+        for i,scan in enumerate(scans):
+            records.extend((f"ps2_keyboard_event addr lnx 1 down {1-i%2} modifier 0x0 modifiers 0x0 set 2 xlate 1",
+                            "pic_interrupt irq 1 intno 33",f"pckbd_kbd_read_data 0x{scan:02x}"))
+        trace="\n".join(records)
+        validate_keyboard_trace(trace,KEYS,extra)
+        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS)
+        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS,(0x16,0x19))
+        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS,(0,))
+    def test_irq0_trace_floor(self):
+        record0 = "pic_interrupt irq 0 intno 32"
+        record1 = "pic_interrupt irq 1 intno 33"
+        self.assertTrue(IRQ0_BEFORE_KEYBOARD >= 75)  # 3 timer + 72 scheduler
+        # Timer+scheduler deliveries must precede the first keyboard IRQ1.
+        before = "\n".join([record0] * IRQ0_BEFORE_KEYBOARD)
+        validate_irq0_trace(before + "\n" + record1)
+        # Later keyboard/runtime IRQ0s do not mask a missing early phase.
+        later = before + "\n" + record1 + "\n" + "\n".join([record0] * 500)
+        validate_irq0_trace(later)
+        # Missing early deliveries are rejected even with plenty of later ones.
+        for shortfall in (1, IRQ0_BEFORE_KEYBOARD - 1):
+            with self.assertRaises(ValueError):
+                validate_irq0_trace("\n".join([record0] * (IRQ0_BEFORE_KEYBOARD - shortfall))
+                                    + "\n" + record1 + "\n" + "\n".join([record0] * 200))
+        # Exactly at the floor passes.
+        validate_irq0_trace("\n".join([record0] * IRQ0_BEFORE_KEYBOARD) + "\n" + record1)
+        with self.assertRaises(ValueError):
+            validate_irq0_trace(before)  # no keyboard phase at all

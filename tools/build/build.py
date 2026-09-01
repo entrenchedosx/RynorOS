@@ -61,7 +61,34 @@ def test() -> bool:
     if suite.countTestCases() == 0:
         print("ERROR: No repository tests discovered.", file=sys.stderr)
         return False
+    if loader_errors():
+        return False
     return unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful()
+
+
+def loader_errors() -> bool:
+    """Discovery silently drops modules that raise at import time; a green
+    suite must never be produced by a test file that failed to load."""
+    import importlib.util
+    import sys as _sys
+    failed = []
+    for path in sorted((ROOT / "tests").rglob("test_*.py")):
+        directory = str(path.parent)
+        if directory not in _sys.path:
+            _sys.path.insert(0, directory)
+        name = path.stem
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except Exception as error:  # noqa: BLE001 - report every import failure
+            failed.append(f"{path.relative_to(ROOT)}: {type(error).__name__}: {error}")
+    if failed:
+        print("ERROR: Test modules failed to import:", file=sys.stderr)
+        for message in failed:
+            print(f"  {message}", file=sys.stderr)
+        return True
+    return False
 
 
 def boot_test(timeout: float) -> bool:
@@ -77,6 +104,8 @@ def integration_test() -> bool:
     )
     if suite.countTestCases() == 0:
         print("ERROR: No integration tests discovered.", file=sys.stderr)
+        return False
+    if loader_errors():
         return False
     return unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful()
 
