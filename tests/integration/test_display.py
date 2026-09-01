@@ -77,7 +77,7 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual((parsed["width"], parsed["height"], parsed["pitch"], parsed["bpp"]),
                          (1024, 768, 4096, 32))
         self.assertEqual(parsed["tables"], 14)
-        self.assertTrue(output.endswith(POST_IRQ))
+        self.assertIn(POST_IRQ, output)
         dump = logs / "display.pmem"
         self.assertEqual(dump.stat().st_size, parsed["fb_bytes"])
         self.assertTrue((logs / 'display.ppm').is_file())
@@ -150,7 +150,7 @@ class DisplayTests(unittest.TestCase):
             [("verify_pattern0();", "if (0) verify_pattern0();")],
             source="kernel/drivers/display-test.c")
         self.assertIn(DISPLAY_END, output)
-        self.assertTrue(output.endswith(POST_IRQ))
+        self.assertIn(POST_IRQ, output)
 
     def test_canned_success_output_cannot_prove_hardware(self):
         from display_output import DISPLAY_GOOD

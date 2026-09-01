@@ -1,5 +1,5 @@
 {
-  "schema_version": 10,
+  "schema_version": 11,
   "version": "0.1.0",
   "os": "RynorOS",
   "kernel": "Rynorkernel",
@@ -9,8 +9,8 @@
     "status": "experimental-design"
   },
   "license": "MIT",
-  "stage": 10,
-  "status": "kernel-runtime",
+  "stage": 11,
+  "status": "kernel-shell",
   "assets": {
     "official_icon": "assets/branding/icon.png",
     "status": "packaged-not-rendered",
@@ -28,6 +28,6 @@
     "build_tools": ["clang", "ld.lld", "nasm"],
     "test_tools": ["qemu-system-x86_64", "SeaBIOS"]
   },
-  "implemented_components": ["repository-validator", "host-build-check", "repository-tests", "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test", "kernel-gdt", "exception-idt", "exception-diagnostics", "controlled-cpu-self-test", "pic-irq-dispatch", "pit-timer", "timer-irq-self-test", "os-resource-package", "bios-e820-map", "physical-frame-allocator", "pmm-self-test", "four-level-paging", "vm-map-unmap", "vm-permissions", "vm-page-fault-tests", "bounded-kernel-heap", "heap-boundary-alignment", "heap-coalescing", "heap-stress-oom", "heap-self-test", "per-thread-kernel-stacks", "kstack-guard-pages", "round-robin-scheduler", "timer-preemption", "thread-abstraction", "context-switching", "scheduler-self-test", "ps2-keyboard", "i8042-controller", "irq1-driver", "bounded-keyboard-event-queue", "keyboard-sendkey-injection", "keyboard-self-test", "bochs-vbe-framebuffer", "pci-bar0-lfb-discovery", "framebuffer-mapping", "bounds-safe-rect-text", "framebuffer-pixel-evidence", "framebuffer-self-test", "bounded-strings", "string-format-primitives", "bounded-byte-rings", "runtime-services", "fnv1a-64-digest", "runtime-service-dispatch", "runtime-on-worker-threads", "runtime-self-test"],
+  "implemented_components": ["repository-validator", "host-build-check", "repository-tests", "bios-boot", "x86_64-entry", "serial-output", "qemu-boot-test", "kernel-gdt", "exception-idt", "exception-diagnostics", "controlled-cpu-self-test", "pic-irq-dispatch", "pit-timer", "timer-irq-self-test", "os-resource-package", "bios-e820-map", "physical-frame-allocator", "pmm-self-test", "four-level-paging", "vm-map-unmap", "vm-permissions", "vm-page-fault-tests", "bounded-kernel-heap", "heap-boundary-alignment", "heap-coalescing", "heap-stress-oom", "heap-self-test", "per-thread-kernel-stacks", "kstack-guard-pages", "round-robin-scheduler", "timer-preemption", "thread-abstraction", "context-switching", "scheduler-self-test", "ps2-keyboard", "i8042-controller", "irq1-driver", "bounded-keyboard-event-queue", "keyboard-sendkey-injection", "keyboard-self-test", "bochs-vbe-framebuffer", "pci-bar0-lfb-discovery", "framebuffer-mapping", "bounds-safe-rect-text", "framebuffer-pixel-evidence", "framebuffer-self-test", "bounded-strings", "string-format-primitives", "bounded-byte-rings", "runtime-services", "fnv1a-64-digest", "runtime-service-dispatch", "runtime-on-worker-threads", "runtime-self-test", "kernel-shell", "shell-tokenizer", "shell-dispatch", "shell-line-buffer", "shell-interactive-session", "shell-self-test"],
   "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"]
 }

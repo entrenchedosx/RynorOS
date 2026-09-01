@@ -52,10 +52,9 @@ class BootTests(unittest.TestCase):
         observed = boot_image(self.image, logs)
         self.assertTrue(observed.startswith(EXPECTED_OUTPUT))
         self.assertEqual(validate_boot_output(observed), [])
-        # The Stage 9 transcript ends with the framebuffer verification then the
-        # post-IRQ accounting line (keyboard then display before POST_IRQ).
-        self.assertIsNotNone(re.search(re.escape(POST_IRQ) + b"$",
-                                       observed))
+        # The Stage 9/10 transcript ends with framebuffer then runtime then
+        # post-IRQ accounting, now followed by Stage 11 shell (normal image).
+        self.assertIn(POST_IRQ, observed)
         self.assertIn(b"[KBD] event=15 ", observed)
         self.assert_rip_matches_elf(observed, ROOT / "build/rynorkernel.elf", 3)
         self.assertEqual(hashlib.sha256(self.image.read_bytes()).hexdigest(), before)

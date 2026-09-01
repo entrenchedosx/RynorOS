@@ -115,6 +115,14 @@ static void say_number(cpu_u64 n)
     say(b + i);
 }
 
+cpu_u64 shell_decode_u64_le(const cpu_u8 *buf, cpu_u64 len)
+{
+    if (!buf || len != 8) return 0;
+    cpu_u64 v = 0;
+    for (unsigned int i = 0; i < 8; ++i) v |= (cpu_u64)buf[i] << (i * 8);
+    return v;
+}
+
 /* ------------------------------------------------------------------ */
 /* Command dispatch. Returns the service/built-in result for evidence. */
 /* ------------------------------------------------------------------ */
@@ -125,7 +133,10 @@ static int cmd_upper(const char *text, cpu_u64 len)
     cpu_u64 n = 0;
     if (len > 40) len = 40;
     int r = krst_call(KRST_SVC_UPPER, text, len, out, sizeof out, &n);
-    if (r == KRST_OK) { out[n] = '\0'; say(out); }
+    if (r == KRST_OK) {
+        if (n >= sizeof out) { say_line("error: service rejected request"); return KRST_BAD_ARGS; }
+        out[n] = '\0'; say(out);
+    }
     return r;
 }
 
@@ -144,41 +155,53 @@ int shell_execute(char *line, cpu_u64 cap)
     if (!line || cap == 0) return SHELL_INVALID;
     char *tokens[SHELL_ARG_MAX];
     int argc = shell_tokenize(line, cap, tokens);
-    if (argc < 0) { say_line("[SHELL] error: too many arguments"); return SHELL_TOO_MANY; }
+    if (argc == SHELL_TOO_MANY) { say_line("[SHELL] error: too many arguments"); return SHELL_TOO_MANY; }
+    if (argc == SHELL_INVALID) { say_line("[SHELL] error: invalid command line"); return SHELL_INVALID; }
     if (argc == 0) { say_line("[SHELL] error: empty command"); return SHELL_OK; }
     const char *cmd = tokens[0];
     const char *text = "";
     cpu_u64 text_len = 0;
     if (argc >= 2) {
         text = tokens[1];
-        /* Bound by the remaining extent of the line, not the whole-line
-           capacity: tokens[1] may sit near the end of the buffer. */
-        text_len = kstr_nlen(tokens[1], cap - (cpu_u64)(tokens[1] - line));
+        cpu_u64 offset = (cpu_u64)(tokens[1] - line);
+        if (offset >= cap) return SHELL_INVALID;
+        text_len = kstr_nlen(tokens[1], cap - offset);
     }
     say("[SHELL] exec="); say(cmd);
     if (argc >= 2) { say(" arg=\""); say(text); say("\""); }
     say("\r\n");
-    if (kstr_cmp(cmd, "version", 8) == 0 && argc == 1) {
+    if (kstr_cmp(cmd, "version", 8) == 0) {
+        if (argc != 1) { say_line("error: version takes no arguments"); return SHELL_ARGS; }
         say_line("RynorOS " RYNOR_VERSION); return SHELL_OK;
-    } else if (kstr_cmp(cmd, "help", 5) == 0 && argc == 1) {
+    } else if (kstr_cmp(cmd, "help", 5) == 0) {
+        if (argc != 1) { say_line("error: help takes no arguments"); return SHELL_ARGS; }
         cmd_help(); return SHELL_OK;
-    } else if (kstr_cmp(cmd, "clear", 6) == 0 && argc == 1) {
+    } else if (kstr_cmp(cmd, "clear", 6) == 0) {
+        if (argc != 1) { say_line("error: clear takes no arguments"); return SHELL_ARGS; }
         say_line("[SHELL] clear: display redraw requested"); return SHELL_OK;
-    } else if (kstr_cmp(cmd, "echo", 5) == 0 && argc >= 2) {
+    } else if (kstr_cmp(cmd, "echo", 5) == 0) {
+        if (argc != 2) { say_line("error: echo requires one argument"); return SHELL_ARGS; }
         cmd_echo(text); say("\r\n"); return SHELL_OK;
-    } else if (kstr_cmp(cmd, "upper", 6) == 0 && argc >= 2) {
-        if (cmd_upper(text, text_len) == KRST_OK) say("\r\n");
-        else say_line("error: service rejected request");
+    } else if (kstr_cmp(cmd, "upper", 6) == 0) {
+        if (argc != 2) { say_line("error: upper requires one argument"); return SHELL_ARGS; }
+        int r = cmd_upper(text, text_len);
+        if (r == KRST_OK) say("\r\n");
+        else { say_line("error: service rejected request"); return SHELL_SERVICE; }
         return SHELL_OK;
-    } else if (kstr_cmp(cmd, "count", 6) == 0 && argc >= 2) {
+    } else if (kstr_cmp(cmd, "count", 6) == 0) {
+        if (argc != 2) { say_line("error: count requires one argument"); return SHELL_ARGS; }
         cpu_u8 n[8]; cpu_u64 nlen = 0;
-        if (krst_call(KRST_SVC_COUNT_DIGITS, text, text_len, n, sizeof n, &nlen) == KRST_OK) {
-            say_number(n[0]); say("\r\n");
-        } else say_line("error: service rejected request");
-        return SHELL_OK;
-    } else if (kstr_cmp(cmd, "digest", 7) == 0 && argc >= 2) {
+        int r = krst_call(KRST_SVC_COUNT_DIGITS, text, text_len, n, sizeof n, &nlen);
+        if (r == KRST_OK) {
+            cpu_u64 v = shell_decode_u64_le(n, nlen);
+            if (nlen == 8) { say_number(v); say("\r\n"); return SHELL_OK; }
+        }
+        say_line("error: service rejected request"); return SHELL_SERVICE;
+    } else if (kstr_cmp(cmd, "digest", 7) == 0) {
+        if (argc != 2) { say_line("error: digest requires one argument"); return SHELL_ARGS; }
         cpu_u8 d[8]; cpu_u64 nlen = 0;
-        if (krst_call(KRST_SVC_DIGEST, text, text_len, d, sizeof d, &nlen) == KRST_OK) {
+        int r = krst_call(KRST_SVC_DIGEST, text, text_len, d, sizeof d, &nlen);
+        if (r == KRST_OK && nlen == 8) {
             const char hex[17] = "0123456789ABCDEF";
             say("0x");
             for (unsigned int i = 0; i < 8; ++i) {
@@ -188,9 +211,8 @@ int shell_execute(char *line, cpu_u64 cap)
                 b[2] = '\0';
                 say(b);
             }
-            say("\r\n");
-        } else say_line("error: service rejected request");
-        return SHELL_OK;
+            say("\r\n"); return SHELL_OK;
+        } else { say_line("error: service rejected request"); return SHELL_SERVICE; }
     }
     say_line("error: unknown command");
     return SHELL_UNKNOWN;
@@ -242,12 +264,12 @@ static void wait_key(struct kbd_event *press)
 /* lines are built across key presses and dispatched on Enter.         */
 /* ------------------------------------------------------------------ */
 
-static void interactive_session(cpu_u64 budget)
+static void interactive_session(cpu_u64 key_budget)
 {
     say_line("[SHELL] interactive session started");
-    irq_set_enabled(1, 1);
+    if (!irq_set_enabled(1, 1)) { say_line("[SHELL] failure=irq_enable"); cpu_halt(); }
     struct shell_line line = { {0}, 0 };
-    for (cpu_u64 n = 0; n < budget; ++n) {
+    for (cpu_u64 n = 0; n < key_budget; ++n) {
         /* The marker lets the host advance its key stream; mirrors the */
         /* Stage 8 wait protocol so the injection harness is uniform.   */
         say("[SHELL] waiting for input="); say_number(n); say("\r\n");
@@ -273,14 +295,14 @@ static void interactive_session(cpu_u64 budget)
             (void)line_insert(&line, ascii);
         }
     }
-    irq_set_enabled(1, 0);
+    if (!irq_set_enabled(1, 0)) { say_line("[SHELL] failure=irq_disable"); cpu_halt(); }
     say_line("[SHELL] interactive session complete");
 }
 
-void shell_run(cpu_u64 keys)
+void shell_run(cpu_u64 key_budget)
 {
     if (!cpu_interrupts_disabled()) { say_line("[SHELL] failure=if0"); cpu_halt(); }
-    interactive_session(keys);
+    interactive_session(key_budget);
 }
 
 /* shell_self_test is defined in shell-test.c to keep the interactive run

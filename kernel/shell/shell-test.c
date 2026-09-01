@@ -82,6 +82,9 @@ static void parser_tests(void)
     require(shell_tokenize(many, sizeof many, tokens) == SHELL_ARG_MAX, "token_full");
     require(kstr_copy(many, sizeof many, "a b c d e f g h i j k l m") == KSTR_OK, "over_copy");
     require(shell_tokenize(many, sizeof many, tokens) == SHELL_TOO_MANY, "token_too_many");
+    /* Result codes must be negative and distinct from valid argc 0..12. */
+    require(SHELL_TOO_MANY < 0 && SHELL_INVALID < 0 && SHELL_TOO_MANY != SHELL_INVALID, "result_negative");
+    require(SHELL_TOO_MANY != 0 && SHELL_TOO_MANY != 1 && SHELL_TOO_MANY != 3, "result_collision");
     text("[SHELL] tokenizer, bounds and empty line verified (synthetic)\r\n");
 
     /* Dispatch: expose only implemented services and honest built-ins.
@@ -105,10 +108,56 @@ static void parser_tests(void)
     require(shell_execute(cmd, sizeof cmd) == SHELL_UNKNOWN, "r_bogus");
     empty[0] = 0;
     require(shell_execute(empty, 4) == SHELL_OK, "r_empty");
+    /* 13-token line must not be misinterpreted as argc==3; shell_execute must
+       return SHELL_TOO_MANY and perform no dispatch. */
+    require(kstr_copy(many, sizeof many, "a b c d e f g h i j k l m") == KSTR_OK, "many13");
+    require(shell_execute(many, sizeof many) == SHELL_TOO_MANY, "exec_too_many");
+    /* Unterminated line (no NUL within cap) must fail deterministically. */
+    char unterminated2[8] = {'x',' ','y',' ','z',' ','w',' '};
+    require(shell_execute(unterminated2, sizeof unterminated2) == SHELL_INVALID, "exec_unterminated");
+    /* Extra arguments must be rejected, not silently ignored. */
+    require(kstr_copy(cmd, sizeof cmd, "echo hi extra") == KSTR_OK, "c_echo_extra");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_ARGS, "r_echo_extra");
+    require(kstr_copy(cmd, sizeof cmd, "upper hi extra") == KSTR_OK, "c_upper_extra");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_ARGS, "r_upper_extra");
+    require(kstr_copy(cmd, sizeof cmd, "count hi extra") == KSTR_OK, "c_count_extra");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_ARGS, "r_count_extra");
+    require(kstr_copy(cmd, sizeof cmd, "digest hi extra") == KSTR_OK, "c_digest_extra");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_ARGS, "r_digest_extra");
+    require(kstr_copy(cmd, sizeof cmd, "version extra") == KSTR_OK, "c_version_extra");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_ARGS, "r_version_extra");
+    require(kstr_copy(cmd, sizeof cmd, "help extra") == KSTR_OK, "c_help_extra");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_ARGS, "r_help_extra");
+    /* COUNT must handle >255 correctly (full 64-bit LE). */
+    char big[64];
+    for (cpu_u64 i = 0; i < 30; ++i) big[i] = '1';
+    big[30] = 0;
+    char count_big[64];
+    require(kstr_copy(count_big, sizeof count_big, "count ") == KSTR_OK, "count_big_pre");
+    require(kstr_cat(count_big, sizeof count_big, big) == KSTR_OK, "count_big_cat");
+    require(shell_execute(count_big, sizeof count_big) == SHELL_OK, "r_count_big");
+    /* Full-width COUNT: 300 digits must decode as 300, not low byte 44. */
+    char big300[301];
+    for (cpu_u64 i = 0; i < 300; ++i) big300[i] = '1';
+    big300[300] = 0;
+    cpu_u8 cnt[8]; cpu_u64 clen = 0;
+    require(krst_call(KRST_SVC_COUNT_DIGITS, big300, 300, cnt, sizeof cnt, &clen) == KRST_OK && clen == 8, "count300_call");
+    cpu_u64 cntv = 0; for (unsigned int i = 0; i < 8; ++i) cntv |= (cpu_u64)cnt[i] << (i * 8);
+    require(cntv == 300, "count300_value");
+    cpu_u8 le300b[8] = {44, 1, 0, 0, 0, 0, 0, 0};
+    cpu_u8 le256b[8] = {0, 1, 0, 0, 0, 0, 0, 0};
+    require(shell_decode_u64_le(le300b, 8) == 300, "decode300");
+    require(shell_decode_u64_le(le256b, 8) == 256, "decode256");
+    require(shell_decode_u64_le(le300b, 7) == 0, "decode_short");
+    /* Shell must recover and continue after malformed command. */
+    require(kstr_copy(cmd, sizeof cmd, "bogus") == KSTR_OK, "c_bogus2");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_UNKNOWN, "r_bogus2");
+    require(kstr_copy(cmd, sizeof cmd, "version") == KSTR_OK, "c_version2");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_OK, "r_version2");
     text("[SHELL] dispatch and error rejection verified (synthetic)\r\n");
 }
 
-#if defined(RYNOR_SHELL_INTERACTIVE)
+#if RYNOR_SHELL_INTERACTIVE
 static void interactive_tests(void)
 {
     struct kbd_statistics kb, kb_after;
@@ -132,7 +181,7 @@ void shell_self_test(void)
     text("[SYSTEM] RynorOS " RYNOR_VERSION " | Rynorkernel | stage11 shell monitor\r\n"
          "[SHELL] self-test started\r\n");
     parser_tests();
-#if defined(RYNOR_SHELL_INTERACTIVE)
+#if RYNOR_SHELL_INTERACTIVE
     interactive_tests();
 #else
     text("[SHELL] interactive session skipped (host did not request input)\r\n");

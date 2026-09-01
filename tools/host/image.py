@@ -119,10 +119,8 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/mm/heap.c", "heap.o"),
             ("kernel/mm/heap-test.c", "heap-test.o"),
         ):
-            if source.startswith("kernel/shell/") and not shell_interactive:
-                continue  # Preserve Stage 11 sources without putting them in the Stage 10 image.
             target = output / name
-            shell_flags = [f"-DRYNOR_SHELL_INTERACTIVE={int(shell_interactive)}"] if shell_interactive else []
+            shell_flags = [f"-DRYNOR_SHELL_INTERACTIVE={int(shell_interactive)}"]
             run_tool([
                 clang, "--target=x86_64-none-elf", "-std=c11", "-ffreestanding",
                 "-fno-builtin", "-fno-stack-protector", "-fno-pic", "-fno-pie",

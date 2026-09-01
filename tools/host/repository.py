@@ -85,15 +85,16 @@ REQUIRED_FILES = (
     "tools/host/kernel_elf.py",
     "tests/repository/test_runtime_output.py", "docs/design/runtime.md",
     "docs/reports/stage10.md", "docs/reports/stage10-audit.md",
-    # Preserve the incoming, not independently audited Stage 11 wiring in
-    # copied build fixtures too. Presence is not a Stage 11 completion claim.
+    # Stage 11 implementation, verifier, and linked design/report contracts.
+    # Windows documents are research-only architecture, never executable code.
     "kernel/include/shell.h", "kernel/shell/shell.c", "kernel/shell/shell-test.c",
-    "tools/host/shell_output.py",
+    "tools/host/shell_output.py", "docs/design/shell.md", "docs/reports/stage11.md",
+    "docs/design/windows-compatibility.md", "docs/windows-compatibility-program.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 10 is the exact Stage 10 contract, not a build-target DSL.
+# Version 11 is the exact Stage 11 contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 10,
+    "schema_version": 11,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
@@ -103,8 +104,8 @@ EXPECTED_METADATA = {
         "status": "experimental-design",
     },
     "license": "MIT",
-    "stage": 10,
-    "status": "kernel-runtime",
+    "stage": 11,
+    "status": "kernel-shell",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -135,6 +136,8 @@ EXPECTED_METADATA = {
         "bounded-strings", "string-format-primitives", "bounded-byte-rings",
         "runtime-services", "fnv1a-64-digest", "runtime-service-dispatch",
         "runtime-on-worker-threads", "runtime-self-test",
+        "kernel-shell", "shell-tokenizer", "shell-dispatch", "shell-line-buffer",
+        "shell-interactive-session", "shell-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }
