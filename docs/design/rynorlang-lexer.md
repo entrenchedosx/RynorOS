@@ -29,7 +29,7 @@ generation, linking, loading, or execution.
 - Strings: double-quoted; only `\\`, `\"`, `\n`, and `\t` are escapes.
   Literal carriage returns and line feeds are not allowed inside strings.
 - Double operators: `== != <= >= && || ->`, selected before single characters.
-- Single tokens: `+ - * / % = < > ( ) { } ; , :`.
+- Single tokens: `+ - * / % ! = < > ( ) { } ; , :`.
 
 Words not in the keyword list—including `give`, `when`, `otherwise`, `and`,
 `or`, `not`, `i64`, `unit`, `use`, and `print`—are ordinary identifiers.

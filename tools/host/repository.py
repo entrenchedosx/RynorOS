@@ -13,7 +13,8 @@ REQUIRED_DIRECTORIES = (
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
     "user/apps", "tools", "tools/build", "tools/host", "tools/rynorlang",
     "tests", "tests/repository", "tests/fixtures/rynorlang/lexer/good",
-    "tests/fixtures/rynorlang/lexer/bad",
+    "tests/fixtures/rynorlang/lexer/bad", "tests/fixtures/rynorlang/parser/good",
+    "tests/fixtures/rynorlang/parser/bad",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
     "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
@@ -96,22 +97,25 @@ REQUIRED_FILES = (
     "tools/__init__.py", "tools/rynorlang/lex.py", "tools/rynorlang/__init__.py",
     "tests/repository/test_rynorlang_lexer.py",
     "docs/design/rynorlang-lexer.md", "docs/reports/stage12.md",
+    # Stage 13 parser is host-only; implementation lives under tools/rynorlang.
+    "tools/rynorlang/parse.py", "tests/repository/test_rynorlang_parser.py",
+    "docs/design/rynorlang-parser.md", "docs/reports/stage13.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 12 is the exact Stage 12 repository contract, not a build-target DSL.
+# Version 13 is the exact Stage 13 repository contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 12,
+    "schema_version": 13,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
     "language": {
         "name": "RynorLang",
         "source_extension": SOURCE_EXTENSION,
-        "status": "lexical-subset-frozen",
+        "status": "syntactic-subset-frozen",
     },
     "license": "MIT",
-    "stage": 12,
-    "status": "rynorlang-lexer",
+    "stage": 13,
+    "status": "rynorlang-parser",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -145,6 +149,7 @@ EXPECTED_METADATA = {
         "kernel-shell", "shell-tokenizer", "shell-dispatch", "shell-line-buffer",
         "shell-interactive-session", "shell-self-test",
         "rynorlang-lexer", "lexer-tokenization", "lexer-spans", "lexer-diagnostics",
+        "rynorlang-parser", "parser-temporary-tree", "parser-spans", "parser-diagnostics",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }

@@ -25,7 +25,7 @@ removed rather than patched around.
 - Integers: decimal magnitude through `9223372036854775807`.
 - Strings: double-quoted with `\\`, `\"`, `\n`, and `\t` escapes only.
 - Operators: maximal munch for `== != <= >= && || ->`, followed by the frozen
-  single-character tokens.
+  single-character tokens, including standalone `!`.
 - Locations: one-based line/column and zero-based byte offset/length.
 - Errors: one exact diagnostic; scanning stops at the first error.
 

@@ -44,6 +44,7 @@ SINGLE_TOKENS = {
     "*": "STAR",
     "/": "SLASH",
     "%": "PERCENT",
+    "!": "BANG",
     "=": "EQUAL",
     "<": "LESS",
     ">": "GREATER",
