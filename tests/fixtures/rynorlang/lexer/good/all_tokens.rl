@@ -1,6 +1,6 @@
 fn add(a: int, b: int) -> int {
     let total = a + b * 2 / 3 % 5 - 1;
-    if total <= 50 && true {
+    if !false && total <= 50 && true {
         return total;
     } else {
         while total >= 0 || false {

@@ -155,7 +155,8 @@ class LexerTokenTests(unittest.TestCase):
         self.assertEqual(result.tokens[0].value, '\\"\n\t')
 
     def test_18_single_character_tokens(self):
-        source = "+ - * / % = < > ( ) { } ; , :"
+        source = "+ - * / % ! = < > ( ) { } ; , :"
+        self.assertEqual(lexer.SINGLE_TOKENS["!"], "BANG")
         expected = list(lexer.SINGLE_TOKENS.values()) + ["EOF"]
         self.assertEqual(kinds(source), expected)
 
