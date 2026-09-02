@@ -1,156 +1,85 @@
-# RynorLang: initial language design
+# RynorLang
 
-## Purpose and implementation status
+RynorLang is the planned native language of RynorOS. Source files use the
+`.rl` extension. Stage 12 implements only a deterministic host-side lexer; it
+does not parse, compile, execute, or validate the semantics of a program.
 
-**Experimental design only.** RynorLang is the intended native language of
-RynorOS; its source extension is **`.rl`**. No lexer, parser, compiler, runtime,
-or language conformance tests are implemented. This document proposes a small
-first subset, not a working language or stable specification.
+## Stage 12 lexical contract
 
-Prefer readable local code, explicit effects, predictable types, and helpful
-errors. Familiar punctuation is useful, but compatibility with C, Rust, Python,
-or any other language is not a goal. Avoid generics, inheritance, macros,
-exceptions, implicit numeric coercions, and package ecosystems in the first subset.
+The Stage 12 source format is deliberately small and frozen:
 
-## Small proposed syntax
+- Input is ASCII and is limited to 1 MiB (1,048,576 bytes).
+- Spaces, tabs, carriage returns, and line feeds are whitespace.
+- `//` begins a line comment. Block comments are not recognized.
+- Identifiers match `[A-Za-z_][A-Za-z0-9_]*` and are case-sensitive.
+- Keywords are `fn`, `let`, `if`, `else`, `while`, `return`, `true`, `false`,
+  `int`, `bool`, and `str`.
+- Integer tokens contain decimal digits only. Their magnitude must not exceed
+  `9223372036854775807`; a leading sign is a separate token.
+- Strings use double quotes and support only `\\`, `\"`, `\n`, and `\t`.
+- Two-character operators use maximal munch: `==`, `!=`, `<=`, `>=`, `&&`,
+  `||`, and `->`.
+- Single-character tokens are `+ - * / % = < > ( ) { } ; , :`.
 
-```text
-fn main() {
-    let x = 10;
-    let y: i64 = 20;
-    print("Hello, RynorOS!");
-    print(x + y);
-}
+Every token has a source filename, one-based line and column, zero-based byte
+offset, and byte length. Because Stage 12 is ASCII-only, character and byte
+advancement are identical. The lexer stops at the first diagnostic. Invalid
+characters, integer overflow, unterminated strings, invalid escapes, invalid
+input types, and oversized files have distinct diagnostic codes.
 
-fn add(a: i64, b: i64): i64 {
-    give a + b;
-}
-```
+The implementation is [tools/rynorlang/lex.py](../tools/rynorlang/lex.py).
+`rynorlang/lexer/` remains a reserved language-project directory and does not
+contain a second implementation.
 
-`examples/hello.rl` is a syntax sample, not a runnable test. The proposed program
-entry is one `fn main()` with no parameters and no returned value. Top-level
-executable statements are excluded; the initial compilation unit contains only
-function declarations. Function declarations may refer to later declarations.
+## Small planned syntax
 
-## Lexical rules
-
-- Source is valid UTF-8. Whitespace separates tokens and is otherwise ignored.
-  Source locations count lines and Unicode code-point columns starting at 1.
-- Comments start with `//` and continue to the end of the line. Block comments
-  are excluded initially. Comment markers inside strings are ordinary text.
-- Identifiers match `[A-Za-z_][A-Za-z0-9_]*` and are case-sensitive. Unicode
-  identifiers are deferred. Keywords are `fn`, `let`, `give`, `when`, `otherwise`,
-  `while`, `true`, `false`, `and`, `or`, and `not`; `i64`, `bool`, `str`, `unit`,
-  and `use` are reserved. `print` is a reserved runtime name, not a lexer keyword.
-- Statements use `;`; blocks use `{ }`. No automatic semicolon insertion.
-- Decimal integer literals only; a leading sign is a unary operator. Prefixes,
-  digit separators, floating-point literals, and character literals are deferred.
-
-## Types and values
-
-- `i64`: signed 64-bit integer, from -9223372036854775808 to 9223372036854775807.
-  Unsuffixed integer literals have this type. The magnitude 9223372036854775808
-  is accepted only immediately under unary minus to express the minimum value.
-- `bool`: `true` or `false`, not interchangeable with integers.
-- `str`: immutable UTF-8 string value; initially only literals and passing/copying
-  references to literals are supported. No mutation, indexing, concatenation,
-  or allocation API yet. The future ABI must specify pointer/length layout.
-- `unit`: no returned value; omitted function result annotations mean `unit`.
-  It is not a variable/parameter type in the initial subset.
-
-Other integer widths, raw addresses, aggregates, and manual memory facilities
-are deferred. These will be necessary for systems programming and self-hosting,
-so the first subset alone cannot implement the entire OS.
-
-## Strings
-
-Double quotes delimit strings. Supported escapes are `\"`, `\\`, `\n`, `\r`,
-and `\t`. Unknown escapes, invalid UTF-8, and unescaped newlines are errors.
-No interpolation or embedded source evaluation. Literal storage lives for the
-program lifetime; a full string ownership model is a later design decision.
-
-## Variables and arithmetic
-
-`let name = expression;` declares an initialized, mutable local; an optional
-annotation as in `let count: i64 = 0;` must match the initializer. No globals or
-uninitialized variables. `count = count + 1;` assigns an existing local.
-Assignment is a statement, not an expression. Lexical block scope applies;
-duplicate or shadowing names within overlapping scopes are rejected initially.
-
-Integer operators are `+`, `-`, `*`, `/`, `%`, and unary `-`. Division truncates
-toward zero; remainder has the dividend's sign. Overflow, division/remainder
-by zero, and minimum-integer divided/remainder by -1 are errors, never silent
-wraparound. Statically determined violations produce compile errors; dynamic
-ones require a defined runtime trap once that runtime exists.
-
-From highest to lowest precedence: calls/parentheses; unary `-` and `not`;
-`* / %`; `+ -`; one comparison (`< <= > >= == !=`); `and`; `or`.
-Arithmetic operators associate left; unary operators nest right. Comparisons
-cannot be chained. Ordered comparisons accept `i64`; equality accepts matching
-`i64` or `bool`. String equality is deferred. Operands/arguments evaluate left
-to right; boolean `and`/`or` short-circuit and require booleans.
-
-## Functions
-
-Use `fn name(parameter: type, ...): result { ... }`. Parameters are immutable
-locals; function names are unique and functions cannot be nested. No overloading,
-default arguments, variadics, or function values. Argument types must match.
-`give expression;` returns a value; `give;` returns from a `unit` function.
-Non-unit functions require a return on every reachable path; unit functions can
-fall through. Calls are expressions; a call can also be a standalone statement.
-Other expression statements are excluded. Recursion is permitted in the design,
-but stack limits and failure handling need a real runtime contract.
-
-`print(value);` is the sole proposed initial output intrinsic, accepting one
-`str`, `i64`, or `bool` and returning `unit`. Intended output is the string's
-UTF-8 bytes, decimal integer text, or `true`/`false`, followed by a newline.
-This is a future runtime service: no host `print` wrapper or compiler exists here.
-
-## Conditionals and loops
+The following is a syntax sample, not an executable program:
 
 ```text
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
 fn main() {
-    let count = 0;
-    while count < 3 {
-        when count == 0 {
-            print("start");
-        } otherwise {
-            print(count);
-        }
-        count = count + 1;
+    let x: int = 10;
+    let y: int = 20;
+    if x < y {
+        print("Hello, RynorOS!");
+    } else {
+        while false {}
     }
 }
 ```
 
-`when condition { ... }` optionally takes `otherwise { ... }`; conditions must
-be `bool`. `while condition { ... }` checks its boolean condition before each
-iteration. Blocks are mandatory. These are statements, not expressions.
-No `for`, `break`, `continue`, pattern matching, or implicit truthiness initially.
+Stage 13 will define parsing and a temporary syntax tree. Name resolution,
+types, control-flow validity, modules, compiler output, runtime behavior, OS
+bindings, and self-hosting remain future work. In particular, Stage 12 does
+not establish that `print`, function calls, declarations, or expressions are
+semantically valid; it only produces tokens.
 
-## Imports/modules
+## Interfaces and ownership
 
-**Deferred experimental extension, excluded from the initial subset.** One `.rl`
-file is one compilation unit. Reserve `use` for a possible future module form
-such as `use console;`, but reject it until module resolution, exports, cycles,
-and build inputs are specified. Do not silently map names onto host packages.
+The host module exposes immutable `Span`, `Token`, `Diagnostic`, and
+`LexResult` records plus:
 
-## Errors and public interfaces
+- `lex(source: str, filename="<input>")`
+- `lex_bytes(data: bytes, filename="<input>")`
+- `lex_file(path)`
 
-Planned diagnostics include source path, line, column, stage, and explanation.
-Reject invalid tokens, unterminated strings, syntax errors, unknown names,
-wrong argument counts/types, missing returns, and unsupported constructs.
-Failed compilation must return a nonzero exit status and must not publish a
-usable output artifact. Runtime failure must be distinct from compile failure.
-Error codes, compiler CLI, AST schema, binary format, and runtime ABI are not yet
-public interfaces; they must be specified at their implementation milestones.
+The caller owns the input. Results own ordinary immutable Python strings and
+tuples. Lexical failures are returned in `LexResult.diagnostic`; filesystem
+I/O failures from `lex_file` remain `OSError`. The CLI exits 0 on successful
+tokenization, 1 on a lexical diagnostic, and 2 on an I/O/usage failure.
 
-## Invariants, tests, and known limitations
+## Tests and limitations
 
-Invariants: `.rl` identifies source; no implicit coercions or unsupported-syntax
-fallbacks; only actual compilation/execution may be reported as success.
-`lexer/`, `parser/`, `ast/`, `compiler/`, and `runtime/` reserve implementation
-areas. `tests/` reserves local language fixtures/unit tests; root
-`tests/rynorlang/` reserves cross-pass conformance tests. Both are empty today.
-Repository tests validate extension metadata and this sample's presence, not
-the sample's semantics. Grammar formalization, runtime ABI, OS bindings, memory
-facilities, module rules, and security properties remain unimplemented.
+Repository tests use 16 valid and 19 invalid fixtures plus direct boundary and
+API checks. They cover exact keywords, identifier boundaries, maximal munch,
+spans, all diagnostics, exact-size acceptance, over-size rejection, and
+deterministic CLI output.
+
+The lexer is a Python 3.10+ bootstrap dependency using only the standard
+library. It is not part of Rynorkernel or the boot image. Unicode, block
+comments, integer prefixes, digit separators, floating point, character
+literals, interpolation, parsing, AST generation, compilation, and execution
+are not implemented.

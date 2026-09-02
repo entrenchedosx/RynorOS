@@ -4,19 +4,17 @@ An original operating-system project: **Rynorkernel**, with **RynorLang** (`.rl`
 planned as its native language. Inspired by the simplicity of TempleOS, not based
 on its implementation, Linux, BSD, or an existing userspace.
 
-## Current state — Stage 11 shell / monitor (verified)
+## Current state — Stage 12 RynorLang lexer (verified, host-side)
 
-This is a single-CPU kernel development platform, **not a usable or
+This is a single-CPU kernel development platform plus a **host-side RynorLang lexical subset**, **not a usable or
 production-ready OS**. The independently [audited Stage 7 scheduler](docs/reports/stage7-audit.md)
 (repair, ownership and limits), the [Stage 8 keyboard](docs/reports/stage8.md),
 and the [Stage 9 display](docs/reports/stage9-audit.md) are the prior verified
 milestones. Stage 10 adds bounded strings/byte buffers and ring-0 runtime
 services driven from real worker threads; see [docs/reports/stage10.md](docs/reports/stage10.md)
-and [docs/design/runtime.md](docs/design/runtime.md). **Stage 11 adds a verified
-ring-0 kernel monitor** (`kernel/shell/`) with real `IRQ1` input, bounded `64`-byte
-line and `12`-token parsing, strict `help`/`version`/`echo`/`clear` + `upper`/`count`/`digest` via
-Stage 10 services, and a deterministic `39`-key QEMU interactive session; see
-[docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md).
+and [docs/design/runtime.md](docs/design/runtime.md). Stage 11 adds a verified
+ring-0 kernel monitor (`kernel/shell/`) with real `IRQ1` input; see
+[docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md). **Stage 12 freezes the RynorLang lexical subset** and provides one host-side `tools/rynorlang/lex.py` implementation with precise spans, first-error diagnostics, and deterministic output; see [docs/reports/stage12.md](docs/reports/stage12.md) and [docs/design/rynorlang-lexer.md](docs/design/rynorlang-lexer.md).
 
 Implemented and exercised in QEMU:
 
@@ -39,6 +37,7 @@ Implemented and exercised in QEMU:
 - Bounded strings/byte rings and three allocation-free ring-0 runtime services.
   Worker results, physical state and QEMU CPU IRQ traces are cross-checked;
   services reject IRQ calls and require valid, caller-owned objects.
+- Host-side RynorLang lexer (`tools/rynorlang/lex.py`): ASCII and 1 MiB bounded; `//` comments; exact `fn`/`let`/`if`/`else`/`while`/`return`/`true`/`false`/`int`/`bool`/`str` keywords; `[A-Za-z_][A-Za-z0-9_]*` identifiers; bounded decimal integers; `\\`, `\"`, `\n`, and `\t` string escapes; maximal-munch operators; exact spans; and first-error diagnostics. Lexical errors exit 1. The strict suite has 49 lexer tests; no parsing or execution is claimed.
 
 There is no user mode, process address-space switching, scheduler sleep/wake,
 filesystem, GUI/desktop, networking or RynorLang compiler beyond the kernel
@@ -109,7 +108,7 @@ comparisons and byte-identical rebuilds. `check` runs build and both suites.
 Artifacts under ignored `build/`: `boot.bin`, `rynorkernel.bin`,
 `rynorkernel.elf`, `rynoros.img`, `rynoros-resources.zip` and
 `build-manifest.json`. Logs include serial transcripts and owned-QEMU cleanup
-records. The current suite contains 110 repository and 155 integration test
+records. The current suite contains 159 repository and 155 integration test
 methods (147 non-shell + 8 shell). Exact commands and evidence are in the
 [Stage 11 report](docs/reports/stage11.md) and [Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
 Display evidence is retained as `display.pmem` and `display.ppm` beside each
@@ -139,12 +138,12 @@ uses the same OS identity in text, not an invented icon conversion.
 | `kernel/` | CPU/IRQs, PMM/VM/heap, stacks and kernel execution |
 | `assets/` | Canonical identity resource, packaged separately |
 | `tools/`, `tests/` | Host builds and explicit repository/hardware verification |
-| `rynorlang/`, `user/` | Clearly labeled future language/userspace work |
+| `rynorlang/`, `tools/rynorlang/`, `user/` | Language docs/reserved native tree, implemented host lexer, and future userspace |
 | `docs/design/`, `docs/reports/` | Contracts, limitations and audit evidence |
 
 Start with [architecture](ARCHITECTURE.md), [roadmap](ROADMAP.md),
 [contributing](CONTRIBUTING.md), and [project metadata](project.json)
-(Stage 11/schema 11). Implemented means present and verified under stated
+(Stage 12/schema 12). Implemented means present and verified under stated
 conditions; planned/experimental does not mean executable.
 
 ## Windows Compatibility Program — planned (21a–21m)
