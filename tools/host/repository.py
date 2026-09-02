@@ -11,7 +11,9 @@ REQUIRED_DIRECTORIES = (
     "kernel/drivers", "kernel/runtime", "kernel/shell", "kernel/include", "boot", "rynorlang", "rynorlang/lexer",
     "rynorlang/parser", "rynorlang/ast", "rynorlang/compiler", "rynorlang/runtime",
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
-    "user/apps", "tools", "tools/build", "tools/host", "tests", "tests/repository",
+    "user/apps", "tools", "tools/build", "tools/host", "tools/rynorlang",
+    "tests", "tests/repository", "tests/fixtures/rynorlang/lexer/good",
+    "tests/fixtures/rynorlang/lexer/bad",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
     "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
@@ -90,22 +92,26 @@ REQUIRED_FILES = (
     "kernel/include/shell.h", "kernel/shell/shell.c", "kernel/shell/shell-test.c",
     "tools/host/shell_output.py", "docs/design/shell.md", "docs/reports/stage11.md",
     "docs/design/windows-compatibility.md", "docs/windows-compatibility-program.md",
+    # Stage 12 is host-only. The implementation intentionally lives under tools/.
+    "tools/__init__.py", "tools/rynorlang/lex.py", "tools/rynorlang/__init__.py",
+    "tests/repository/test_rynorlang_lexer.py",
+    "docs/design/rynorlang-lexer.md", "docs/reports/stage12.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 11 is the exact Stage 11 contract, not a build-target DSL.
+# Version 12 is the exact Stage 12 repository contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 11,
+    "schema_version": 12,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
     "language": {
         "name": "RynorLang",
         "source_extension": SOURCE_EXTENSION,
-        "status": "experimental-design",
+        "status": "lexical-subset-frozen",
     },
     "license": "MIT",
-    "stage": 11,
-    "status": "kernel-shell",
+    "stage": 12,
+    "status": "rynorlang-lexer",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -138,6 +144,7 @@ EXPECTED_METADATA = {
         "runtime-on-worker-threads", "runtime-self-test",
         "kernel-shell", "shell-tokenizer", "shell-dispatch", "shell-line-buffer",
         "shell-interactive-session", "shell-self-test",
+        "rynorlang-lexer", "lexer-tokenization", "lexer-spans", "lexer-diagnostics",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }

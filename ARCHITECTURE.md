@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), and Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence) under QEMU.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, and the Stage 12 host-side RynorLang lexer. Kernel behavior is verified under QEMU; the lexer is separate Python bootstrap tooling and is not guest code.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -255,24 +255,24 @@ Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real
 
 ## 10. RynorLang
 
-Experimental: a small statically typed language with `.rl` sources, explicit
-control flow, predictable value semantics, and clear diagnostics. The initial
-design uses signed integers, booleans, immutable strings, variables, functions,
-conditionals, and loops. See `rynorlang/README.md` for the draft, including
-deferred modules. No parser, runtime, or compatibility guarantee exists.
-Pointers, low-level intrinsics, allocation, and layout controls require later
-design before RynorLang can implement a kernel or compiler.
+Stage 12 implements one host-side lexer at `tools/rynorlang/lex.py`. Its frozen
+subset is ASCII and 1 MiB bounded, uses exact keyword/operator tables, attaches
+one-based line/column and zero-based byte spans, and stops at the first lexical
+diagnostic. The implementation is Python 3.10+ standard library bootstrap
+tooling and is not linked into Rynorkernel. See `rynorlang/README.md` and
+`docs/design/rynorlang-lexer.md` for the exact contract. No parser, AST,
+semantic analysis, runtime, compiler, or language execution exists.
 
 ## 11. Compiler
 
-Plan: build a host-side lexer, parser, explicit AST, name/type checking, then a
-small x86-64 native backend with a written ABI and output format. Choose the
-bootstrap implementation language before starting the lexer; Python is a
-candidate, not an existing compiler. Separate diagnostics and deterministic
-outputs from host I/O. No evaluation shortcuts should masquerade as compilation.
-Linking, relocation, runtime calls, and executable loading need tested contracts
-before native applications. Foreign toolchains may bootstrap code generation
-only when disclosed; eventual native output must not depend on a host OS runtime.
+Plan: Stage 13 will consume the implemented host lexer and define a temporary
+syntax tree. Later stages will define an explicit AST, name/type checking, then
+a small x86-64 native backend with a written ABI and output format. Separate
+diagnostics and deterministic outputs from host I/O. No evaluation shortcuts
+should masquerade as compilation. Linking, relocation, runtime calls, and
+executable loading need tested contracts before native applications. Foreign
+toolchains may bootstrap code generation only when disclosed; eventual native
+output must not depend on a host OS runtime.
 
 ## 12. Userspace
 
@@ -285,14 +285,14 @@ The API and ownership/error conventions are experimental.
 
 ## 13. Testing strategy
 
-Implemented: repository/layout/parser/CLI/resource checks, host Python syntax compilation,
+Implemented: repository/layout/transcript-parser/CLI/resource checks, host Python syntax compilation,
 and real QEMU integration tests. Native code is assembled, compiled, and linked;
 independent output directories yield byte-identical artifacts. QEMU captures
 the original boot prefix plus ordered CPU initialization, real state diagnostics,
 real E820/PMM initialization/full-pool tests, VM mapping/permission/fault/OOM tests,
 then heap, timer setup/three real ticks, Stage 7 execution tests, Stage 8
-keyboard `sendkey` handshake, Stage 9 framebuffer pixel evidence, and the
-Stage 10 runtime worker-fold evidence, then
+keyboard `sendkey` handshake, Stage 9 framebuffer pixel evidence, the Stage 10
+runtime worker-fold evidence, and Stage 11 shell evidence, then
 post-IRQ accounting within 30 seconds. Six required exception vectors are
 actually triggered in separate images; saved RIP is compared with the linked ELF
 symbol and register/error/flag values are checked. Default breakpoint return also

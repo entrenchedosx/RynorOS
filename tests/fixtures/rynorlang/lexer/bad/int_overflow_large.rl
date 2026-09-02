@@ -1,0 +1,3 @@
+// LEX_INT_OVERFLOW - large values beyond i64 max
+let y = 99999999999999999999;
+let z = 18446744073709551615;
