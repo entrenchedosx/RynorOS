@@ -1,0 +1,10 @@
+fn main(): int {
+    let x: int = 1;
+    {
+        let y: int = 2;
+        {
+            let z: int = x + y;
+            return z;
+        }
+    }
+}

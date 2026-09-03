@@ -14,7 +14,8 @@ REQUIRED_DIRECTORIES = (
     "user/apps", "tools", "tools/build", "tools/host", "tools/rynorlang",
     "tests", "tests/repository", "tests/fixtures/rynorlang/lexer/good",
     "tests/fixtures/rynorlang/lexer/bad", "tests/fixtures/rynorlang/parser/good",
-    "tests/fixtures/rynorlang/parser/bad",
+    "tests/fixtures/rynorlang/parser/bad", "tests/fixtures/rynorlang/semantics/good",
+    "tests/fixtures/rynorlang/semantics/bad",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
     "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
@@ -100,22 +101,25 @@ REQUIRED_FILES = (
     # Stage 13 parser is host-only; implementation lives under tools/rynorlang.
     "tools/rynorlang/parse.py", "tests/repository/test_rynorlang_parser.py",
     "docs/design/rynorlang-parser.md", "docs/reports/stage13.md",
+    # Stage 14 semantics is host-only; implementation lives under tools/rynorlang.
+    "tools/rynorlang/analyze.py", "tests/repository/test_rynorlang_semantics.py",
+    "docs/design/rynorlang-ast.md", "docs/reports/stage14.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
-# Version 13 is the exact Stage 13 repository contract, not a build-target DSL.
+# Version 14 is the exact Stage 14 repository contract, not a build-target DSL.
 EXPECTED_METADATA = {
-    "schema_version": 13,
+    "schema_version": 14,
     "version": "0.1.0",
     "os": "RynorOS",
     "kernel": "Rynorkernel",
     "language": {
         "name": "RynorLang",
         "source_extension": SOURCE_EXTENSION,
-        "status": "syntactic-subset-frozen",
+        "status": "semantic-subset-frozen",
     },
     "license": "MIT",
-    "stage": 13,
-    "status": "rynorlang-parser",
+    "stage": 14,
+    "status": "rynorlang-semantics",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -150,6 +154,7 @@ EXPECTED_METADATA = {
         "shell-interactive-session", "shell-self-test",
         "rynorlang-lexer", "lexer-tokenization", "lexer-spans", "lexer-diagnostics",
         "rynorlang-parser", "parser-temporary-tree", "parser-spans", "parser-diagnostics",
+        "rynorlang-semantics", "semantics-stable-ast", "semantics-name-resolution", "semantics-type-checking",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }
