@@ -260,11 +260,11 @@ subset is ASCII and 1 MiB bounded, uses exact keyword/operator tables, attaches
 one-based line/column and zero-based byte spans, and stops at the first lexical
 diagnostic. The implementation is Python 3.10+ standard library bootstrap
 tooling and is not linked into Rynorkernel. See `rynorlang/README.md` and
-`docs/design/rynorlang-lexer.md` for the exact contract. Stage 13 adds a host-side parser at `tools/rynorlang/parse.py`. It enforces colon return types, rejects trailing commas, implements the documented precedence including unary `!`, and produces a frozen temporary syntax tree with exact lexer spans and depth-bounded diagnostics. See `docs/design/rynorlang-parser.md`. No stable AST, semantic analysis, runtime, compiler, or language execution beyond that temporary tree exists.
+`docs/design/rynorlang-lexer.md` for the exact contract. Stage 13 adds a host-side parser at `tools/rynorlang/parse.py`. It enforces colon return types, rejects trailing commas, implements the documented precedence including unary `!`, and produces a frozen temporary syntax tree with exact lexer spans and depth-bounded diagnostics. See `docs/design/rynorlang-parser.md`. Stage 14 adds a host-side semantic analyzer at `tools/rynorlang/analyze.py` that lowers the temporary tree to a stable, JSON-compatible AST schema (`Program, Function, Param, Block, Let, If, While, Return, ExprStmt, BinOp, UnOp, IntLit, BoolLit, StrLit, Var, Call`) with exact spans, deterministic symbol indices, and type checking (no implicit conversions, `unit` for missing return, forward function references allowed, no shadowing). Returned dictionaries/lists are caller-owned and mutable; “stable” describes the schema. See `docs/design/rynorlang-ast.md`. No compiler, runtime, or language execution beyond that semantic AST exists.
 
 ## 11. Compiler
 
-Plan: Stage 14 will replace the temporary tree with a stable AST and semantic checks, then later stages will define a small x86-64 native backend with a written ABI and output format. Separate
+Plan: Stage 15 will define a small x86-64 native backend with a written ABI and output format. Separate
 diagnostics and deterministic outputs from host I/O. No evaluation shortcuts
 should masquerade as compilation. Linking, relocation, runtime calls, and
 executable loading need tested contracts before native applications. Foreign
