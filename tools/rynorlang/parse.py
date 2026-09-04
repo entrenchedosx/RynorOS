@@ -280,17 +280,21 @@ class _Parser:
     def parse_postfix(self) -> ParseNode:
         expression = self.parse_primary()
         while self.match("LEFT_PAREN"):
-            arguments: list[ParseNode] = []
-            if not self.at("RIGHT_PAREN"):
-                arguments.append(self.parse_expression())
-                while self.match("COMMA"):
-                    # MUTATION_POINT_CALL_TRAILING_COMMA
-                    if self.at("RIGHT_PAREN"):
-                        self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in argument list")
+            self.enter()
+            try:
+                arguments: list[ParseNode] = []
+                if not self.at("RIGHT_PAREN"):
                     arguments.append(self.parse_expression())
-            right = self.expect("RIGHT_PAREN", "after arguments")
-            arg_node = ParseNode("ArgList", _cover(arguments[0].span, arguments[-1].span), tuple(arguments)) if arguments else ParseNode("ArgList", right.span)
-            expression = ParseNode("CallExpr", _cover(expression.span, right.span), (expression, arg_node))
+                    while self.match("COMMA"):
+                        # MUTATION_POINT_CALL_TRAILING_COMMA
+                        if self.at("RIGHT_PAREN"):
+                            self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in argument list")
+                        arguments.append(self.parse_expression())
+                right = self.expect("RIGHT_PAREN", "after arguments")
+                arg_node = ParseNode("ArgList", _cover(arguments[0].span, arguments[-1].span), tuple(arguments)) if arguments else ParseNode("ArgList", right.span)
+                expression = ParseNode("CallExpr", _cover(expression.span, right.span), (expression, arg_node))
+            finally:
+                self.leave()
         return expression
 
     def parse_primary(self) -> ParseNode:
@@ -418,7 +422,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if result.root is None:
         print("PAR_INVALID_INPUT: parser returned no tree", file=sys.stderr)
         return 1
-    print(json.dumps(_json_value(result.root), sort_keys=True, separators=(",", ":")))
+    try:
+        # Left-iterative productions (expression chains, chained calls) build
+        # unbounded tree width from bounded grammar nesting. Serialize with a
+        # transiently raised limit, matching the parse-time headroom, so a
+        # legal-but-wide tree can never escape as a traceback.
+        with _RECURSION_LOCK:
+            sys.setrecursionlimit(_RECURSION_HEADROOM)
+            payload = json.dumps(_json_value(result.root), sort_keys=True, separators=(",", ":"))
+    except RecursionError:
+        span = result.root.span
+        print(f"{span.filename}:{span.line}:{span.column}:{span.offset}: PAR_DEPTH_EXCEEDED: "
+              "tree exceeds serialization limits", file=sys.stderr)
+        return 1
+    print(payload)
     return 0
 
 

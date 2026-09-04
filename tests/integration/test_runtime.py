@@ -234,6 +234,11 @@ class RuntimeTests(unittest.TestCase):
             ('if (!thread_create(&ids[i], digester, (void *)(cpu_u64)i))',
              'if (i == 3 || !thread_create(&ids[i], digester, (void *)(cpu_u64)i))')])
 
+    def test_invalid_worker_slot_fails_before_array_access(self):
+        self.run_failure('worker_context', [
+            ('digester, (void *)(cpu_u64)i',
+             'digester, (void *)(cpu_u64)(i == 0 ? WORKERS : i)')])
+
     def test_skipped_worker_reap_is_rejected(self):
         self.run_failure('resource_balance', [
             ('require(thread_join(ids[i]), "worker_join");',

@@ -197,6 +197,8 @@ static const char *const W_INPUT[WORKERS] = {
     "w0:data0123", "w1:xyz987", "w2:kernelruntime", "w3:0123456789",
     "w4:abcdefghiz", "w5:rhinoS10SERV", "w6:q",
 };
+_Static_assert(sizeof W_INPUT / sizeof W_INPUT[0] == WORKERS,
+               "worker input table must match the worker pool exactly");
 /* Stable evidence layout, dumped through QEMU physical memory using ELF
    symbols. Each worker writes its own slot; bootstrap reads after join. */
 struct worker_out { cpu_u64 acc, rounds, id, stack, preemptions, rip, rsp, probe, attempts; };
@@ -216,11 +218,11 @@ static void runtime_timer(void)
 static void digester(void *arg)
 {
     cpu_u64 slot = (cpu_u64)arg;
+    require(slot < WORKERS && !cpu_interrupts_disabled(), "worker_context");
     cpu_u64 acc = 0;
     cpu_u8 out[8]; cpu_u64 n = 0;
     const char *in = W_INPUT[slot];
     cpu_u64 inlen = kstr_nlen(in, KSTR_NLEN_MAX);
-    require(slot < WORKERS && !cpu_interrupts_disabled(), "worker_context");
     runtime_evidence[slot].id = thread_current();
     cpu_u64 stack;
     require(thread_current_stack_base(&stack), "worker_stack");

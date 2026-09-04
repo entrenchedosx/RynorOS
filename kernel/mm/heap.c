@@ -2,6 +2,7 @@
 #include "pmm.h"
 #include "vm.h"
 #include "io.h"
+#include "irq.h"
 #include "serial.h"
 
 /* Address-ordered boundary tags, no auxiliary free list. All operations are
@@ -24,7 +25,7 @@ static cpu_u64 heap_mapped, heap_used, heap_used_blocks, heap_free_blocks;
 static int heap_ready;
 static struct heap_block *hb(cpu_u64 address) { return (void *)address; }
 static cpu_u64 block_payload(cpu_u64 address) { return address + HEAP_HDR; }
-static int context_ok(void) { return cpu_interrupts_disabled(); }
+static int context_ok(void) { return cpu_interrupts_disabled() && !irq_in_context(); }
 
 static void publish(cpu_u64 address, cpu_u64 size, int free)
 {

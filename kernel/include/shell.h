@@ -42,6 +42,10 @@ int shell_execute(char *cmd_line, cpu_u64 cap);
     non-null buf; used by the count command to interpret KRST_SVC_COUNT_DIGITS. */
 cpu_u64 shell_decode_u64_le(const cpu_u8 *buf, cpu_u64 len);
 
+/* Deterministic probe for the live raw-prefix state machine, including
+   recovery after a malformed/truncated E1 Pause sequence. */
+int shell_prefix_self_test(void);
+
 /* Public shell entry: runs the interactive monitor loop. It does not return
     until the requested number of key presses has been serviced (bounded
     key_budget for the host harness). key_budget is a count of host sendkey

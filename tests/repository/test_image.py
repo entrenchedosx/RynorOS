@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/host"))
@@ -10,6 +11,13 @@ from qemu import boot_image
 
 
 class ImageTests(unittest.TestCase):
+    def invalid_boot_arguments(self):
+        """A per-test throwaway directory; failed-validation runs must not
+        drop empty evidence logs into the repository working tree."""
+        directory = tempfile.TemporaryDirectory(prefix="unused-logs-")
+        self.addCleanup(directory.cleanup)
+        return Path("unused.img"), Path(directory.name)
+
     def test_invalid_exception_variant_is_rejected_before_build(self):
         for vector in (True, -1, 2, 32, "3"):
             with self.subTest(vector=vector), self.assertRaises(ValueError):
@@ -38,4 +46,4 @@ class ImageTests(unittest.TestCase):
     def test_invalid_boot_timeouts_are_rejected_before_launch(self):
         for timeout in (0, -1, 61, float("nan"), float("inf")):
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
-                boot_image(Path("unused.img"), Path("unused-logs"), timeout)
+                boot_image(*self.invalid_boot_arguments(), timeout)

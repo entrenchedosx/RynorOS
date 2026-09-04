@@ -154,6 +154,12 @@ class SchedulerTests(unittest.TestCase):
                     "next->saved.r12 ^= 1; return &next->saved;",
                     "[SCHED] failure=register_or_flags_restore")
 
+    def test_preempted_arithmetic_flag_corruption_is_detected(self):
+        self.broken("bad-arithmetic-flag", "kernel/core/thread.c",
+                    "return &next->saved;",
+                    "next->saved.rflags ^= 0x10; return &next->saved;",
+                    "[SCHED] failure=register_or_flags_restore")
+
     def test_bootstrap_cannot_exit(self):
         self.broken("bootstrap-exit", "kernel/core/scheduler-test.c",
                     "stack_tests(); allocation_failure_tests();",
@@ -187,3 +193,21 @@ class SchedulerTests(unittest.TestCase):
                     "(f->vector >= IRQ_BASE && f->vector < IRQ_BASE + IRQ_COUNT)",
                     "f->vector == IRQ_BASE",
                     "[SCHED] failure=handoff_frame")
+
+    def test_pmm_allocation_rejects_real_irq_context(self):
+        self.broken("pmm-irq-context", "kernel/mm/pmm.c",
+                    "static enum pmm_result context(void)\n{\n    if (!cpu_interrupts_disabled() || irq_in_context()) return PMM_WRONG_CONTEXT;",
+                    "static enum pmm_result context(void)\n{\n    if (!cpu_interrupts_disabled()) return PMM_WRONG_CONTEXT;",
+                    "[SCHED] failure=irq_memory_context")
+
+    def test_vm_creation_rejects_real_irq_context(self):
+        self.broken("vm-irq-context", "kernel/mm/vm.c",
+                    "if (!cpu_interrupts_disabled() || irq_in_context()) return VM_CONTEXT;\n    if (!active) return VM_NOT_READY;\n    if (!s || s->identity || s->root || s->table_pages) return VM_INVALID;",
+                    "if (!cpu_interrupts_disabled()) return VM_CONTEXT;\n    if (!active) return VM_NOT_READY;\n    if (!s || s->identity || s->root || s->table_pages) return VM_INVALID;",
+                    "[SCHED] failure=irq_memory_context")
+
+    def test_heap_allocation_rejects_real_irq_context(self):
+        self.broken("heap-irq-context", "kernel/mm/heap.c",
+                    "static int context_ok(void) { return cpu_interrupts_disabled() && !irq_in_context(); }",
+                    "static int context_ok(void) { return cpu_interrupts_disabled(); }",
+                    "[SCHED] failure=irq_memory_context")

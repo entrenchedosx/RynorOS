@@ -79,7 +79,7 @@ CORRUPT, BUSY, CONTEXT, VM_ERROR and MAPPING_CONFLICT. Zero size is OVERFLOW
 under the retained API. A full arena is OUT_OF_MEMORY, not a fake null success.
 The separate VM_ERROR avoids misreporting every VM failure as physical OOM.
 
-IF=0 is checked. Single CPU, no IRQ/exception/NMI allocator calls, and valid
+IF=0 and `!irq_in_context()` are checked (heap explicitly rejects IRQ context, not just IF=0). Single CPU, no IRQ/exception/NMI allocator calls, and valid
 output pointers are caller obligations; IF=0 alone does not detect interrupt
 context or make this SMP-safe. There are no locks or hidden interrupt toggles.
 Pointers carry no generation or owner token: stale use after address reuse

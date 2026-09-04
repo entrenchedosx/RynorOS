@@ -62,6 +62,7 @@ static void balanced(struct accounting before)
 
 static void parser_tests(void)
 {
+    require(shell_prefix_self_test(), "prefix_recovery");
     /* Tokenizer: valid, empty, and invalid bounds. */
     char *tokens[SHELL_ARG_MAX];
     char b[64];
@@ -80,8 +81,18 @@ static void parser_tests(void)
     char many[SHELL_LINE_MAX + 1];
     require(kstr_copy(many, sizeof many, "a b c d e f g h i j k l") == KSTR_OK, "many_copy");
     require(shell_tokenize(many, sizeof many, tokens) == SHELL_ARG_MAX, "token_full");
+    require(kstr_copy(many, sizeof many, "a b c d e f g h i j k l   ") == KSTR_OK,
+            "many_trailing_copy");
+    require(shell_tokenize(many, sizeof many, tokens) == SHELL_ARG_MAX &&
+            kstr_cmp(tokens[SHELL_ARG_MAX - 1], "l", 2) == 0,
+            "token_full_trailing_spaces");
     require(kstr_copy(many, sizeof many, "a b c d e f g h i j k l m") == KSTR_OK, "over_copy");
     require(shell_tokenize(many, sizeof many, tokens) == SHELL_TOO_MANY, "token_too_many");
+    /* Trailing spaces after a full line must still surface a 13th token. */
+    require(kstr_copy(many, sizeof many, "a b c d e f g h i j k l   m") == KSTR_OK,
+            "over_trailing_copy");
+    require(shell_tokenize(many, sizeof many, tokens) == SHELL_TOO_MANY,
+            "token_full_trailing_too_many");
     /* Result codes must be negative and distinct from valid argc 0..12. */
     require(SHELL_TOO_MANY < 0 && SHELL_INVALID < 0 && SHELL_TOO_MANY != SHELL_INVALID, "result_negative");
     require(SHELL_TOO_MANY != 0 && SHELL_TOO_MANY != 1 && SHELL_TOO_MANY != 3, "result_collision");
@@ -98,6 +109,11 @@ static void parser_tests(void)
     require(shell_execute(cmd, sizeof cmd) == SHELL_OK, "r_echo");
     require(kstr_copy(cmd, sizeof cmd, "upper abc123") == KSTR_OK, "c_upper");
     require(shell_execute(cmd, sizeof cmd) == SHELL_OK, "r_upper");
+    /* 41-character upper argument exceeds the service bound: rejected, never
+       silently truncated to 40. */
+    require(kstr_copy(cmd, sizeof cmd, "upper 12345678901234567890123456789012345678901") == KSTR_OK,
+            "c_upper_long");
+    require(shell_execute(cmd, sizeof cmd) == SHELL_SERVICE, "r_upper_long");
     require(kstr_copy(cmd, sizeof cmd, "count a1b2") == KSTR_OK, "c_count");
     require(shell_execute(cmd, sizeof cmd) == SHELL_OK, "r_count");
     require(kstr_copy(cmd, sizeof cmd, "digest ab") == KSTR_OK, "c_digest");

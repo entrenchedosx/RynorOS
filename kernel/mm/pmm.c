@@ -1,5 +1,6 @@
 #include "pmm.h"
 #include "io.h"
+#include "irq.h"
 
 static struct pmm_region regions[PMM_MAX_REGIONS];
 static unsigned int region_count;
@@ -10,7 +11,7 @@ static int ready;
 
 static enum pmm_result context(void)
 {
-    if (!cpu_interrupts_disabled()) return PMM_WRONG_CONTEXT;
+    if (!cpu_interrupts_disabled() || irq_in_context()) return PMM_WRONG_CONTEXT;
     return ready ? PMM_OK : PMM_NOT_READY;
 }
 
@@ -47,7 +48,7 @@ static int originally_usable(cpu_u64 base, cpu_u64 end)
 
 enum pmm_result pmm_initialize(const struct boot_memory_map *map, unsigned int bits)
 {
-    if (!cpu_interrupts_disabled()) return PMM_WRONG_CONTEXT;
+    if (!cpu_interrupts_disabled() || irq_in_context()) return PMM_WRONG_CONTEXT;
     if (ready) return PMM_INVALID;
     if (!pmm_normalize(map, bits, regions, &region_count)) return PMM_BAD_MAP;
     /* All bootstrap-owned RAM must actually be reported usable. Addresses are
@@ -136,13 +137,16 @@ enum pmm_result pmm_allocate(cpu_u64 *physical)
     if (result != PMM_OK) return result;
     if (!physical) return PMM_INVALID;
     if (!stats.free_bytes) return PMM_OUT_OF_MEMORY;
+    if (search_cursor > frame_count) search_cursor = frame_count;
     cpu_u64 index = search_cursor;
     while (index < frame_count && bit(index)) ++index;
     if (index == frame_count) {
         /* Cursor-invariant fallback: a free frame below the cursor (released
-           without the cursor being pulled down) must still be found. Never
-           allocate a set bit, and never report OOM as an invalid argument. */
-        for (index = 0; index < search_cursor && bit(index); ++index) {}
+            without the cursor being pulled down) must still be found. Never
+            allocate a set bit, and never report OOM as an invalid argument.
+            Strictly bound search_cursor to frame_count to prevent OOB bitmap read
+            if search_cursor was corrupted (A10). */
+        for (index = 0; index < search_cursor && index < frame_count && bit(index); ++index) {}
     }
     if (index >= frame_count || bit(index)) return PMM_OUT_OF_MEMORY;
     cpu_u64 remaining = index;

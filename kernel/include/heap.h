@@ -18,7 +18,7 @@ struct heap_statistics {
     cpu_u64 arena_bytes, mapped_bytes, used_bytes, free_bytes, allocated_blocks, free_blocks;
 };
 
-/* Bounded kernel heap. Single CPU, IF=0 required; no IRQ handler may call it.
+/* Bounded kernel heap. Single CPU, IF=0 and !irq_in_context() required; no IRQ handler may call it.
    Arena pages are real PMM frames mapped through the Stage 5 VM kernel space.
    Not a user allocator; handles are trusted kernel pointers. */
 enum heap_result heap_initialize(void);

@@ -79,8 +79,17 @@ class Stage13ParserTests(unittest.TestCase):
 
     def test_02_host_only_imports(self):
         source = PARSER_PATH.read_text(encoding="utf-8")
-        self.assertNotIn("ctypes", source)
-        self.assertNotIn("subprocess", source)
+        import ast
+        tree = ast.parse(source)
+        imports = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imports.add(node.module.split(".")[0])
+        allowed = {"__future__", "argparse", "json", "sys", "threading", "dataclasses", "pathlib", "typing", "tools"}
+        for imp in imports:
+            self.assertIn(imp, allowed, f"unexpected import {imp}")
 
     def test_03_public_api_exists(self):
         for name in ("parse", "parse_bytes", "parse_file", "parse_tokens"):
@@ -252,8 +261,8 @@ class Stage13ParserTests(unittest.TestCase):
 
     def test_47_cli_is_deterministic(self):
         path = GOOD / "all_constructs.rl"
-        first_run = subprocess.run([sys.executable, str(PARSER_PATH), str(path), "--json"], capture_output=True, text=True, check=False)
-        second_run = subprocess.run([sys.executable, "-O", str(PARSER_PATH), str(path), "--json"], capture_output=True, text=True, check=False)
+        first_run = subprocess.run([sys.executable, str(PARSER_PATH), str(path), "--json"], capture_output=True, text=True, check=False, timeout=10)
+        second_run = subprocess.run([sys.executable, "-O", str(PARSER_PATH), str(path), "--json"], capture_output=True, text=True, check=False, timeout=10)
         self.assertEqual((0, first_run.stdout, ""), (first_run.returncode, second_run.stdout, first_run.stderr))
         self.assertEqual("Program", json.loads(first_run.stdout)["kind"])
 
@@ -301,6 +310,38 @@ class Stage13ParserTests(unittest.TestCase):
             self.assertFalse(parser.parse("fn f() {} 1").ok)
         finally:
             directory.cleanup()
+
+    def test_53_nested_calls_obey_exact_depth_limit(self):
+        def nested_calls(count):
+            return "fn f(){ " + "g(" * count + "1" + ")" * count + "; }"
+
+        # Function + block consume two levels, leaving 254 nested calls within
+        # the frozen total limit of 256. The next call must fail deterministically.
+        self.assertTrue(parser.parse(nested_calls(254)).ok)
+        too_deep = parser.parse(nested_calls(255))
+        self.assertFalse(too_deep.ok)
+        self.assertEqual("PAR_DEPTH_EXCEEDED", too_deep.diagnostic.code)
+
+    def test_54_cli_serializes_wide_flat_trees_without_traceback(self):
+        # Left-iterative productions (chained calls, expression chains) stay
+        # within the grammar depth budget but produce unbounded tree width.
+        # The CLI must serialize them (or report PAR_DEPTH_EXCEEDED), never
+        # leak a RecursionError traceback.
+        with tempfile.TemporaryDirectory(prefix="parser-wide-") as directory:
+            for label, source in (
+                ("chained", "fn f(){ g" + "()" * 600 + "; }"),
+                ("chain", "fn f(){ let x: int = " + " && ".join(["true"] * 600) + "; }"),
+            ):
+                path = Path(directory) / f"{label}.rl"
+                path.write_text(source, encoding="utf-8")
+                for optimized in (False, True):
+                    argv = [sys.executable, *(["-O"] if optimized else []),
+                            str(PARSER_PATH), str(path), "--json"]
+                    run = subprocess.run(argv, capture_output=True, text=True,
+                                          check=False, timeout=60)
+                    self.assertEqual("", run.stderr, f"{label} o={optimized}: {run.stderr[:300]}")
+                    self.assertEqual(0, run.returncode, f"{label} o={optimized}")
+                    self.assertEqual("Program", json.loads(run.stdout)["kind"])
 
 
 if __name__ == "__main__":

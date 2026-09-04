@@ -353,8 +353,14 @@ def _too_large(filename: str, data: bytes) -> LexResult:
 def lex(source: str, filename: str = "<input>") -> LexResult:
     if not isinstance(source, str):
         return _input_error(filename, "LEX_INVALID_INPUT", "source must be text")
-    if len(source) > MAX_SOURCE_BYTES:
-        return _too_large(filename, source[:MAX_SOURCE_BYTES].encode("ascii", "replace") + b"x")
+    # The size bound is bytes. For the only accepted alphabet, ASCII, a
+    # character count is already the byte count, so the bound below is exact
+    # without encoding. Non-ASCII library input is lexically invalid, so it
+    # must reach the scanner's own LEX_INVALID_CHAR (lone surrogates included,
+    # never a UnicodeEncodeError from an eager encode). lex_bytes() owns
+    # byte-exact handling for callers that already hold encoded bytes.
+    if source.isascii() and len(source) > MAX_SOURCE_BYTES:
+        return _too_large(filename, source.encode("ascii")[:MAX_SOURCE_BYTES + 1])
     return _Scanner(source, filename).scan()
 
 

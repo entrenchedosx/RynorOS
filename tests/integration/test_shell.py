@@ -32,7 +32,8 @@ def _mutate(root, source, pairs):
     path = root / source
     contents = path.read_text()
     for old, new in pairs:
-        assert contents.count(old) == 1, old
+        if contents.count(old) != 1:
+            raise AssertionError(old)
         contents = contents.replace(old, new)
     path.write_text(contents)
     return root
@@ -99,7 +100,10 @@ class ShellIntegrationTests(unittest.TestCase):
         ])
 
     def test_shell_dispatch_bypass_is_rejected(self):
-        self._run_shell_failure("r_bogus", [
+        # A shell_execute early-return makes every command claim success, so the
+        # long-upper rejection require (which precedes the bogus recovery check)
+        # is the first witness; r_bogus would also fire but is never reached.
+        self._run_shell_failure("r_upper_long", [
             ("    if (!line || cap == 0) return SHELL_INVALID;", "    if (!line || cap == 0) return SHELL_INVALID;\n    return SHELL_OK;"),
         ])
 
@@ -116,6 +120,12 @@ class ShellIntegrationTests(unittest.TestCase):
     def test_shell_count_low_byte_decoder_is_rejected(self):
         self._run_shell_failure("decode300", [
             ("cpu_u64 shell_decode_u64_le(const cpu_u8 *buf, cpu_u64 len)\n{\n    if (!buf || len != 8) return 0;\n    cpu_u64 v = 0;\n    for (unsigned int i = 0; i < 8; ++i) v |= (cpu_u64)buf[i] << (i * 8);\n    return v;\n}", "cpu_u64 shell_decode_u64_le(const cpu_u8 *buf, cpu_u64 len)\n{\n    if (!buf || len != 8) return 0;\n    return buf[0];\n}"),
+        ])
+
+    def test_malformed_pause_sequence_must_recover_immediately(self):
+        self._run_shell_failure("prefix_recovery", [
+            ("n + 1 < sizeof pause_tail ? state->pause + 1 : 0;",
+             "n + 1 < sizeof pause_tail ? state->pause + 1 : state->pause + 1;"),
         ])
 
     def test_shell_realistic_canned_bypass_is_rejected(self):
