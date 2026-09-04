@@ -39,7 +39,10 @@ class AuditRuntimeTests(unittest.TestCase):
     def test_small_and_larger_ram(self):
         for size in (8, 512):
             with self.subTest(memory=size):
-                output = self.run_guest(f"ram-{size}", memory_mib=size)
+                # Positive matrix boots perform every subsystem self-test. Ten
+                # seconds was host-load-sensitive at 8 MiB under the combined
+                # check even though the guest was making forward progress.
+                output = self.run_guest(f"ram-{size}", memory_mib=size, timeout=30)
                 self.assertIn(HEAP_END, output)
 
     def test_real_firmware_hole_and_ram_above_four_gib(self):

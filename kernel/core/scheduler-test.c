@@ -207,6 +207,7 @@ struct probe { volatile cpu_u64 iterations, rsp, error; };
 extern void sched_test_loop(volatile cpu_u64 *, struct probe *);
 extern char sched_test_loop_begin[], sched_test_loop_end[];
 static volatile cpu_u64 stop, test_ticks;
+static volatile int irq_memory_context_checked;
 static struct probe probes[3];
 static void preempt_worker(void *arg)
 {
@@ -217,6 +218,17 @@ static void preempt_worker(void *arg)
 static void test_timer(void)
 {
     require(irq_in_context(), "irq_context");
+    if (!irq_memory_context_checked) {
+        cpu_u64 frame = 0x1122334455667788ULL;
+        void *allocation = (void *)0x1234;
+        struct vm_space space = {0};
+        require(pmm_allocate(&frame) == PMM_WRONG_CONTEXT &&
+                frame == 0x1122334455667788ULL &&
+                vm_create(&space) == VM_CONTEXT && !space.root && !space.identity &&
+                heap_alloc(8, 8, &allocation) == HEAP_CONTEXT &&
+                allocation == (void *)0x1234, "irq_memory_context");
+        irq_memory_context_checked = 1;
+    }
     spinlock_t lock = SPINLOCK_INIT;
     require(spin_lock(&lock) && spin_unlock(&lock), "irq_lock");
     struct kstack h = {0}; thread_id id = 0;

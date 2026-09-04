@@ -68,6 +68,8 @@ def _synthetic_lines() -> list[str]:
         "commands: help version echo <text> upper <text> count <text> digest <text> clear",
         '[SHELL] exec=echo arg="hi"', "hi",
         '[SHELL] exec=upper arg="abc123"', "ABC123",
+        '[SHELL] exec=upper arg="12345678901234567890123456789012345678901"',
+        "error: upper accepts at most 40 characters",
         '[SHELL] exec=count arg="a1b2"', "2",
         '[SHELL] exec=digest arg="ab"', "0x" + digest_hex(b"ab"),
         "[SHELL] exec=clear", "[SHELL] clear: display redraw requested",

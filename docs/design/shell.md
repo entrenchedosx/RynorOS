@@ -2,15 +2,15 @@
 
 ## Purpose and scope
 
-Stage 11 adds a verified **ring-0 kernel monitor** that exercises the existing kernel subsystems through real keyboard input. It is a trusted, single-CPU, `IF=0`-at-entry monitor that runs in the bootstrap thread after all Stage 0–10 self-tests, before the final `pmm/vm/heap/scheduler` integrity gate. It exposes **only implemented services** (Stage 10 `KRST_SVC_UPPER` / `COUNT_DIGITS` / `DIGEST` plus honest built-ins `help/version/echo/clear`) and rejects everything else. There is no userspace, no filesystem, no RynorLang execution, no `Ring 3`.
+Stage 11 adds a verified **ring-0 kernel monitor** that exercises the existing kernel subsystems through real keyboard input. It is a trusted, single-CPU, `IF=0`-at-entry monitor that runs in the bootstrap thread after all Stage 0–10 self-tests and after the final `pmm/vm/heap/scheduler` integrity gate (`kernel/core/main.c` checks `pmm_check`/`vm_check`/`heap_check`/`scheduler_check` before `shell_self_test`). It exposes **only implemented services** (Stage 10 `KRST_SVC_UPPER` / `COUNT_DIGITS` / `DIGEST` plus honest built-ins `help/version/echo/clear`) and rejects everything else. There is no userspace, no filesystem, no RynorLang execution, no `Ring 3`.
 
 ## Invariants
 
 * **Bounded line** `SHELL_LINE_MAX 64` → `data[65]` with `len`/`NUL` invariant; `line_insert` rejects `len>=64` without overflow.
-* **Bounded tokenizer** `SHELL_ARG_MAX 12`, `kstr_nlen(line,cap)!=cap` validates NUL within `cap`; `12` tokens → `SHELL_OK`, `13` → `SHELL_TOO_MANY=-3` (negative, never aliases `0..12`). `SHELL_INVALID=-1` for unterminated. Tokens alias into `line`; no escape.
+* **Bounded tokenizer** `SHELL_ARG_MAX 12`, `kstr_nlen(line,cap)!=cap` validates NUL within `cap`; `12` tokens → `SHELL_OK`, `13` → `SHELL_TOO_MANY=-3` (negative, never aliases `0..12`). `SHELL_INVALID=-1` for unterminated. Tokens alias into `line`; no escape. Tokenizer splits on ASCII space `' '` only (not tab/newline); `SHELL_CMD_MAX 16` and `SHELL_TOO_LONG=-2` are reserved and currently unused.
 * **Strict dispatch** `help/version/clear` `argc==1`, `echo/upper/count/digest` `argc==2` (extra → `SHELL_ARGS=-5`), unknown → `SHELL_UNKNOWN=-4`.
-* **Runtime safety** `text_len = kstr_nlen(tokens[1], cap-offset)` with `offset<cap` guard; `krst_call` re-entrantly validates `IRQ`/`overlap`/`MAX_BYTES`; `upper` checks `n<48` before `NUL`; `count` decodes full 64-bit LE, `digest` checks `nlen==8`.
-* **Keyboard** real `IRQ1` via `kbd_poll` with `sti;hlt;cli`; `E0`/`E1` prefix isolation preserved (driver contract), `AUX`/`ERROR`/`00`/`FF` counted as `epoch` loss, `UNKNOWN` makes are stored then ignored, `LOST` halts fail-closed, one `sendkey` (make+break) → one `waiting` marker, releases drained by `scan&0x7f`.
+* **Runtime safety** `text_len = kstr_nlen(tokens[1], cap-offset)` with `offset<cap` guard; `krst_call` re-entrantly validates `IRQ`/`overlap`/`MAX_BYTES`; `upper` rejects inputs longer than the 40-byte service bound with `SHELL_SERVICE` and an explicit error line (`upper` arguments are never silently truncated); `count` decodes full 64-bit LE, `digest` checks `nlen==8`.
+* **Keyboard** real `IRQ1` via `kbd_poll` with `sti;hlt;cli`; `E0`/`E1` prefix isolation mirrors the driver decoder byte-for-byte (malformed Pause tails reset immediately; a truncated `E1` sequence consumes only its mismatching byte and later ordinary keys survive), `AUX`/`ERROR`/`00`/`FF` counted as `epoch` loss, `UNKNOWN` makes are stored then ignored, `LOST` halts fail-closed, one `sendkey` (make+break) → one `waiting` marker, releases drained by `scan&0x7f`.
 * **Scheduler/IRQ** `shell_run` requires `IF=0`, enables only `IRQ1`, never touches `IRQ0` handler, preserves `IF`, no heap/PMM/VM allocation, balanced `pmm/vm/heap/table_pages` before/after.
 
 ## Public interfaces
@@ -34,7 +34,7 @@ Synthetic evidence (always): `tokenizer, bounds and empty line` → `exec versio
 
 * `python tools/build/build.py test` — `tests/repository/test_shell_output.py` (7 tests): valid fixture, every-line-required, structural damage, accounting, script well-formed, `-O` fails closed, stage10 early rejected.
 * `python -m unittest discover -s tests/integration -p test_shell.py` — runs 8 test methods: two positive 39-key QEMU sessions (default and alternate host-selected scripts) and six mutation-negative guests. The validator requires `SHELL_END`, `keys=39 received=78`, all host inputs, exact per-key/per-command output, and the keyboard device/PIC trace. Mutations cover canned output, dispatch bypass, runtime-service bypass, tokenizer bypass, low-byte-only count decoding, and a realistic keyboard-draining canned transcript. Kernel synthetic tests separately cover tokenizer/result-code/error boundaries and service-result widths.
-* The complete suite currently contains 159 repository and 155 integration test methods (147 non-shell + 8 shell). The positive QEMU configuration matrix has 9 distinct configurations: 8/16/64/128/256/512/4096 MiB, `max` CPU, and the low-32/high-RAM layout.
+* The reviewed inventory currently contains 270 repository and 162 integration test methods. The positive QEMU configuration matrix has 9 distinct configurations: 8/16/64/128/256/512/4096 MiB, `max` CPU, and the low-32/high-RAM layout.
 * `python tools/build/build.py boot-test` / `check` / QEMU matrix (`8…4096` MiB, `max`, `low-32`) now include shell synthetic output in every normal boot.
 
 ## Known limitations

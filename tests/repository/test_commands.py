@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import os
+import importlib.util
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,16 +107,38 @@ class CommandTests(unittest.TestCase):
 
     def test_failing_test_propagates_exit_status(self):
         root = self.make_fixture()
+        spec = importlib.util.spec_from_file_location("inventory_build", ROOT / "tools/build/build.py")
+        build_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build_module)
         for path in (root / "tests/repository").glob("test_*.py"):
             path.unlink()
-        (root / "tests/repository/test_failure.py").write_text(
-            "import unittest\nclass Failure(unittest.TestCase):\n"
-            "    def test_failure(self):\n        self.fail('deliberate fixture failure')\n",
-            encoding="utf-8",
-        )
+        template = '''import unittest
+class Inventory(unittest.TestCase):
+    pass
+def make_test(index):
+    def test(self):
+        if FAIL and index == 0:
+            self.fail("deliberate fixture failure")
+    return test
+for i in range(COUNT):
+    setattr(Inventory, f"test_{i}", make_test(i))
+'''
+        for module, count in build_module.REPOSITORY_TEST_INVENTORY.items():
+            source = f"COUNT={count}\nFAIL={module == 'test_repository'}\n" + template
+            (root / f"tests/repository/{module}.py").write_text(source, encoding="utf-8")
         result = self.run_command(root, "test")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("deliberate fixture failure", result.stderr)
+
+    def test_missing_subsystem_test_module_participation_fails(self):
+        root = self.make_fixture()
+        (root / "tests/integration/test_vm.py").write_text(
+            '"""Deliberately emptied required subsystem suite."""\n', encoding="utf-8",
+        )
+        result = self.run_command(root, "integration-test")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("integration test inventory mismatch", result.stderr)
+        self.assertIn("test_vm: expected 8, observed 0", result.stderr)
 
 
 if __name__ == "__main__":

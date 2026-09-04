@@ -4,7 +4,8 @@ section .text
 global sched_test_loop, sched_test_loop_begin, sched_test_loop_end
 ; void sched_test_loop(stop*, probe*). probe={iterations,actual_rsp,error}.
 ; NO calls/yields/HLT inside the busy loop: only hardware IRQ preemption can
-; let another thread progress. Check non-argument GPRs and DF/CF restoration.
+; let another thread progress. Check non-argument GPRs and the complete set of
+; supported arithmetic flags plus DF restoration.
 sched_test_loop:
     push rbx
     push rbp
@@ -55,14 +56,20 @@ sched_test_loop_begin:
     jne .bad
     cmp rsp, [rsi+8]
     jne .bad
-    std
-    stc
+    ; Establish CF/PF/AF/ZF/SF/DF/OF without changing IF or unsupported flags.
+    pushfq
+    pop rax
+    and rax, ~0xcd5
+    or rax, 0xcd5
+    push rax
+    popfq
+    mov rax, 0x101
     pause
     pushfq
     pop rax
     cld
-    and eax, 0x401
-    cmp eax, 0x401
+    and eax, 0xcd5
+    cmp eax, 0xcd5
     jne .bad
     inc qword [rsi]
     cmp qword [rdi], 0

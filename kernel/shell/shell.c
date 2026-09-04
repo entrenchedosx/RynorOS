@@ -92,7 +92,7 @@ int shell_tokenize(char *line, cpu_u64 cap, char *tokens[SHELL_ARG_MAX])
     }
     /* The contract requires SHELL_TOO_MANY when the line holds more than
        SHELL_ARG_MAX tokens; extra tokens must not be silently dropped. */
-    while (i < cap && line[i] == ' ') ++i;
+    while (i < cap && line[i] == ' ') line[i++] = '\0';
     if (i < cap && line[i]) return SHELL_TOO_MANY;
     return count;
 }
@@ -131,10 +131,12 @@ static int cmd_upper(const char *text, cpu_u64 len)
 {
     char out[48];
     cpu_u64 n = 0;
-    if (len > 40) len = 40;
+    /* The bounded service contract is 40 input bytes; longer shell arguments
+       are rejected honestly instead of silently truncated. */
+    if (len > 40) { say_line("error: upper accepts at most 40 characters"); return SHELL_SERVICE; }
     int r = krst_call(KRST_SVC_UPPER, text, len, out, sizeof out, &n);
     if (r == KRST_OK) {
-        if (n >= sizeof out) { say_line("error: service rejected request"); return KRST_BAD_ARGS; }
+        if (n >= sizeof out) { say_line("error: service rejected request"); return SHELL_SERVICE; }
         out[n] = '\0'; say(out);
     }
     return r;
@@ -186,8 +188,7 @@ int shell_execute(char *line, cpu_u64 cap)
         if (argc != 2) { say_line("error: upper requires one argument"); return SHELL_ARGS; }
         int r = cmd_upper(text, text_len);
         if (r == KRST_OK) say("\r\n");
-        else { say_line("error: service rejected request"); return SHELL_SERVICE; }
-        return SHELL_OK;
+        return r == KRST_OK ? SHELL_OK : SHELL_SERVICE;
     } else if (kstr_cmp(cmd, "count", 6) == 0) {
         if (argc != 2) { say_line("error: count requires one argument"); return SHELL_ARGS; }
         cpu_u8 n[8]; cpu_u64 nlen = 0;
@@ -224,11 +225,51 @@ int shell_execute(char *line, cpu_u64 cap)
 /* exactly one wait marker. Returns the press event. */
 /* ------------------------------------------------------------------ */
 
+struct shell_prefix_state { unsigned int extended, pause; };
+
+/* Keep the shell's raw Set-1 stream handling identical to the keyboard
+   decoder: malformed Pause sequences consume only the mismatching byte and
+   reset immediately.  Blindly swallowing five bytes after E1 can discard a
+   later ordinary key when hardware emits a truncated/malformed sequence. */
+static int shell_prefix_byte(struct shell_prefix_state *state, cpu_u8 scan)
+{
+    static const cpu_u8 pause_tail[] = {0x1d, 0x45, 0xe1, 0x9d, 0xc5};
+    _Static_assert(sizeof pause_tail == 5, "Pause tail is the six-byte E1 sequence");
+    if (state->pause) {
+        unsigned int n = state->pause - 1;
+        state->pause = n < sizeof pause_tail && scan == pause_tail[n] &&
+                       n + 1 < sizeof pause_tail ? state->pause + 1 : 0;
+        return 1;
+    }
+    if (scan == 0xe1) { state->extended = 0; state->pause = 1; return 1; }
+    if (scan == 0xe0) { state->extended = 1; return 1; }
+    if (state->extended) { state->extended = 0; return 1; }
+    return 0;
+}
+
+int shell_prefix_self_test(void)
+{
+    struct shell_prefix_state state = {0};
+    const cpu_u8 malformed[] = {0xe1, 0x00, 0x1e, 0x9e};
+    const int malformed_discard[] = {1, 1, 0, 0};
+    _Static_assert(sizeof malformed / sizeof malformed[0] ==
+                   sizeof malformed_discard / sizeof malformed_discard[0],
+                   "malformed probe and expected decisions must stay paired");
+    for (unsigned int i = 0; i < sizeof malformed; ++i)
+        if (shell_prefix_byte(&state, malformed[i]) != malformed_discard[i]) return 0;
+    const cpu_u8 pause[] = {0xe1, 0x1d, 0x45, 0xe1, 0x9d, 0xc5};
+    for (unsigned int i = 0; i < sizeof pause; ++i)
+        if (!shell_prefix_byte(&state, pause[i])) return 0;
+    if (state.extended || state.pause) return 0;
+    return shell_prefix_byte(&state, 0xe0) && shell_prefix_byte(&state, 0x1c) &&
+           !state.extended && !state.pause && !shell_prefix_byte(&state, 0x1e);
+}
+
 static void wait_key(struct kbd_event *press)
 {
     struct kbd_event e;
     cpu_u8 make = 0;
-    unsigned int extended = 0, pause_tail = 0;
+    struct shell_prefix_state prefix = {0};
     for (;;) {
         enum kbd_result r;
         while ((r = kbd_poll(&e)) == KBD_EMPTY)
@@ -237,10 +278,7 @@ static void wait_key(struct kbd_event *press)
         /* Preserve Stage 8's prefix-isolation contract while interpreting the
            wider ordinary-key set locally. Never turn E0 keypad Enter into the
            ordinary Enter command delimiter; consume bounded E1 Pause tails. */
-        if (pause_tail) { --pause_tail; continue; }
-        if (e.scan == 0xe1) { pause_tail = 5; extended = 0; continue; }
-        if (e.scan == 0xe0) { extended = 1; continue; }
-        if (extended) { extended = 0; continue; }
+        if (shell_prefix_byte(&prefix, e.scan)) continue;
         /* The shell translates raw Set-1 scans itself, so it must not depend on
            the Stage 8 decoder's 8-key subset: an unknown-key make arrives as
            KBD_EVENT_UNKNOWN and would otherwise stall the session forever.

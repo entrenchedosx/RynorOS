@@ -62,6 +62,10 @@ class BootTests(unittest.TestCase):
         self.assertTrue(summary["reaped"])
         self.assertEqual(summary["returncode"], 0)
         self.assertEqual(summary["cleanup"], "monitor-quit")
+        self.assertRegex(summary["qemu"]["version"], r"^QEMU emulator version ")
+        self.assertRegex(summary["qemu"]["sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(summary["firmware"]["sha256"],
+                         "ae6f6aa973aaccc143f57aa960fb035fd9de4daee4ad0cd713322f8c259e7650")
 
     def assert_rip_matches_elf(self, output, elf, vector):
         saved_rip = int(re.search(rb"\[STATE\] rip=0x([0-9a-f]{16})", output)[1], 16)
@@ -114,6 +118,8 @@ class BootTests(unittest.TestCase):
             other = Path(temporary)
             manifest = build_image(ROOT, other)
             self.assertEqual(manifest["artifacts"], self.manifest["artifacts"])
+            self.assertEqual((ROOT / "build/build-manifest.json").read_bytes(),
+                             (other / "build-manifest.json").read_bytes())
             for name in ARTIFACTS:
                 with self.subTest(artifact=name):
                     self.assertEqual((ROOT / "build" / name).read_bytes(), (other / name).read_bytes())

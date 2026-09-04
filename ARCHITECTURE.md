@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, and the Stage 12–13 host-side RynorLang lexer/parser. Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, and the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -109,7 +109,7 @@ If metadata cannot fit mapped usable RAM, initialization fails rather than
 limiting RAM silently or implementing new paging.
 
 The API allocates/releases individual physical addresses, queries state and totals,
-and detects invalid/double frees and OOM. It requires one CPU and IF=0. A search
+and detects invalid/double frees and OOM. It requires one CPU and IF=0 and `!irq_in_context()` (IRQ handlers must not call PMM). A search
 cursor and allocation bits provide deterministic uniqueness/reuse; counters and
 an independent recount check accounting. Full-pool OOM testing uses the real
 allocator and releases every frame afterward. Physical addresses are not mappings,
@@ -125,7 +125,7 @@ whole-RAM direct map. CR3 replacement is verified; NX and CR0.WP are enforced.
 Canonical/range/physical validation, map/unmap/range rollback, permission changes,
 translation, INVLPG, inactive hierarchy creation/destruction and table accounting
 are implemented. Only table frames are VM-owned; data mappings borrow caller-owned
-PMM frames. All calls require one CPU and IF=0. See
+PMM frames. All calls require one CPU and IF=0 and `!irq_in_context()`. See
 `docs/design/virtual-memory.md` for layout, formats, APIs, errors and ownership.
 No generic address-space switching, user mode/processes, COW, demand paging,
 swap or new large pages exist. Stage 9 adds a narrowly scoped MMIO mapping API
@@ -142,7 +142,7 @@ error codes for alignment, overflow, invalid, corruption, out-of-memory and
 context and mapping conflicts. `heap_check` walks the validated boundary-tag
 partition and accounting; there is no separate free list. Unsplittable tails
 belong to allocations, and only exact block payload pointers may be freed.
-It runs only in single-CPU IF=0 contexts and is an internal kernel allocator,
+It runs only in single-CPU IF=0 and `!irq_in_context()` contexts and is an internal kernel allocator,
 not a libc `malloc` or a user allocator. See `docs/design/heap.md`.
 
 ### Kernel execution infrastructure (Stage 7)
@@ -251,7 +251,7 @@ No multicore execution, binary compatibility, or multi-user security is promised
 
 ## 9. Shell
 
-Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, isolates `E0`/`E1`, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The suite contains `110` repository and `155` integration test methods (`147` non-shell + `8` shell), plus a 9-configuration QEMU matrix and deterministic rebuild check. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
+Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `270` repository and `162` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
 
 ## 10. RynorLang
 

@@ -116,9 +116,9 @@ explicitly; it does not silently cap RAM or add page tables.
 
 ## API, algorithm, ownership and failure semantics
 
-`kernel/include/pmm.h` is an internal interface. Single CPU and **IF=0** are
+`kernel/include/pmm.h` is an internal interface. Single CPU and **IF=0 and `!irq_in_context()`** are
 required for initialization, allocation, release, queries and statistics; no
-interrupt handler calls PMM. Calls reject a wrong interrupt context. No implicit
+interrupt handler calls PMM. Calls reject a wrong interrupt context (`PMM_WRONG_CONTEXT`). The allocation search cursor is strictly bounded `< frame_count` to prevent OOB bitmap reads if corrupted. No implicit
 STI/CLI, locks, hidden heap, or host service is used.
 
 - `pmm_initialize(map, physical_bits)` validates/normalizes/reserves and initializes

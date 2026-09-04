@@ -21,6 +21,26 @@ from image import build_image  # noqa: E402
 from qemu import boot_image  # noqa: E402
 
 
+# An intentionally explicit participation gate. Discovery being nonempty is
+# insufficient: an entire subsystem module can otherwise become an empty file
+# while unrelated tests keep the command green. Changes to the suite must update
+# this reviewed inventory alongside the new or removed tests.
+REPOSITORY_TEST_INVENTORY = {
+    "test_commands": 11, "test_exception_output": 6, "test_fb_output": 12,
+    "test_forensic_repairs": 9, "test_heap_output": 6, "test_image": 5,
+    "test_kbd_output": 12, "test_kernel_hardening": 5, "test_pmm_output": 6,
+    "test_repository": 12, "test_resources": 3, "test_runtime_output": 14,
+    "test_rynorlang_lexer": 49, "test_rynorlang_parser": 54,
+    "test_rynorlang_semantics": 42, "test_sched_output": 8,
+    "test_shell_output": 7, "test_timer_output": 4, "test_vm_output": 5,
+}
+INTEGRATION_TEST_INVENTORY = {
+    "test_audit": 4, "test_boot": 14, "test_display": 31, "test_heap": 5,
+    "test_keyboard": 26, "test_pmm": 7, "test_runtime": 35,
+    "test_scheduler": 23, "test_shell": 9, "test_vm": 8,
+}
+
+
 def validate() -> bool:
     errors = validate_repository(ROOT)
     for error in errors:
@@ -33,6 +53,14 @@ def validate() -> bool:
 
 
 def build() -> bool:
+    # Invalidate stale guest artifacts before validation and host compilation
+    # so a failed build can never leave a prior successful image behind.
+    from image import ARTIFACTS
+    for name in (*ARTIFACTS, "build-manifest.json"):
+        try:
+            (ROOT / "build" / name).unlink()
+        except FileNotFoundError:
+            pass
     if not validate():
         return False
     sources = sorted(
@@ -61,6 +89,8 @@ def test() -> bool:
     if suite.countTestCases() == 0:
         print("ERROR: No repository tests discovered.", file=sys.stderr)
         return False
+    if not inventory_ok(suite, REPOSITORY_TEST_INVENTORY, "repository"):
+        return False
     if loader_errors():
         return False
     return unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful()
@@ -68,11 +98,23 @@ def test() -> bool:
 
 def loader_errors() -> bool:
     """Discovery silently drops modules that raise at import time; a green
-    suite must never be produced by a test file that failed to load."""
+    suite must never be produced by a test file that failed to load. Files
+    that discovery cannot import at all (extra dots in the name, or a
+    placement outside the two discoverable directories) are the same class
+    of silent loss and are rejected here too."""
     import importlib.util
     import sys as _sys
     failed = []
+    discoverable = {ROOT / "tests/repository", ROOT / "tests/integration"}
     for path in sorted((ROOT / "tests").rglob("test_*.py")):
+        if path.name.count(".") != 1:
+            failed.append(f"{path.relative_to(ROOT)}: test file names must be "
+                          "exactly 'test_<identifier>.py' or discovery drops them silently")
+            continue
+        if path.parent not in discoverable:
+            failed.append(f"{path.relative_to(ROOT)}: test files must live in "
+                          "tests/repository or tests/integration; elsewhere they never run")
+            continue
         directory = str(path.parent)
         if directory not in _sys.path:
             _sys.path.insert(0, directory)
@@ -91,6 +133,28 @@ def loader_errors() -> bool:
     return False
 
 
+def inventory_ok(suite: unittest.TestSuite, expected: dict[str, int], label: str) -> bool:
+    observed: dict[str, int] = {}
+
+    def visit(item) -> None:
+        if isinstance(item, unittest.TestSuite):
+            for child in item:
+                visit(child)
+            return
+        module = item.id().split(".", 1)[0]
+        observed[module] = observed.get(module, 0) + 1
+
+    visit(suite)
+    if observed == expected:
+        return True
+    print(f"ERROR: {label} test inventory mismatch.", file=sys.stderr)
+    for module in sorted(set(expected) | set(observed)):
+        if observed.get(module, 0) != expected.get(module, 0):
+            print(f"  {module}: expected {expected.get(module, 0)}, observed {observed.get(module, 0)}",
+                  file=sys.stderr)
+    return False
+
+
 def boot_test(timeout: float) -> bool:
     if not build():
         return False
@@ -104,6 +168,8 @@ def integration_test() -> bool:
     )
     if suite.countTestCases() == 0:
         print("ERROR: No integration tests discovered.", file=sys.stderr)
+        return False
+    if not inventory_ok(suite, INTEGRATION_TEST_INVENTORY, "integration"):
         return False
     if loader_errors():
         return False

@@ -79,12 +79,15 @@ class PmmOutputTests(unittest.TestCase):
             firmware_regions([(1 << 36, 4096, 1, 1, 24)], 36)
 
     def test_qemu_memory_option_validated_before_launch(self):
-        for memory in (True, 0, 4097, "64M"):
-            with self.assertRaises(ValueError):
-                boot_image(Path("missing.img"), Path("unused-logs"), memory_mib=memory)
-        for cpu in (None, True, "host", "max,unexpected=on"):
-            with self.assertRaises(ValueError):
-                boot_image(Path("missing.img"), Path("unused-logs"), cpu_model=cpu)
-        for limit in (True, 0, 4097, "32M"):
-            with self.assertRaises(ValueError):
-                boot_image(Path("missing.img"), Path("unused-logs"), max_ram_below_4g_mib=limit)
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="unused-logs-") as directory:
+            logs = Path(directory)
+            for memory in (True, 0, 4097, "64M"):
+                with self.assertRaises(ValueError):
+                    boot_image(Path("missing.img"), logs, memory_mib=memory)
+            for cpu in (None, True, "host", "max,unexpected=on"):
+                with self.assertRaises(ValueError):
+                    boot_image(Path("missing.img"), logs, cpu_model=cpu)
+            for limit in (True, 0, 4097, "32M"):
+                with self.assertRaises(ValueError):
+                    boot_image(Path("missing.img"), logs, max_ram_below_4g_mib=limit)

@@ -69,6 +69,41 @@ class VirtualMemoryTests(unittest.TestCase):
                     '__asm__ volatile ("mov %0,%%cr3" : : "r"(kernel_space.root) : "memory");',
                     '/* Intentionally broken CR3 activation. */', "[VM] failure=initialization")
 
+    def test_failed_initialization_rolls_back_publication_and_ownership(self):
+        """Force the post-switch check to fail and inspect the returned state."""
+        with tempfile.TemporaryDirectory(prefix="vm-init-rollback-", dir=ROOT / "build") as tmp:
+            fixture = Path(tmp)
+            for directory in REQUIRED_DIRECTORIES:
+                (fixture / directory).mkdir(parents=True, exist_ok=True)
+            for filename in REQUIRED_FILES:
+                shutil.copyfile(ROOT / filename, fixture / filename)
+
+            vm = fixture / "kernel/mm/vm.c"
+            contents = vm.read_text(encoding="utf-8")
+            old = "if (cr3 == kernel_space.root && vm_check(&kernel_space)) return VM_OK;"
+            self.assertEqual(contents.count(old), 1)
+            vm.write_text(contents.replace(old, "if (0) return VM_OK;"), encoding="utf-8")
+
+            probe = fixture / "kernel/mm/vm-test.c"
+            contents = probe.read_text(encoding="utf-8")
+            old = 'require(result == VM_OK, "initialization");'
+            new = '''if (result == VM_CORRUPT && !vm_kernel_space() &&
+        pmm_statistics(&baseline) == PMM_OK &&
+        baseline.allocated_bytes == initial.allocated_bytes)
+        require(0, "audit_initialization_rollback_verified");
+    require(0, "audit_initialization_rollback_missing");'''
+            self.assertEqual(contents.count(old), 1)
+            probe.write_text(contents.replace(old, new), encoding="utf-8")
+
+            build_image(fixture)
+            logs = ROOT / "build/vm-tests/init-rollback"
+            with self.assertRaisesRegex(RuntimeError, "audit_initialization_rollback_verified"):
+                boot_image(fixture / "build/rynoros.img", logs, timeout=6)
+            output = (logs / "serial.log").read_bytes()
+            self.assertIn(b"[VM] failure=audit_initialization_rollback_verified", output)
+            self.assertNotIn(b"audit_initialization_rollback_missing", output)
+            self.cleanup(logs)
+
     def test_unarmed_page_fault_is_fatal(self):
         self.broken("unarmed", "kernel/mm/vm-test.c", "fault.armed = 1;", "fault.armed = 0;",
                     "[VM] page fault action=halt reason=unexpected")

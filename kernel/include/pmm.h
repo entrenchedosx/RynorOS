@@ -19,7 +19,7 @@ struct pmm_statistics {
     cpu_u64 firmware_usable_bytes, metadata_base, metadata_bytes;
 };
 
-/* Physical addresses only. No mapping/zeroing; single CPU, IF=0 required.
+/* Physical addresses only. No mapping/zeroing; single CPU, IF=0 and !irq_in_context() required.
    usable_bytes == free_bytes + allocated_bytes; described == usable + reserved. */
 enum pmm_result pmm_initialize(const struct boot_memory_map *map, unsigned int physical_bits);
 enum pmm_result pmm_allocate(cpu_u64 *physical);

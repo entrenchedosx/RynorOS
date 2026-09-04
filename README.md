@@ -8,10 +8,10 @@ on its implementation, Linux, BSD, or an existing userspace.
 
 This is a single-CPU kernel development platform plus a **host-side RynorLang lexical, syntactic, and semantic subset**, **not a usable or
 production-ready OS**. The independently [audited Stage 7 scheduler](docs/reports/stage7-audit.md)
-(repair, ownership and limits), the [Stage 8 keyboard](docs/reports/stage8.md),
+(repair, ownership and limits), the [Stage 8 keyboard](docs/reports/stage8-audit.md),
 and the [Stage 9 display](docs/reports/stage9-audit.md) are the prior verified
 milestones. Stage 10 adds bounded strings/byte buffers and ring-0 runtime
-services driven from real worker threads; see [docs/reports/stage10.md](docs/reports/stage10.md)
+services driven from real worker threads; see [docs/reports/stage10-audit.md](docs/reports/stage10-audit.md)
 and [docs/design/runtime.md](docs/design/runtime.md). Stage 11 adds a verified
 ring-0 kernel monitor (`kernel/shell/`) with real `IRQ1` input; see
 [docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md). **Stage 12 freezes the RynorLang lexical subset** and provides one host-side `tools/rynorlang/lex.py` implementation with precise spans, first-error diagnostics, and deterministic output; see [docs/reports/stage12.md](docs/reports/stage12.md) and [docs/design/rynorlang-lexer.md](docs/design/rynorlang-lexer.md). **Stage 13 parses that token stream** into a documented temporary syntax tree with exact spans, precedence, associativity, dangling-else, and depth-bounded diagnostics; see [docs/reports/stage13.md](docs/reports/stage13.md) and [docs/design/rynorlang-parser.md](docs/design/rynorlang-parser.md). **Stage 14 lowers that tree** into a stable JSON-compatible AST and performs name resolution and type checking with exact `SEM_*` diagnostics; see [docs/reports/stage14.md](docs/reports/stage14.md) and [docs/design/rynorlang-ast.md](docs/design/rynorlang-ast.md).
@@ -38,7 +38,7 @@ Implemented and exercised in QEMU:
   Worker results, physical state and QEMU CPU IRQ traces are cross-checked;
   services reject IRQ calls and require valid, caller-owned objects.
  - Host-side RynorLang lexer (`tools/rynorlang/lex.py`): ASCII and 1 MiB bounded; `//` comments; exact `fn`/`let`/`if`/`else`/`while`/`return`/`true`/`false`/`int`/`bool`/`str` keywords; `[A-Za-z_][A-Za-z0-9_]*` identifiers; bounded decimal integers; `\\`, `\"`, `\n`, and `\t` string escapes; maximal-munch operators including standalone `!`; exact spans; and first-error diagnostics. Lexical errors exit 1. The strict suite has 49 lexer tests.
- - Host-side RynorLang parser (`tools/rynorlang/parse.py`): consumes the Stage 12 token stream into a frozen temporary syntax tree with exact spans, colon return types, no trailing list commas, left-associative precedence (`||` < `&&` < `==`/`!=` < `<`/`>`/`<=`/`>=` < `+`/`-` < `*`/`/`/`%` < unary), nearest-`if` else binding, and bounded nesting (depth 256 → `PAR_DEPTH_EXCEEDED`). It rejects malformed input with located `PAR_*` diagnostics. The strict suite has 52 parser tests with 14 valid and 21 invalid fixtures.
+- Host-side RynorLang parser (`tools/rynorlang/parse.py`): consumes the Stage 12 token stream into a frozen temporary syntax tree with exact spans, colon return types, no trailing list commas, left-associative precedence (`||` < `&&` < `==`/`!=` < `<`/`>`/`<=`/`>=` < `+`/`-` < `*`/`/`/`%` < unary), nearest-`if` else binding, and bounded nesting (depth 256 → `PAR_DEPTH_EXCEEDED`). It rejects malformed input with located `PAR_*` diagnostics. The strict suite has 53 parser tests, including an exact call-nesting boundary regression.
  - Host-side RynorLang semantics (`tools/rynorlang/analyze.py`): lowers the temporary tree into a stable JSON-compatible AST (`Program, Function, Param, Block, Let, If, While, Return, ExprStmt, BinOp, UnOp, IntLit, BoolLit, StrLit, Var, Call`) with exact spans, deterministic symbol indices, and type checking (no implicit conversions, `unit` for missing return, `str` equality vs ordering, `!`/`-` unary, `&&`/`||` bool, call arity, etc.). No shadowing, forward function references allowed, locals block-scoped. The strict suite has 42 semantics tests with 12 valid and 20 invalid fixtures; no interpretation, codegen, or execution is claimed.
 
 There is no user mode, process address-space switching, scheduler sleep/wake,
@@ -110,9 +110,9 @@ comparisons and byte-identical rebuilds. `check` runs build and both suites.
 Artifacts under ignored `build/`: `boot.bin`, `rynorkernel.bin`,
 `rynorkernel.elf`, `rynoros.img`, `rynoros-resources.zip` and
 `build-manifest.json`. Logs include serial transcripts and owned-QEMU cleanup
-records. The current suite contains 253 repository and 155 integration test
-methods (147 non-shell + 8 shell; 42 semantics + 52 parser + 49 lexer + 110 earlier repository tests). Exact commands and evidence are in the
-[Stage 14 report](docs/reports/stage14.md), [Stage 13 report](docs/reports/stage13.md) and [Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
+records. The reviewed inventory contains 270 repository and 162 integration test
+methods. The build command checks exact per-module participation before discovery. Exact commands and evidence are in the
+[forensic stabilization report](docs/reports/forensic-stabilization-final.md), [Stage 14 report](docs/reports/stage14.md), [Stage 13 report](docs/reports/stage13.md) and [Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
 Display evidence is retained as `display.pmem` and `display.ppm` beside each
 successful normal boot's serial log; this is emulator, not physical-hardware evidence.
 Runtime execution evidence is `runtime.pmem` plus CPU interrupt records in

@@ -1,6 +1,7 @@
 """Bounded real-emulator serial smoke test, with owned-process cleanup."""
 
 import json
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -18,6 +19,46 @@ from runtime_output import verify_runtime_memory, verify_runtime_trace
 
 
 EXPECTED_OUTPUT = BOOT_PREFIX  # Compatibility prefix, not the full execution log.
+_PROVENANCE = {}
+
+
+def _file_provenance(path: Path, *, version_command=None) -> dict:
+    path = path.resolve()
+    key = (str(path), tuple(version_command or ()))
+    if key not in _PROVENANCE:
+        info = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        if version_command:
+            try:
+                result = subprocess.run([str(path), *version_command], capture_output=True,
+                                        text=True, timeout=15, check=True)
+                info["version"] = result.stdout.splitlines()[0] if result.stdout.splitlines() else ""
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                raise RuntimeError(f"tool {path} failed provenance query: {error}") from error
+        _PROVENANCE[key] = info
+    return dict(_PROVENANCE[key])
+
+
+def _locate_firmware(qemu_path: Path) -> Path | None:
+    """Pinned SeaBIOS beside the emulator, with an explicit host override.
+    A sibling ``*.shim`` file (scoop layout) redirects to the real binary's
+    directory when the resolved path itself has no ``share/`` tree."""
+    override = os.environ.get("RYNOR_QEMU_BIOS")
+    if override:
+        candidate = Path(override)
+        return candidate if candidate.is_file() else None
+    candidates = [qemu_path.parent / "share" / "bios-256k.bin"]
+    shim = qemu_path.with_suffix(".shim")
+    if shim.is_file():
+        for line in shim.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("path"):
+                target = line.split("=", 1)[1].strip()
+                if target:
+                    candidates.insert(0, Path(target).resolve().parent / "share" / "bios-256k.bin")
+                break
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _inject_pending_keys(process, observed: bytes, keys: list[str], next_index: list[int],
@@ -116,7 +157,16 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                memory_mib: int = 64, cpu_model: str = "qemu64",
                max_ram_below_4g_mib: int | None = None,
                keys: tuple[str, ...] = KEYS, inject_keys: bool = True,
-               shell_interactive: bool = False, shell_keys=None) -> bytes:
+                shell_interactive: bool = False, shell_keys=None) -> bytes:
+    # Invalidate stale evidence before any validation failure can leave
+    # prior success bytes behind as false evidence.
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs / "serial.log").write_bytes(b"")
+    (logs / "guest-errors.log").write_bytes(b"")
+    (logs / "qemu.log").write_bytes(b"")
+    (logs / "run.json").unlink(missing_ok=True)
+    for _evidence in ("display.pmem", "display.ppm", "runtime.pmem"):
+        (logs / _evidence).unlink(missing_ok=True)
     keys = key_sequence(keys)
     if shell_keys is not None and not shell_interactive:
         raise ValueError("shell_keys requires shell_interactive")
@@ -138,22 +188,26 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     if not image.is_file():
         raise FileNotFoundError(f"Boot image missing: {image}")
     qemu = find_tool("qemu-system-x86_64", "RYNOR_QEMU")
-    logs.mkdir(parents=True, exist_ok=True)
+    qemu_path = Path(qemu).resolve()
+    bios = _locate_firmware(qemu_path)
+    if bios is None:
+        override = os.environ.get("RYNOR_QEMU_BIOS")
+        raise FileNotFoundError(
+            "Pinned QEMU firmware missing next to " + str(qemu_path) +
+            ("; RYNOR_QEMU_BIOS pointed at a missing file: " + override if override else
+             "; set RYNOR_QEMU_BIOS to the SeaBIOS bios-256k.bin path"))
+    qemu_provenance = _file_provenance(qemu_path, version_command=("--version",))
+    firmware_provenance = _file_provenance(bios)
     serial = (logs / "serial.log").resolve()
     diagnostic = (logs / "qemu.log").resolve()
     debug = (logs / "guest-errors.log").resolve()
-    # Never accept bytes from an earlier run, including failed runs. Evidence
-    # files too: stale dumps beside a failed run must not be mistaken for new.
-    serial.write_bytes(b"")
-    debug.write_bytes(b"")
-    for evidence in ("display.pmem", "display.ppm", "runtime.pmem"):
-        (logs / evidence).unlink(missing_ok=True)
+    # Evidence already invalidated before validation; paths resolved here.
     machine = "pc-i440fx-10.0"
     if max_ram_below_4g_mib is not None:
         machine += f",max-ram-below-4g={max_ram_below_4g_mib}M"
     command = [
-        qemu, "-machine", machine, "-accel", "tcg,tb-size=32", "-cpu", cpu_model,
-        "-m", f"{memory_mib}M", "-smp", "1", "-bios", "bios-256k.bin", "-display", "none", "-vga", "std",
+        str(qemu_path), "-machine", machine, "-accel", "tcg,tb-size=32", "-cpu", cpu_model,
+        "-m", f"{memory_mib}M", "-smp", "1", "-bios", str(bios), "-display", "none", "-vga", "std",
         "-nic", "none", "-parallel", "none", "-boot", "order=c,strict=on",
         "-drive", f"file={str(image.resolve()).replace(',', ',,')},format=raw,if=ide,snapshot=on",
         "-serial", f"file:{serial}", "-monitor", "stdio", "-no-reboot",
@@ -263,6 +317,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                 "timeout_seconds": timeout, "elapsed_seconds": round(time.monotonic() - start, 3),
                 "keyboard_inputs_sent": next_key[0], "keyboard_keys": list(keys),
                 "shell_inputs_sent": shell_key[0], "shell_keys": list(shell_keys),
+                "qemu": qemu_provenance, "firmware": firmware_provenance,
             }
             (logs / "run.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if cleanup != "monitor-quit" or process.returncode != 0:

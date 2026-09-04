@@ -1,6 +1,7 @@
 #include "vm.h"
 #include "paging.h"
 #include "io.h"
+#include "irq.h"
 
 static struct vm_space kernel_space;
 static cpu_u64 window_pt;
@@ -14,7 +15,7 @@ int vm_canonical(cpu_u64 va)
 
 static enum vm_result context(struct vm_space *s)
 {
-    if (!cpu_interrupts_disabled()) return VM_CONTEXT;
+    if (!cpu_interrupts_disabled() || irq_in_context()) return VM_CONTEXT;
     if (!active) return VM_NOT_READY;
     if (!s || s->identity != s || !s->root) return VM_INVALID;
     return VM_OK;
@@ -32,7 +33,7 @@ static struct page_table *access_table(cpu_u64 physical)
 void *vm_frame_access(cpu_u64 physical)
 {
     enum pmm_state state;
-    if (!active || !cpu_interrupts_disabled() || physical % VM_PAGE_SIZE ||
+    if (!active || !cpu_interrupts_disabled() || irq_in_context() || physical % VM_PAGE_SIZE ||
         pmm_query(physical, &state) != PMM_OK || state != PMM_STATE_ALLOCATED) return (void *)0;
     return access_table(physical);
 }
@@ -359,7 +360,7 @@ enum vm_result vm_protect(struct vm_space *s, cpu_u64 va, unsigned int p)
 
 enum vm_result vm_create(struct vm_space *s)
 {
-    if (!cpu_interrupts_disabled()) return VM_CONTEXT;
+    if (!cpu_interrupts_disabled() || irq_in_context()) return VM_CONTEXT;
     if (!active) return VM_NOT_READY;
     if (!s || s->identity || s->root || s->table_pages) return VM_INVALID;
     cpu_u64 root;
@@ -419,7 +420,7 @@ struct vm_space *vm_kernel_space(void) { return active ? &kernel_space : (void *
 
 enum vm_result vm_initialize(void)
 {
-    if (!cpu_interrupts_disabled()) return VM_CONTEXT;
+    if (!cpu_interrupts_disabled() || irq_in_context()) return VM_CONTEXT;
     if (active) return VM_BUSY;
     cpu_u32 a, b, c, d;
     __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(0x80000001), "c"(0));
@@ -469,10 +470,25 @@ enum vm_result vm_initialize(void)
     }
     /* Enable NX before publishing NX-bearing entries, then replace all boot tables. */
     __asm__ volatile ("rdmsr" : "=a"(a), "=d"(d) : "c"(0xc0000080));
+    cpu_u32 old_efer_low = a, old_efer_high = d;
     a |= 1u << 11;
     __asm__ volatile ("wrmsr" : : "a"(a), "d"(d), "c"(0xc0000080) : "memory");
     __asm__ volatile ("mov %0,%%cr3" : : "r"(kernel_space.root) : "memory");
     active = 1;
     __asm__ volatile ("mov %%cr3,%0" : "=r"(cr3));
-    return cr3 == kernel_space.root && vm_check(&kernel_space) ? VM_OK : VM_CORRUPT;
+    if (cr3 == kernel_space.root && vm_check(&kernel_space)) return VM_OK;
+
+    /* Initialization is transactional even after the hardware switch. Restore
+       the bootstrap address space before making the new tables inaccessible,
+       then remove every published field and return their PMM ownership. */
+    __asm__ volatile ("mov %0,%%cr3" : : "r"((cpu_u64)__page_tables_start) : "memory");
+    __asm__ volatile ("wrmsr" : : "a"(old_efer_low), "d"(old_efer_high),
+                      "c"(0xc0000080) : "memory");
+    active = 0;
+    kernel_space.root = 0;
+    kernel_space.identity = (void *)0;
+    window_pt = 0;
+    physical_limit = 0;
+    while (got) release_table(&kernel_space, f[--got]);
+    return VM_CORRUPT;
 }
