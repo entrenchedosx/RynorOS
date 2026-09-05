@@ -1,11 +1,13 @@
 # RynorLang shell language
 
-Status: **design for Stages 16–18; not implemented.** This document defines the
+Status: **MVP implemented for Stage 15b (host-side analysis only).**
+This document defines the
 shell surface of RynorLang: pipelines, commands, property access, the REPL
 contract, and the edition policy that keeps the frozen v1 grammar byte-identical.
 It is deliberately separate from `docs/design/shell.md`, which specifies the
 frozen ring-0 kernel monitor (no evaluation there, ever). It creates no
-implementation. See `rynorlang-runtime.md` (values/runtime), `rynorlang-ast.md`
+kernel or userspace implementation: commands analyze and run against host
+stubs only. See `rynorlang-runtime.md` (values/runtime), `rynorlang-ast.md`
 (frozen core), and `ROADMAP.md` (staging).
 
 ## 1. Pipeline operator: `|>`
@@ -39,8 +41,20 @@ as today.
   integers, and booleans reuse their literals. `$` variables, globs, and
   subshells do **not** exist: shell variables are plain RynorLang identifiers
   (`let x = ...; upper x` passes a `Var`), and there is no interpolation.
-  External programs (later): `run "prog" args...` — same node, dispatched via
-  the loader instead of the service table.
+   External programs (later): `run "prog" args...` — same node, dispatched via
+   the loader instead of the service table.
+
+   MVP bounds (Stage 15b implementation): a lone bare word in stage position
+   resolves to a lexical variable first (v1 meaning preserved), then the stub
+   registry — so `let ls: str = ...; ls |> count` uses the variable. Flags
+   are span-adjacent `MINUS`+`IDENTIFIER` only (`-n`; `a - b` with spaces
+   stays subtraction, while adjacent `a -b` is a command — an explicit,
+   documented edition difference). Negative integers (`-5`) are int args, not
+   flags. Redirect targets are quoted strings only (`> "out"`, `>> "out"`;
+   `a > b` keeps its v1 comparison meaning). Piped input fills a non-head
+   command's first parameter (checked against its signature); piping into a
+   zero-parameter command is an arity error. Implicit flow applies to
+   commands only — function calls keep explicit arguments.
 
 Desugaring a command into the frozen `Call` is **rejected as dishonest**:
 `Call{callee,symbol,type}` requires a global-function index and typed params
@@ -103,16 +117,14 @@ exactly as today.
   emitted; the 16 kinds, 5 `SEM_*` codes, depth-256 accounting, and 1 MiB bound
   unchanged. All existing fixtures pass byte-identical.
 * Shell surface lives behind an explicit edition flag
-  (`analyze(..., edition="shell-preview")`, CLI `--edition`; **planned API —
-  no `edition` parameter exists yet, and adding it defaulting to `v1` is
-  backward-compatible**); the flag defaults to `v1`. New kinds/codes/fields are
+  (`analyze(..., edition="shell")`, CLI `--edition`; `"shell-preview"` is an
+  accepted alias; the flag defaults to `v1`). New kinds/codes/fields are
   **additive-only, never renamed/removed/retyped**; no old rule is widened
   (`str < bool` stays `SEM_TYPE_MISMATCH`).
 * Stage 15 pins the v1 contract by exact-kind whitelist plus the enforced test
-  inventory (today: 16 kinds, 5 `SEM_*` codes — there is no `ast_version` key
-  in emitted JSON yet, so the pin is the whitelist + gate, not a version
-  field; a version envelope arrives with the edition work without disturbing
-  v1 goldens). Non-v1 nodes are rejected explicitly instead of miscompiled.
+  inventory (16 kinds, 5 `SEM_*` codes in v1; shell adds `Pipeline`/`Cmd`/
+  `Flag`/`Redirect` kinds and 7 `SHELL_*` codes without touching v1 goldens).
+  Non-v1 nodes are rejected explicitly instead of miscompiled.
 
 ## 6. REPL contract (userspace only, Stage 18b)
 
@@ -158,8 +170,14 @@ arrive with 18b.
 * REPL tests run on the host first (accumulator, session persistence,
   arena-flatness, interrupt-abort) plus a placement guard asserting no
   `kernel/shell/repl*` ever exists.
-* Inventory: new keys (`test_rynorlang_edition`, `test_rynorlang_repl`, …),
-  never folded into old counts; counts are evidence, not goals.
+* Inventory: one new key (`test_rynorlang_shell`, 47 tests), never folded
+  into old counts; counts are evidence, not goals. Implemented 15b scope:
+  lexer/edition gates, precedence-0 pipelines, str-only stages with the unit
+  rule, bare-word/flag/quoted-redirect commands, stub-registry resolution,
+  quoted-string redirect targets, TEST-ONLY bounded evaluator, block
+  accumulator, kernel REPL/eval placement guard. Deferred: pipe-buffer cap
+  choice stays 4096 (str cap) for the host evaluator; `$?`/status,
+  streaming/backpressure, session persistence, real commands.
 
 ## 9. Open questions (for the shell RFC, not this doc)
 

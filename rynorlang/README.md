@@ -1,8 +1,10 @@
 # RynorLang
 
 RynorLang is the planned native language of RynorOS and uses the `.rl` source
-extension. Stages 12 and 13 provide deterministic host-side bootstrap tooling:
-a lexer and parser. They do not compile or execute programs.
+extension. Stages 12-14 provide deterministic host-side bootstrap tooling:
+a lexer, parser, and semantic analyzer. Stage 15a adds a typed IR, verifier,
+and native backend plus a test-only oracle. Kernel execution remains a later
+stage.
 
 ## Lexical subset
 
@@ -65,21 +67,62 @@ The analyzer lowers the temporary tree to a stable JSON-compatible AST schema (`
 ## Host APIs
 
 ```text
-lex / lex_bytes / lex_file -> LexResult
+lex / lex_bytes / lex_file -> LexResult                    # + edition="shell" for |>
 parse / parse_bytes / parse_file / parse_tokens -> ParseResult
 analyze / analyze_bytes / analyze_file -> AnalyzeResult  # stable AST + SEM_* or SEM_OK
+build_rir / verify_module / dumps / assign_slots  # RIR v1 + shared home slots
+emit_asm / compile_source / check_asm  # rynorlangc NASM backend (verified RIR only)
+run_rir  # TEST-ONLY differential oracle, never shipped
+run_pipeline  # TEST-ONLY shell evaluator (tools/rynorlang/shell.py)
 ```
 
 All tools require Python 3.10+ and only the standard library. Their CLIs emit
-deterministic JSON on success and a diagnostic on stderr on failure. The lexer
+deterministic JSON on success and a diagnostic on stderr on failure
+(`--edition v1|shell` on lex/parse/analyze; analyze in shell edition resolves
+commands against an explicit stub registry — `DEMO_COMMANDS` for the CLI —
+never a fake OS database). The lexer
 has 49 repository tests with 16 valid and 19 invalid fixtures. The parser has 54
 repository tests with 14 valid and 21 invalid fixtures, including five live
 mutation checks. The semantics has 63 repository tests with 12 valid and 20 invalid fixtures, including twenty-one live behavioral mutation checks.
+The RIR layer has 48 repository tests with golden text, verifier units,
+slot-soundness probes, a branch-dominance test, and builder mutations. The
+compiler layer has 39 repository tests with golden ASM, determinism, negative
+pre-emit checks, `check_asm` abuse flagging, native differential runs (17 good
++ 3 trap fixtures), and 21 mutation-focused RIR/backend tests. The shell
+surface has 47 repository tests with 12 good + 11 bad `shell-edition/`
+fixtures covering edition gates, precedence, commands, redirects, typing,
+determinism, differential evaluation, and mutation checks.
+
+## Stage 15b shell surface (host-side, edition-gated)
+
+```rl
+fn main(): str {
+    let x: str = ls |> count;
+    let y: str = upper "hi" > "out";
+    return y;
+}
+```
+
+`a |> b |> c` is left-associative at precedence 0 (below `||`). Commands are
+honest `Cmd` nodes (never desugared `Call`s): bare words, literals, adjacent
+`-flags`, and quoted `>`/`>>` redirect targets using zero new lexer tokens.
+Bare words in stage position resolve lexical variables first, then the stub
+registry. Every non-final stage is `str`; `unit` pipelines only as `ExprStmt`;
+piped input fills a non-head command's first parameter. `a > b` stays a
+comparison; `a - b` stays subtraction (only adjacent `a -b` is a command —
+an explicit, documented edition difference). The 15a backend rejects the new
+kinds (`COMP_V2_UNSUPPORTED`): no shell codegen yet, no userspace execution,
+no kernel evaluation.
 
 ## Status and limitations
 
 Implemented: lexical recognition, source spans, syntax recognition, temporary
-tree construction, stable AST lowering, name resolution, type checking, deterministic symbol indices, and invalid-input diagnostics.
+tree construction, stable AST lowering, name resolution, type checking, deterministic symbol indices, invalid-input diagnostics, typed IR (RIR v1)
+with dominance verifier and shared slot allocator, NASM backend for the
+SysV-subset ABI (`int`/`bool`/`str`/`unit`, spill-everything homes, `ud2`/`int3`
+traps), disclosed host harness, and a test-only oracle.
 
-Not implemented: modules/imports, compiler, object format, linker, runtime, OS bindings, native
-applications, self-hosting, or execution. No `print` builtin (`print` is `SEM_UNKNOWN_FUNCTION` until Stage 16); no type inference, no all-paths return checking, no shadowing, no builtins.
+Not implemented: modules/imports, object format beyond flat NASM text, linker
+integration, runtime services, OS bindings, native applications,
+self-hosting, or in-kernel execution. No `print` builtin (`print` is
+`SEM_UNKNOWN_FUNCTION` until Stage 16); no type inference, no all-paths return checking, no shadowing, no builtins.

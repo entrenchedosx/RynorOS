@@ -64,6 +64,13 @@ class _Abort(Exception):
 
 
 _TYPE_TOKENS = {"INT_TYPE", "BOOL_TYPE", "STR_TYPE"}
+_SHELL_EDITIONS = ("shell", "shell-preview")
+
+
+def _normalize_edition(edition: str) -> str:
+    if edition in _SHELL_EDITIONS:
+        return "shell"
+    return "v1"
 _BINARY = {
     "OR_OR": (1, "OrExpr"),
     "AND_AND": (2, "AndExpr"),
@@ -87,10 +94,11 @@ def _cover(start: Span, end: Span) -> Span:
 
 
 class _Parser:
-    def __init__(self, tokens: tuple[Token, ...]) -> None:
+    def __init__(self, tokens: tuple[Token, ...], edition: str = "v1") -> None:
         self.tokens = tokens
         self.index = 0
         self.depth = 0
+        self.edition = _normalize_edition(edition)
 
     def current(self) -> Token:
         return self.tokens[self.index]
@@ -214,7 +222,7 @@ class _Parser:
             return self.parse_while()
         if self.at("LEFT_BRACE"):
             return self.parse_block()
-        expression = self.parse_expression()
+        expression = self.parse_pipeline()
         semicolon = self.expect("SEMICOLON", "after expression")
         return ParseNode("ExprStmt", _cover(expression.span, semicolon.span), (expression,))
 
@@ -224,7 +232,7 @@ class _Parser:
         self.expect("COLON", "between variable name and type")
         type_node = self.parse_type()
         self.expect("EQUAL", "before initializer")
-        expression = self.parse_expression()
+        expression = self.parse_pipeline()
         end = self.expect("SEMICOLON", "after let statement")
         return ParseNode("LetStmt", _cover(start.span, end.span), (name, type_node, expression), text=name.text)
 
@@ -232,7 +240,7 @@ class _Parser:
         start = self.take()
         children: tuple[ParseNode, ...] = ()
         if not self.at("SEMICOLON"):
-            children = (self.parse_expression(),)
+            children = (self.parse_pipeline(),)
         end = self.expect("SEMICOLON", "after return statement")
         return ParseNode("ReturnStmt", _cover(start.span, end.span), children)
 
@@ -240,7 +248,7 @@ class _Parser:
         self.enter()
         try:
             start = self.take()
-            condition = self.parse_expression()
+            condition = self.parse_pipeline()
             then_block = self.parse_block()
             children: list[ParseNode] = [condition, then_block]
             if self.match("ELSE"):
@@ -251,9 +259,150 @@ class _Parser:
 
     def parse_while(self) -> ParseNode:
         start = self.take()
-        condition = self.parse_expression()
+        condition = self.parse_pipeline()
         body = self.parse_block()
         return ParseNode("WhileStmt", _cover(start.span, body.span), (condition, body))
+
+    def parse_pipeline(self) -> ParseNode:
+        # Stage 15b shell surface: precedence-0 left-associative pipeline.
+        # Iterative like the binary loop, so long chains cost no depth.
+        # In v1 PIPE_GT tokens cannot occur via the lexer; a hand-built
+        # token stream carrying one is rejected with an old code so the
+        # v1 contract never silently grows.
+        left = self.parse_stage()
+        if not self.at("PIPE_GT"):
+            return left
+        if self.edition != "shell":
+            self.fail("PAR_UNEXPECTED_TOKEN", "pipeline operator requires the shell edition", ("SEMICOLON",))
+        stages: list[ParseNode] = [left]
+        while self.match("PIPE_GT"):
+            if self.at("EOF"):
+                self.fail("PAR_UNEXPECTED_EOF", "pipeline stage missing after '|>'", ("IDENTIFIER", "STRING", "INTEGER"))
+            stages.append(self.parse_stage())
+        return ParseNode("PipeExpr", _cover(stages[0].span, stages[-1].span), tuple(stages))
+
+    def parse_stage(self) -> ParseNode:
+        # One pipeline-stage position. A lone bare word here is a zero-arg
+        # command candidate (resolved in semantics: lexical variable first,
+        # then the stub registry), so `ls |> count` reads as shell while a
+        # lone word anywhere else keeps its v1 meaning. Anything else falls
+        # through to juxtaposition-command or ordinary expression parsing.
+        if self.edition == "shell" and self.at("IDENTIFIER"):
+            nxt = self.tokens[self.index + 1] if self.index + 1 < len(self.tokens) else None
+            if nxt is not None and nxt.kind in ("PIPE_GT", "SEMICOLON", "EOF", "RIGHT_BRACE",
+                                                "RIGHT_PAREN", "COMMA"):
+                tok = self.take()
+                name_node = ParseNode("Identifier", tok.span, text=tok.lexeme)
+                self.enter()
+                try:
+                    return ParseNode("CmdExpr", tok.span, (name_node,), text=tok.lexeme)
+                finally:
+                    self.leave()
+        return self.parse_cmd_or_expr()
+
+    def parse_cmd_or_expr(self) -> ParseNode:
+        if self.edition == "shell" and self.at("IDENTIFIER"):
+            saved = self.index
+            try:
+                node = self.parse_cmd()
+            except _Abort:
+                self.index = saved
+            else:
+                if node is not None:
+                    return node
+                self.index = saved
+        return self.parse_expression()
+
+    def parse_cmd(self) -> ParseNode | None:
+        # Honest command node, never a desugared Call: bare word plus
+        # space-separated args/redirects using zero new lexer tokens.
+        # Returns None for a lone word (which stays a Var) so v1 meanings
+        # are preserved; raises for malformed command text.
+        name_tok = self.take()
+        nxt = self.current()
+        if nxt.kind not in ("IDENTIFIER", "MINUS", "INTEGER", "STRING", "TRUE", "FALSE", "GREATER"):
+            return None
+        if nxt.kind == "MINUS":
+            after = self.tokens[self.index + 1] if self.index + 1 < len(self.tokens) else None
+            if (after is None or after.kind not in ("IDENTIFIER", "INTEGER")
+                    or nxt.span.offset + 1 != after.span.offset):
+                # `a - b` (spaced) stays a binary subtraction, never a command.
+                return None
+        if nxt.kind == "GREATER":
+            # A lone word followed by `>` is a comparison (`a > b`), never a
+            # command -- unless the redirect target is a quoted string, which
+            # no comparison operand can be (`a > "o"` is a type error in v1).
+            # `>>` needs the same two-token lookahead.
+            after = self.tokens[self.index + 1] if self.index + 1 < len(self.tokens) else None
+            if after is None:
+                return None
+            if after.kind == "STRING":
+                pass
+            elif (after.kind == "GREATER" and after.span.offset == nxt.span.offset + 1
+                    and self.index + 2 < len(self.tokens)
+                    and self.tokens[self.index + 2].kind == "STRING"):
+                pass
+            else:
+                return None
+        name_node = ParseNode("Identifier", name_tok.span, text=name_tok.lexeme)
+        args: list[ParseNode] = []
+        redirects: list[ParseNode] = []
+        while True:
+            tok = self.current()
+            if tok.kind == "IDENTIFIER":
+                args.append(ParseNode("Identifier", tok.span, text=tok.lexeme))
+                self.take()
+            elif tok.kind in ("INTEGER", "STRING", "TRUE", "FALSE"):
+                args.append(self.parse_primary())
+            elif tok.kind == "MINUS":
+                after = self.tokens[self.index + 1] if self.index + 1 < len(self.tokens) else None
+                if (after is not None and after.kind == "IDENTIFIER"
+                        and tok.span.offset + 1 == after.span.offset):
+                    self.take()
+                    flag_tok = self.take()
+                    args.append(ParseNode("FlagArg", _cover(tok.span, flag_tok.span), text=flag_tok.lexeme))
+                elif (after is not None and after.kind == "INTEGER"
+                        and tok.span.offset + 1 == after.span.offset):
+                    self.take()
+                    int_tok = self.take()
+                    args.append(ParseNode("UnaryExpr", _cover(tok.span, int_tok.span),
+                                          (ParseNode("IntegerLiteral", int_tok.span, text=int_tok.lexeme, value=int_tok.value),),
+                                          text="-"))
+                else:
+                    self.fail("PAR_EXPECTED_TOKEN", "command arguments use bare words, literals, or adjacent -flags", ("IDENTIFIER", "STRING", "INTEGER"))
+            elif tok.kind == "GREATER":
+                redirects.append(self.parse_redirect())
+            else:
+                break
+        if not args and not redirects:
+            return None
+        self.enter()
+        try:
+            children: list[ParseNode] = [name_node]
+            if args:
+                children.append(ParseNode("CmdArgs", _cover(args[0].span, args[-1].span), tuple(args)))
+            children.extend(redirects)
+            return ParseNode("CmdExpr", _cover(name_tok.span, children[-1].span), tuple(children), text=name_tok.lexeme)
+        finally:
+            self.leave()
+
+    def parse_redirect(self) -> ParseNode:
+        # MVP bound: redirect targets are quoted strings only. A bare word
+        # after `>` stays a comparison operand (`a > b` keeps its v1 meaning);
+        # only `cmd > "file"` / `cmd >> "file"` form redirects.
+        first = self.expect("GREATER", "to begin a redirect")
+        op = ">"
+        nxt = self.current()
+        if nxt.kind == "GREATER" and nxt.span.offset == first.span.offset + 1:
+            self.take()
+            op = ">>"
+        target = self.current()
+        if target.kind != "STRING":
+            self.fail("PAR_EXPECTED_TOKEN", 'redirect target must be a quoted string (e.g. > "out")', ("STRING",))
+            raise AssertionError("unreachable")
+        self.take()
+        target_node: ParseNode = ParseNode("StringLiteral", target.span, text=target.lexeme, value=target.value)
+        return ParseNode("Redirect", _cover(first.span, target_node.span), (target_node,), text=op)
 
     def parse_expression(self, minimum: int = 1) -> ParseNode:
         left = self.parse_unary()
@@ -284,12 +433,12 @@ class _Parser:
             try:
                 arguments: list[ParseNode] = []
                 if not self.at("RIGHT_PAREN"):
-                    arguments.append(self.parse_expression())
+                    arguments.append(self.parse_pipeline())
                     while self.match("COMMA"):
                         # MUTATION_POINT_CALL_TRAILING_COMMA
                         if self.at("RIGHT_PAREN"):
                             self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in argument list")
-                        arguments.append(self.parse_expression())
+                        arguments.append(self.parse_pipeline())
                 right = self.expect("RIGHT_PAREN", "after arguments")
                 arg_node = ParseNode("ArgList", _cover(arguments[0].span, arguments[-1].span), tuple(arguments)) if arguments else ParseNode("ArgList", right.span)
                 expression = ParseNode("CallExpr", _cover(expression.span, right.span), (expression, arg_node))
@@ -314,7 +463,7 @@ class _Parser:
             self.enter()
             try:
                 left = self.take()
-                expression = self.parse_expression()
+                expression = self.parse_pipeline()
                 right = self.expect("RIGHT_PAREN", "after expression")
                 return ParseNode("GroupExpr", _cover(left.span, right.span), (expression,))
             finally:
@@ -335,7 +484,7 @@ def _input_error(tokens: object, message: str) -> ParseResult:
     return ParseResult(None, ParseDiagnostic("PAR_INVALID_INPUT", message, Span(filename, 1, 1, 0, 0)))
 
 
-def parse_tokens(tokens: tuple[Token, ...]) -> ParseResult:
+def parse_tokens(tokens: tuple[Token, ...], edition: str = "v1") -> ParseResult:
     if not isinstance(tokens, tuple) or not tokens:
         return _input_error(tokens, "tokens must be a non-empty tuple")
     if any(not isinstance(token, Token) for token in tokens):
@@ -379,7 +528,8 @@ def parse_tokens(tokens: tuple[Token, ...]) -> ParseResult:
             return _input_error(tokens, "token span length must match its lexeme")
         # Reuse the frozen lexer so caller-created tokens cannot bypass literal
         # range/escape rules or supply a decoded value inconsistent with the text.
-        checked = lex(token.lexeme)
+        # The check runs in the same edition so shell tokens validate as shell.
+        checked = lex(token.lexeme, edition=edition)
         expected_count = 1 if token.kind == "EOF" else 2
         if (not checked.ok or len(checked.tokens) != expected_count
                 or checked.tokens[0].kind != token.kind
@@ -389,7 +539,7 @@ def parse_tokens(tokens: tuple[Token, ...]) -> ParseResult:
         previous_end = span.offset + span.length
         previous_line = span.line
         previous_column = span.column + span.length
-    parser = _Parser(tokens)
+    parser = _Parser(tokens, edition)
     # CPython consumes several interpreter frames for one grammar nesting level.
     # Serialize the temporary recursion-limit adjustment and restore it before
     # returning so importing this module has no persistent process-wide effect.
@@ -409,31 +559,31 @@ def parse_tokens(tokens: tuple[Token, ...]) -> ParseResult:
                 sys.setrecursionlimit(old_limit)
 
 
-def _from_lex(result: object) -> ParseResult:
+def _from_lex(result: object, edition: str = "v1") -> ParseResult:
     diagnostic = getattr(result, "diagnostic", None)
     if diagnostic is not None:
         if not isinstance(diagnostic, LexDiagnostic):
             return _input_error((), "lexer returned an invalid diagnostic")
         code = "PAR_FILE_TOO_LARGE" if diagnostic.code == "LEX_FILE_TOO_LARGE" else "PAR_LEX_ERROR"
         return ParseResult(None, ParseDiagnostic(code, diagnostic.message, diagnostic.span, got_kind=diagnostic.code))
-    return parse_tokens(result.tokens)
+    return parse_tokens(result.tokens, edition)
 
 
-def parse(source: str, filename: str = "<input>") -> ParseResult:
+def parse(source: str, filename: str = "<input>", edition: str = "v1") -> ParseResult:
     if not isinstance(source, str) or not isinstance(filename, str):
         return _input_error((), "source and filename must be strings")
-    return _from_lex(lex(source, filename))
+    return _from_lex(lex(source, filename, edition), edition)
 
 
-def parse_bytes(data: bytes, filename: str = "<input>") -> ParseResult:
+def parse_bytes(data: bytes, filename: str = "<input>", edition: str = "v1") -> ParseResult:
     if not isinstance(data, bytes) or not isinstance(filename, str):
         return _input_error((), "data must be bytes and filename must be a string")
-    return _from_lex(lex_bytes(data, filename))
+    return _from_lex(lex_bytes(data, filename, edition), edition)
 
 
-def parse_file(path: str | Path) -> ParseResult:
+def parse_file(path: str | Path, edition: str = "v1") -> ParseResult:
     try:
-        return _from_lex(lex_file(path))
+        return _from_lex(lex_file(path, edition), edition)
     except (OSError, TypeError, ValueError) as error:
         return ParseResult(None, ParseDiagnostic("PAR_INVALID_INPUT", str(error), Span(str(path), 1, 1, 0, 0)))
 
@@ -450,8 +600,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     command = argparse.ArgumentParser(description=__doc__)
     command.add_argument("source", type=Path)
     command.add_argument("--json", action="store_true", help="emit deterministic JSON syntax tree")
+    command.add_argument("--edition", default="v1",
+                         help="language edition: v1 (default) or shell/shell-preview")
     args = command.parse_args(argv)
-    result = parse_file(args.source)
+    if args.edition not in ("v1", "shell", "shell-preview"):
+        print(f"unknown edition {args.edition!r} (expected v1 or shell)", file=sys.stderr)
+        return 2
+    result = parse_file(args.source, args.edition)
     if not result.ok:
         if result.diagnostic is None:
             print("PAR_INVALID_INPUT: parser returned neither tree nor diagnostic", file=sys.stderr)

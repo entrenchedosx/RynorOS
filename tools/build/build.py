@@ -31,7 +31,9 @@ REPOSITORY_TEST_INVENTORY = {
     "test_kbd_output": 12, "test_kernel_hardening": 5, "test_pmm_output": 6,
     "test_repository": 12, "test_resources": 3, "test_runtime_output": 14,
     "test_rynorlang_lexer": 49, "test_rynorlang_parser": 54,
-    "test_rynorlang_semantics": 63, "test_sched_output": 8,
+    "test_rynorlang_semantics": 63, "test_rynorlang_rir": 48,
+    "test_rynorlang_compiler": 39, "test_rynorlang_shell": 47,
+    "test_sched_output": 8,
     "test_semantic_api_gauntlet": 8,
     "test_shell_output": 7, "test_timer_output": 4, "test_vm_output": 5,
 }
