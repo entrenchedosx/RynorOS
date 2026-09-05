@@ -27,7 +27,7 @@ Source types are exactly `int` (signed 64-bit `i64`), `bool`, `str`. No implicit
 | `let x: T = e` | `type(e) == T` | `T` (symbol `x`) | annotation mandatory |
 | `if`/`while` condition | `bool` | — | |
 | `return e?` | `type(e) == ret_type` or `e is None && ret_type is None` | — | bare `return;` only in `ret_type is None` |
-| `call f(args)` | callee exists, `len(args)==len(params)`, each `type(arg_i)==type(param_i)` | `ret_type` of `f` or `unit` | `unit` callable only as `ExprStmt`, never as value |
+| `call f(args)` | callee is an `Identifier` naming a known function, `len(args)==len(params)`, each `type(arg_i)==type(param_i)` | `ret_type` of `f` or `unit` | `unit` callable only as `ExprStmt`, never as value; a non-identifier callee (grouped, chained, literal) is `SEM_UNKNOWN_FUNCTION` with the honest "called expression is not a function name" message at the callee span — it is never resolved through its text |
 
 A function without a return type yields `unit` and must not be used as a value (e.g., `let x: int = noRet();` is a type mismatch, `let x: int = f()` where `f` returns `int` is ok).
 
@@ -65,7 +65,7 @@ Lowering is a deterministic pass from the Stage 13 temporary tree to frozen stab
 | `Var` | `name: string`, `symbol: int`, `type: "int"|"bool"|"str"` | `Identifier` span | `symbol` is the resolved local's declaration index |
 | `Call` | `callee: string`, `args: Expr[]`, `symbol: int`, `type: "int"|"bool"|"str"|"unit"` | `CallExpr` span | `symbol` is callee function's global index; `type` is callee's `ret_type` or `unit` |
 
-Every node carries `kind` and `span` (`{filename,line,column,offset,length}` plus deterministic `start`/`end` objects). Source APIs calculate end line/column from the source bytes; `analyze_tokens` derives it from the final covered token. Multiline spans therefore do not treat byte length as a column count. `Var`/`Call` carry resolved `symbol` and inferred `type`; `Function` carries `symbol`. Lowering uses an explicit depth counter (limit 256), with host recursion failures converted to a bounded diagnostic as a defensive fallback.
+Every node carries `kind` and `span` (`{filename,line,column,offset,length}` plus deterministic `start`/`end` objects). Source APIs calculate end line/column from the source bytes; `analyze_tokens` derives it from the final covered token. Multiline spans therefore do not treat byte length as a column count. `Var`/`Call` carry resolved `symbol` and inferred `type`; `Function` carries `symbol`. Lowering uses an explicit depth counter (limit 256) whose per-construct accounting mirrors the parser's exactly (one level per function, block, `if`, unary, call-argument group, and grouping paren; `let`/`return`/`expr`-statements and binary operators consume none, matching `parse.py`'s `enter()` sites). The analyzer therefore accepts exactly the programs the parser accepts within the frozen limit — verified at the 254/255 boundary for every construct family — with host recursion failures converted to a bounded diagnostic as a defensive fallback.
 
 Deterministic JSON dump: `json.dumps(ast, sort_keys=True, separators=(",",":"))` with `span` objects expanded as `{filename,line,column,offset,length,start:{line,column,offset},end:{line,column,offset}}` for byte-identical repeatability. The stable AST plus final line `SEM_OK` is the CLI success payload.
 
@@ -83,7 +83,7 @@ Parser diagnostics are exact strings, no aliases, mirroring `LexResult` discipli
 | `SEM_DUPLICATE` | duplicate declaration (no shadowing) | second declaration span | `name` already in enclosing scope |
 | `SEM_TYPE_MISMATCH` | type rule violation | offending expr span | `expected` type, `got` type, `op` or `context` (e.g., `let`, `if cond`, `return`, `binop +`, `unop !`) |
 | `SEM_ARITY_MISMATCH` | call arity ≠ param count | `CallExpr` span | `callee`, `expected` arity, `got` arity |
-| `SEM_UNKNOWN_FUNCTION` | call to unknown function | `CallExpr` span | `callee` not in global function table (builtins like `print` are unknown until Stage 16) |
+| `SEM_UNKNOWN_FUNCTION` | call to unknown function, or non-identifier callee (grouped/chained/literal) | callee span | `callee` not in global function table (builtins like `print` are unknown until Stage 16); a non-identifier callee reports "called expression is not a function name" and is never resolved through its text |
 
 All diagnostics carry `code`, `message`, and `span` (`{filename,line,column,offset,length}`). Every `SEM_*` diagnostic also carries structured `expected` and `got`; `name`, `callee`, `context`, and `operator` are populated when applicable. The first diagnostic ends analysis; there is no recovery, secondary diagnostic, or partial tree. Lexer/parser diagnostics are never wrapped as `SEM_*`.
 
@@ -141,7 +141,7 @@ Violations are detected by unit tests that compare kind/span/code/type/symbol, b
 
 ## Implementation status
 
-**Implemented — Stage 14.** Host analyzer `tools/rynorlang/analyze.py` implements the frozen lowering, scopes, and type rules. The repository's `unittest` suite has 42 semantic test methods covering exact fixture inventories, deterministic symbols, multiline spans, forward references, unit-as-value, string equality versus ordering, bounded malformed input, and live mutations. `tools/rynorlang/analyze.py` is the single implementation; `rynorlang/ast/` contains only `.gitkeep`.
+**Implemented — Stage 14.** Host analyzer `tools/rynorlang/analyze.py` implements the frozen lowering, scopes, and type rules. The repository's `unittest` suite has 63 semantic test methods covering exact fixture inventories, deterministic symbols, multiline spans, forward references, unit-as-value, string equality versus ordering, bounded malformed input, parser/analyzer depth-boundary parity, `analyze_bytes` round-trips, else-if lowering, honest non-identifier-callee diagnostics, exact span values, and live mutations, plus an 8-test public-API gauntlet covering cross-entrypoint diagnostic equivalence, source/token consistency, the exact 1 MiB boundary, full-schema positions, and iterative serialization. `tools/rynorlang/analyze.py` is the single implementation; `rynorlang/ast/` contains only `.gitkeep`.
 
 * Lowering pass inside `Analyzer` from `ParseNode` to stable `Program` with an explicit depth counter.
 * Scope stack with global function map + block scopes, no shadowing, use-before-declare, forward fn allowed.
@@ -172,9 +172,9 @@ python tools/build/build.py test   # repository (includes semantics) + build-fai
 *Test families:*
 * **Layout:** `analyze.py` exists under `tools/rynorlang/`, no duplicate under `rynorlang/ast/`, fixture inventory exact, stdlib-only, no hedging strings.
 * **Semantics:** each `good` analyzes `ok==True` with correct `type`/`symbol`; each `bad` yields exactly one `SEM_*` with correct code and span (symbol/expected/got fields); forward function reference `Call` before declaration is `ok`; `unit` Call as `ExprStmt` is `ok` but as `let` init is `SEM_TYPE_MISMATCH`; `str == str` is `ok` but `str < str` is `SEM_TYPE_MISMATCH`; duplicate across nested scopes is `SEM_DUPLICATE` (no shadowing); use-before-declare is `SEM_UNDECLARED`.
-* **Span/depth/bound:** error span equals offending identifier/operator span; 256 deep still `PAR_DEPTH_EXCEEDED` from parser, `SEM_*` spans are ordered.
-* **API/CLI:** `AnalyzeResult` types, `PAR_*` pass-through, deterministic 3x CLI `SEM_OK` and byte-identical JSON, exit codes 0/1/2, missing file 2.
-* **Mutation:** seven temporary-copy mutations remove scope lookup, duplicate-function, arithmetic-type, arity, unknown-function, no-shadowing, and unit-as-value enforcement. Each mutant must accept its invalid probe, proving the normal rule test observes behavior rather than a renamed diagnostic constant. Temporary directories are automatically removed.
+* **Span/depth/bound:** error span equals offending identifier/operator span, pinned to exact line/column/offset/length values; the analyzer accepts exactly what the parser accepts at the 254/255 nesting boundary for every construct family (while, block, call, unary, group); 256 deep still `PAR_DEPTH_EXCEEDED` from parser, `SEM_*` spans are ordered.
+* **API/CLI:** `AnalyzeResult` types, `PAR_*` pass-through, `analyze_bytes` round-trip equals `analyze`, deterministic 3x CLI `SEM_OK` and byte-identical JSON, exit codes 0/1/2, missing file 2.
+* **Mutation:** twenty-one temporary-copy mutations remove scope lookup, duplicate-function, duplicate-parameter, parameter-shadows-function, let-shadows-function, arithmetic/equality/relational/logical/unary typing, if/while condition, return typing, let typing, argument typing, arity, unknown-function, no-shadowing, unit-as-value enforcement, and non-identifier-callee honesty. Each mutant must exhibit the invalid behavior its normal rule test pins (accepting its probe or flipping the pinned diagnostic), proving the tests observe behavior rather than renamed constants. Temporary directories are automatically removed. A separate 8-test API gauntlet pins cross-entrypoint diagnostic equivalence, source/token consistency, the exact 1 MiB boundary, full-schema positions, and iterative serialization.
 
 Coverage limits: semantics tests are host-only, no kernel/QEMU, no execution.
 

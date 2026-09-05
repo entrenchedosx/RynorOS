@@ -179,7 +179,7 @@ class SemanticsLayoutTests(unittest.TestCase):
                 imports.update(a.name.split(".")[0] for a in n.names)
             elif isinstance(n, ast.ImportFrom) and n.module:
                 imports.add(n.module.split(".")[0])
-        allowed={"__future__","argparse","json","sys","pathlib","typing","dataclasses","tools","re","collections"}
+        allowed={"__future__","argparse","json","sys","pathlib","typing","dataclasses","tools","re","collections","bisect","types"}
         for imp in imports:
             self.assertIn(imp, allowed|{"os","enum","sys","json","pathlib","typing","dataclasses","argparse","tools"}, f"unexpected import {imp}")
 
@@ -349,7 +349,12 @@ class SemanticsSpanTests(unittest.TestCase):
     def test_26_symbol_determinism(self):
         if analyzer is None:
             self.skipTest("no analyzer")
-        src="fn foo(a: int): int { let x: int = a; return x; } fn bar(): int { let y: int = 1; return y; }"
+        src = (
+            "fn foo(a: int, b: int): int { let x: int = a; "
+            "{ let y: int = b; return y; } "
+            "{ let y: int = x; return y; } return x; } "
+            "fn bar(a: int): int { let x: int = a; return x; }"
+        )
         ok1,tree1,diag1,code1,span1=_do_analyze(src)
         ok2,tree2,diag2,code2,span2=_do_analyze(src)
         self.assertTrue(ok1 and ok2)
@@ -362,6 +367,30 @@ class SemanticsSpanTests(unittest.TestCase):
                 return [norm(x) for x in n]
             return n
         self.assertEqual(norm(tree1), norm(tree2))
+        # Repeated names in sibling blocks and separate functions must bind
+        # to their own declaration, while nested uses retain outer bindings.
+        declarations = []
+        references = []
+        pending = [tree1]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, dict):
+                if node.get("kind") in ("Function", "Param", "Let"):
+                    declarations.append((node["kind"], node["name"], node["symbol"]))
+                elif node.get("kind") == "Var":
+                    references.append((node["name"], node["symbol"]))
+                pending.extend(reversed(list(node.values())))
+            elif isinstance(node, list):
+                pending.extend(reversed(node))
+        self.assertEqual(declarations, [
+            ("Function", "foo", 0), ("Param", "a", 2), ("Param", "b", 3),
+            ("Let", "x", 4), ("Let", "y", 5), ("Let", "y", 6),
+            ("Function", "bar", 1), ("Param", "a", 7), ("Let", "x", 8),
+        ])
+        self.assertEqual(references, [
+            ("a", 2), ("b", 3), ("y", 5), ("x", 4),
+            ("y", 6), ("x", 4), ("a", 7), ("x", 8),
+        ])
 
     def test_27_forward_fn_symbol(self):
         _assert_ok("fn main(): int { return foo(); } fn foo(): int { return 42; }")
@@ -441,6 +470,29 @@ class SemanticsApiTests(unittest.TestCase):
             proc3=subprocess.run([sys.executable, str(ANALYZER_PATH), str(bad)], capture_output=True, text=True, timeout=10, cwd=ROOT)
             self.assertEqual(proc3.returncode, 1)
             self.assertNotIn("SEM_OK", proc3.stdout)
+            # Flat expressions are valid even when their AST exceeds Python's
+            # recursive JSON encoder depth. Check the complete CLI output.
+            chain = Path(td) / "flat-chain.rl"
+            chain.write_text("fn main(): int { return " + " + ".join(["1"] * 5000) + "; }", encoding="ascii")
+            flat = subprocess.run(
+                [sys.executable, str(ANALYZER_PATH), str(chain)],
+                capture_output=True, text=True, timeout=30, cwd=ROOT,
+            )
+            self.assertEqual(flat.returncode, 0, flat.stderr)
+            self.assertEqual(flat.stderr, "")
+            # Decode in a separate process so this test never changes its own
+            # recursion limit (the standard JSON decoder is recursive too).
+            decoded = subprocess.run(
+                [sys.executable, "-c",
+                 "import json,sys; sys.setrecursionlimit(30000); "
+                 "tree=json.loads(sys.stdin.read()); "
+                 "print(tree['kind']); print(tree['functions'][0]['name'])"],
+                input=flat.stdout.removesuffix("SEM_OK\n"), capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(decoded.returncode, 0, decoded.stderr)
+            self.assertEqual(decoded.stdout.splitlines(), ["Program", "main"])
+            self.assertTrue(flat.stdout.endswith("\nSEM_OK\n"))
+            self.assertEqual(flat.stdout.count('"kind":"BinOp"'), 4999)
 
     def test_29_lex_parse_passthrough(self):
         if analyzer is None:
@@ -475,6 +527,134 @@ class SemanticsApiTests(unittest.TestCase):
         oversized = analyzer.analyze(" " * (1024 * 1024 + 1), "large.rl")
         self.assertFalse(oversized.ok)
         self.assertEqual(oversized.diagnostic.code, "PAR_FILE_TOO_LARGE")
+
+    def test_43_analyzer_matches_parser_depth_boundary_exactly(self):
+        """The parser accepts up to 254 nested constructs; the analyzer must
+        accept exactly the same programs, never fewer."""
+        cases = {
+            "while": lambda n: "fn f() { " + "while true { " * n + "}" * n + " }",
+            "block": lambda n: "fn f(): int { " + "{ " * n + "let x: int = 1; " + "}" * n + " return 1; }",
+            "call": lambda n: "fn g(a: int): int { return a; } fn f(): int { return " + "g(" * n + "1" + ")" * n + "; }",
+            "unary": lambda n: "fn f(): bool { return " + "!" * n + "true; }",
+            "group": lambda n: "fn f(): int { return " + "(" * n + "1" + ")" * n + "; }",
+        }
+        for label, build in cases.items():
+            for depth in (250, 254):
+                src = build(depth)
+                self.assertTrue(parser.parse(src).ok, f"{label} {depth} must parse")
+                with self.subTest(construct=label, depth=depth):
+                    ok, tree, diag, code, span = _do_analyze(src)
+                    self.assertTrue(ok, f"{label} {depth} rejected by analyzer: {code}")
+            src = build(255)
+            self.assertFalse(parser.parse(src).ok, f"{label} 255 must not parse")
+            ok, tree, diag, code, span = _do_analyze(src)
+            self.assertFalse(ok, f"{label} 255 must fail everywhere")
+            self.assertEqual(code, "PAR_DEPTH_EXCEEDED")
+
+        # A flat chain has no parser nesting limit, despite a deeply nested
+        # left-associated AST. Lower every operator without truncation.
+        for typ, literal, operator in (("int", "1", "+"), ("bool", "true", "&&")):
+            with self.subTest(flat_operator=operator):
+                src = f"fn f(): {typ} {{ return " + f" {operator} ".join([literal] * 5000) + "; }"
+                self.assertTrue(parser.parse(src).ok)
+                ok, tree, diag, code, span = _do_analyze(src)
+                self.assertTrue(ok, f"flat chain rejected: {code}")
+                pending = [tree]
+                binary_count = 0
+                while pending:
+                    node = pending.pop()
+                    if isinstance(node, dict):
+                        if node.get("kind") == "BinOp":
+                            binary_count += 1
+                            self.assertEqual(node["type"], typ)
+                            self.assertEqual(node["op"], operator)
+                        pending.extend(node.values())
+                    elif isinstance(node, list):
+                        pending.extend(node)
+                self.assertEqual(binary_count, 4999)
+
+    def test_44_non_identifier_callee_is_rejected_at_the_callee(self):
+        """A call whose callee is not a plain identifier must be rejected as
+        non-callable at the callee span with an honest message. It must never
+        resolve through str(None): defining a function literally named None
+        must not make (f)() resolve to it."""
+        for src in (
+            "fn f(): int { return 1; } fn main(): int { return f()(); }",
+            "fn f(): int { return 1; } fn None(): int { return 2; } fn main(): int { return (f)(); }",
+            "fn main(): int { return 1(2); }",
+            'fn main(): int { return "f"(); }',
+            "fn main(): int { return true(); }",
+        ):
+            with self.subTest(src=src):
+                ok, tree, diag, code, span = _do_analyze(src)
+                self.assertFalse(ok)
+                self.assertEqual(code, "SEM_UNKNOWN_FUNCTION")
+                self.assertIn("is not a function name", diag.message,
+                              "callee diagnostic must be honest, never 'unknown function None'")
+                self.assertNotEqual(diag.got, "None")
+        ok, tree, diag, code, span = _do_analyze(
+            "fn f(): int { return 1; } fn main(): int { return f(); }")
+        self.assertTrue(ok)
+
+    def test_45_analyze_bytes_matches_analyze(self):
+        for src in (
+            "fn main(): int { return 1; }",
+            "fn f(): str { return \"a\\nb\"; }",
+            "fn main(): int { let x: bool = 1; }",
+            "fn main(): int { return y; }",
+        ):
+            with self.subTest(src=src):
+                a = analyzer.analyze(src, "bytes-eq.rl")
+                b = analyzer.analyze_bytes(src.encode("ascii"), "bytes-eq.rl")
+                self.assertEqual(a.ok, b.ok)
+                self.assertEqual(a.diagnostic.code if a.diagnostic else None,
+                                 b.diagnostic.code if b.diagnostic else None)
+                if a.ok:
+                    self.assertEqual(json.dumps(a.ast, sort_keys=True),
+                                     json.dumps(b.ast, sort_keys=True))
+        bad = analyzer.analyze_bytes(chr(0xE9).encode("latin-1"), "bad.rl")
+        self.assertFalse(bad.ok)
+        self.assertEqual(bad.diagnostic.code, "PAR_LEX_ERROR")
+
+    def test_46_else_if_chain_lowering_and_typing(self):
+        ok, tree, diag, code, span = _do_analyze(
+            "fn f(n: int): int { if n > 0 { return 1; } else if n < 0 { return 2; } else { return 3; } }")
+        self.assertTrue(ok, f"else-if chain rejected: {code}")
+        body = tree["functions"][0]["body"]["stmts"][0]
+        self.assertEqual(body["kind"], "If")
+        self.assertEqual(body["then"]["kind"], "Block")
+        self.assertEqual(body["else"]["kind"], "If", "else-if must lower to nested If")
+        self.assertEqual(body["else"]["else"]["kind"], "Block")
+        _assert_err("fn f(n: int): int { if n > 0 { return 1; } else if 1 { return 2; } }",
+                    "SEM_TYPE_MISMATCH")
+
+    def test_47_bool_equality_and_let_shadows_function(self):
+        _assert_ok("fn main(): bool { let a: bool = true; return a == false; }")
+        _assert_ok("fn main(): bool { return true != false; }")
+        _assert_err("fn main(): bool { return true == 1; }", "SEM_TYPE_MISMATCH")
+        _assert_err("fn foo(): int { return 1; } fn main(): int { let foo: int = 1; return foo; }",
+                    "SEM_DUPLICATE")
+
+    def test_48_span_values_point_at_offending_tokens(self):
+        src = "fn main(): int { let x: bool = 1; }"
+        d = _assert_err(src, "SEM_TYPE_MISMATCH")[0]
+        self.assertEqual((d.span.line, d.span.column, d.span.offset, d.span.length),
+                         (1, 32, 31, 1), "let mismatch points at the initializer '1'")
+        src = "fn main(): int { let x: int = y; }"
+        d = _assert_err(src, "SEM_UNDECLARED")[0]
+        self.assertEqual((d.span.column, d.span.offset, d.span.length), (31, 30, 1))
+        src = "fn foo(): int { return 1; } fn foo(): int { return 2; }"
+        d = _assert_err(src, "SEM_DUPLICATE")[0]
+        self.assertEqual((d.span.column, d.span.offset), (29, 28),
+                         "duplicate points at the second declaration")
+        src = "fn t(a: int): int { return a; } fn main(): int { return t(true); }"
+        d = _assert_err(src, "SEM_TYPE_MISMATCH")[0]
+        self.assertEqual((d.span.column, d.span.offset, d.span.length), (59, 58, 4),
+                         "arg type points at the offending argument 'true'")
+        src = 'fn main(): bool { return 1 < "a"; }'
+        d = _assert_err(src, "SEM_TYPE_MISMATCH")[0]
+        self.assertEqual((d.span.column, d.span.offset, d.span.length), (26, 25, 7),
+                         "relational error covers the offending operator expression")
 
     def test_42_random_garbage_returns_one_diagnostic_without_exception(self):
         rng = random.Random(0x14A57)
@@ -544,14 +724,14 @@ class SemanticsMutationTests(unittest.TestCase):
 
     def test_33_mutation_arity(self):
         self._assert_check_removal_changes_result(
-            "if len(args) != expected_arity:\n                    self._error(C_ARITY_MISMATCH,",
-            "if False and len(args) != expected_arity:\n                    self._error(C_ARITY_MISMATCH,",
+            "if len(args) != expected_arity:\n                        self._error(C_ARITY_MISMATCH,",
+            "if False and len(args) != expected_arity:\n                        self._error(C_ARITY_MISMATCH,",
             "fn foo(a: int): int { return a; } fn main(): int { return foo(); }", "SEM_ARITY_MISMATCH")
 
     def test_34_mutation_unknown_fn(self):
         self._assert_check_removal_changes_result(
-            'if callee_name not in self.global_funcs:\n                    self._error(C_UNKNOWN_FUNCTION,',
-            'if callee_name not in self.global_funcs:\n                    self.global_funcs[callee_name] = {"params": [], "ret_type": "int", "symbol": 0}\n                if False:\n                    self._error(C_UNKNOWN_FUNCTION,',
+            'if callee_name not in self.global_funcs:\n                        self._error(C_UNKNOWN_FUNCTION,',
+            'if callee_name not in self.global_funcs:\n                        self.global_funcs[callee_name] = {"params": [], "ret_type": "int", "symbol": 0}\n                    if False:\n                        self._error(C_UNKNOWN_FUNCTION,',
             "fn main(): int { return bar(); }", "SEM_UNKNOWN_FUNCTION")
 
     def test_38_mutation_no_shadowing(self):
@@ -561,7 +741,182 @@ class SemanticsMutationTests(unittest.TestCase):
             "fn main(): int { let x: int = 1; { let x: int = 2; } return x; }", "SEM_DUPLICATE")
 
     def test_39_mutation_unit_as_value(self):
+        # A unit-typed initializer is diagnosed by the dedicated unit check,
+        # not by the generic type-equality check below it: removing the first
+        # must flip the message from "let initializer ... is unit" to the
+        # equality form, proving the dedicated check fires first.
+        text = ANALYZER_PATH.read_text(encoding="utf-8")
+        anchor = ('if init_type == "unit":\n'
+                  '                    self._error(C_TYPE_MISMATCH, f"let initializer for \'{name}\' is unit", expr_node.span,\n'
+                  '                                expected=typ, got="unit", name=name, context="let")\n')
+        self.assertEqual(text.count(anchor), 1, "let-unit guard missing")
+        mutant = self._load_mutant(
+            anchor,
+            'if False and init_type == "unit":\n'
+            '                    self._error(C_TYPE_MISMATCH, f"let initializer for \'{name}\' is unit", expr_node.span,\n'
+            '                                expected=typ, got="unit", name=name, context="let")\n')
+        probe = "fn helper() {} fn main() { let x: int = helper(); }"
+        baseline = analyzer.analyze(probe, "<baseline>")
+        self.assertFalse(baseline.ok)
+        self.assertIn("is unit", baseline.diagnostic.message)
+        result = mutant.analyze(probe, "<mutant>")
+        self.assertFalse(result.ok)
+        self.assertNotIn("is unit", result.diagnostic.message,
+                         "unit-guard removal must fall through to the equality message")
+
+    def test_49_mutation_equality_typing(self):
         self._assert_check_removal_changes_result(
-            'if result_type == "unit" and not allow_unit:\n                    self._error(C_TYPE_MISMATCH,',
-            'if result_type == "unit" and not allow_unit:\n                    result_type = "int"\n                if False:\n                    self._error(C_TYPE_MISMATCH,',
-            "fn helper() {} fn main() { let x: int = helper(); }", "SEM_TYPE_MISMATCH")
+            'if ltype != rtype or ltype not in ("int","bool","str"):',
+            'if False and (ltype != rtype or ltype not in ("int","bool","str")):',
+            'fn main(): bool { return 1 == "a"; }', "SEM_TYPE_MISMATCH")
+
+    def test_50_mutation_relational_typing(self):
+        self._assert_check_removal_changes_result(
+            'if ltype != "int" or rtype != "int":\n                        self._error(C_TYPE_MISMATCH, f"relational',
+            'if False and (ltype != "int" or rtype != "int"):\n                        self._error(C_TYPE_MISMATCH, f"relational',
+            'fn main(): bool { return "a" < "b"; }', "SEM_TYPE_MISMATCH")
+
+    def test_51_mutation_logical_typing(self):
+        self._assert_check_removal_changes_result(
+            'if ltype != "bool" or rtype != "bool":',
+            'if False and (ltype != "bool" or rtype != "bool"):',
+            "fn main(): bool { return 1 && true; }", "SEM_TYPE_MISMATCH")
+
+    def test_52_mutation_unary_typing(self):
+        self._assert_check_removal_changes_result(
+            'if op == "-":\n                if otype != "int":\n                    self._error(C_TYPE_MISMATCH, f"unary',
+            'if op == "-":\n                if False and otype != "int":\n                    self._error(C_TYPE_MISMATCH, f"unary',
+            "fn main(): int { return -true; }", "SEM_TYPE_MISMATCH")
+
+    def test_53_mutation_if_condition(self):
+        self._assert_check_removal_changes_result(
+            'if ctype != "bool":\n                    self._error(C_TYPE_MISMATCH, f"if condition',
+            'if False and ctype != "bool":\n                    self._error(C_TYPE_MISMATCH, f"if condition',
+            "fn main() { if 1 { } }", "SEM_TYPE_MISMATCH")
+
+    def test_54_mutation_while_condition(self):
+        self._assert_check_removal_changes_result(
+            'if ctype != "bool":\n                    self._error(C_TYPE_MISMATCH, f"while condition',
+            'if False and ctype != "bool":\n                    self._error(C_TYPE_MISMATCH, f"while condition',
+            "fn main() { while 1 { } }", "SEM_TYPE_MISMATCH")
+
+    def test_55_mutation_return_typing(self):
+        self._assert_check_removal_changes_result(
+            'if init_type != ret_type:\n                        self._error(C_TYPE_MISMATCH, f"return expects',
+            'if False and init_type != ret_type:\n                        self._error(C_TYPE_MISMATCH, f"return expects',
+            "fn main(): int { return true; }", "SEM_TYPE_MISMATCH")
+
+    def test_56_mutation_let_typing(self):
+        self._assert_check_removal_changes_result(
+            'if init_type != typ:\n                    self._error(C_TYPE_MISMATCH, f"let \'{name}\' expects',
+            'if False and init_type != typ:\n                    self._error(C_TYPE_MISMATCH, f"let \'{name}\' expects',
+            "fn main(): int { let x: bool = 1; return 1; }", "SEM_TYPE_MISMATCH")
+
+    def test_57_mutation_argument_typing(self):
+        self._assert_check_removal_changes_result(
+            'if atype != ptype:\n                            self._error(C_TYPE_MISMATCH, f"arg {i}',
+            'if False and atype != ptype:\n                            self._error(C_TYPE_MISMATCH, f"arg {i}',
+            "fn t(a: int): int { return a; } fn main(): int { return t(true); }",
+            "SEM_TYPE_MISMATCH")
+
+    def test_58_mutation_duplicate_parameter(self):
+        self._assert_check_removal_changes_result(
+            'if pname in seen:\n                        self._error(C_DUPLICATE, f"duplicate parameter',
+            'if False and pname in seen:\n                        self._error(C_DUPLICATE, f"duplicate parameter',
+            "fn foo(a: int, a: bool): int { return 1; }", "SEM_DUPLICATE")
+
+    def test_59_mutation_parameter_shadows_function(self):
+        self._assert_check_removal_changes_result(
+            'if pname in self.global_funcs:\n                        self._error(C_DUPLICATE, f"duplicate declaration',
+            'if False and pname in self.global_funcs:\n                        self._error(C_DUPLICATE, f"duplicate declaration',
+            "fn first(later: int): int { return later; } fn later(): int { return 1; }",
+            "SEM_DUPLICATE")
+
+    def test_60_mutation_let_shadows_function(self):
+        self._assert_check_removal_changes_result(
+            'if name in self.global_funcs:\n            self._error(C_DUPLICATE, f"duplicate declaration \'{name}\' shadows function',
+            'if False and name in self.global_funcs:\n            self._error(C_DUPLICATE, f"duplicate declaration \'{name}\' shadows function',
+            "fn foo(): int { return 1; } fn main(): int { let foo: int = 1; return foo; }",
+            "SEM_DUPLICATE")
+
+    def test_61_mutation_non_identifier_callee_honesty(self):
+        # The non-identifier-callee guard exists for diagnostic honesty: a
+        # grouped/chained callee has text None, and resolving through it
+        # produced the misleading "unknown function 'None'". Removing the
+        # guard must flip the message, which test_44 pins.
+        text = ANALYZER_PATH.read_text(encoding="utf-8")
+        anchor = 'if callee_node.kind != "Identifier":'
+        self.assertEqual(text.count(anchor), 1, "callee-kind guard missing")
+        mutant = self._load_mutant(
+            'if callee_node.kind != "Identifier":\n'
+            '                        self._error(C_UNKNOWN_FUNCTION, f"called expression is not a function name", callee_node.span,\n'
+            '                                    expected="identifier callee", got=callee_node.kind, context="call")\n',
+            'if False and callee_node.kind != "Identifier":\n'
+            '                        self._error(C_UNKNOWN_FUNCTION, f"called expression is not a function name", callee_node.span,\n'
+            '                                    expected="identifier callee", got=callee_node.kind, context="call")\n')
+        probe = "fn main(): int { return 1(2); }"
+        baseline = analyzer.analyze(probe, "<baseline>")
+        self.assertFalse(baseline.ok)
+        self.assertIn("is not a function name", baseline.diagnostic.message)
+        result = mutant.analyze(probe, "<mutant>")
+        self.assertFalse(result.ok)
+        self.assertNotIn("is not a function name", result.diagnostic.message,
+                         "guard removal must change the diagnostic to the misleading form")
+
+    def test_62_trampoline_drive_contract(self):
+        from types import GeneratorType
+        drive = analyzer.Analyzer._drive
+        # Nested generators evaluate depth-first with value plumbing.
+        def leaf():
+            return 7
+            yield  # pragma: no cover - makes this a generator without yielding
+        def middle():
+            value = yield leaf()
+            return value * 2
+        def root():
+            return (yield middle())
+        self.assertEqual(drive(root()), 14)
+        # A non-generator work item is a contract violation, never silent.
+        def bad():
+            yield 42
+        with self.assertRaises(TypeError):
+            drive(bad())
+        # Abort-style exceptions propagate (diagnostic discipline belongs to
+        # the raiser, the driver only unwinds).
+        class Boom(Exception):
+            pass
+        def raiser():
+            raise Boom()
+            yield
+        with self.assertRaises(Boom):
+            drive(raiser())
+
+    def test_63_analyzer_depth_guard_fires_on_its_own(self):
+        # test_43 proves parser and analyzer agree through the public pipeline,
+        # but there the parser rejects first, so the analyzer's own guard is
+        # never exercised. Drive Analyzer directly with a hand-built tree that
+        # bypasses the parser: only the analyzer's counter can reject it, and
+        # its own message (not the parser's) must be reported.
+        Span = lexer.Span
+        ParseNode = parser.ParseNode
+        span = Span("<deep>", 1, 1, 0, 0)
+        body = ParseNode("Block", span, ())
+        for _ in range(300):
+            cond = ParseNode("BooleanLiteral", span, (), text="true")
+            body = ParseNode("Block", span, (ParseNode("WhileStmt", span, (cond, body)),))
+        fn = ParseNode("FunctionDef", span,
+                       (ParseNode("Identifier", span, (), text="f"), body), text="f")
+        program = ParseNode("Program", span, (fn,))
+        result = analyzer.Analyzer(program, source="").analyze()
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.ast)
+        self.assertEqual(result.diagnostic.code, "PAR_DEPTH_EXCEEDED")
+        self.assertEqual(result.diagnostic.message, "nesting depth exceeds 256")
+        # Removing the analyzer guard must flip the verdict: the trampoline
+        # lowers without the Python call stack, so no host RecursionError
+        # stands in for the counter.
+        mutant = self._load_mutant(
+            "        if self.depth > MAX_DEPTH:\n",
+            "        if False and self.depth > MAX_DEPTH:\n")
+        deep_result = mutant.Analyzer(program, source="").analyze()
+        self.assertTrue(deep_result.ok, deep_result.diagnostic)

@@ -72,9 +72,9 @@ analyze / analyze_bytes / analyze_file -> AnalyzeResult  # stable AST + SEM_* or
 
 All tools require Python 3.10+ and only the standard library. Their CLIs emit
 deterministic JSON on success and a diagnostic on stderr on failure. The lexer
-has 49 repository tests with 16 valid and 19 invalid fixtures. The parser has 52
+has 49 repository tests with 16 valid and 19 invalid fixtures. The parser has 54
 repository tests with 14 valid and 21 invalid fixtures, including five live
-mutation checks. The semantics has 42 repository tests with 12 valid and 20 invalid fixtures, including seven live behavioral mutation checks.
+mutation checks. The semantics has 63 repository tests with 12 valid and 20 invalid fixtures, including twenty-one live behavioral mutation checks.
 
 ## Status and limitations
 

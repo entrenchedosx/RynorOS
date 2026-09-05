@@ -104,3 +104,34 @@ before the E820 ownership check and therefore remain a potential firmware-layout
 compatibility blocker. Slave-PIC EOI, production keyboard-ring overflow, alternate
 display hardware, and preservation of every arithmetic RFLAGS bit lack direct
 hardware-path mutation evidence. These are not silently promoted to verified.
+
+## Stage 14 continuation (third pass, same worktree)
+
+Date: 2026-09-05. An independent Stage 14 audit re-verified the stabilized
+foundation (164/164 language tests green, depth parity 254/255 across all five
+construct families) and attacked the semantic layer with fresh-context
+specialists plus a new 8-test public-API gauntlet
+(`tests/repository/test_semantic_api_gauntlet.py`).
+
+| Item | Defect | Repair | Evidence |
+|---|---|---|---|
+| Call callee resolution | A non-identifier callee (`f()()`, `(f)()`, `1(2)`) was resolved through `str(text)`; with a function literally named `None` defined, `(f)()` would resolve to the wrong function and pass arity/type checks | Reject non-identifier callees at the callee span with honest "called expression is not a function name" (`SEM_UNKNOWN_FUNCTION`); never resolve through text | `test_44` (five callee shapes + message pin), `test_61` honesty mutation |
+| Analyzer/parser depth parity | The analyzer charged ~2 levels per block while the parser charges 1: 253 nested `while`s parsed but the analyzer rejected from ~128 | Per-construct accounting now mirrors the parser's `enter()` sites exactly (function, block, `if`, unary, call group, paren) | `test_43`: 254 accepted / 255 rejected identically by both stages for while, block, call, unary, and group nesting |
+| PAR diagnostic `expected` field | `parse()` wrapped lex errors with `expected=()` while the bytes/file paths produced `expected=None`: same program, same error, unequal `AnalyzeResult` across entry points | Normalize empty `expected` to `None` when wrapping parser diagnostics | Full cross-entrypoint equality gauntlet (`analyze` ≡ `analyze_bytes` ≡ `analyze_file` ≡ `analyze_tokens`) |
+| `analyze_tokens` source errors | A lexically broken `source` argument was masked as generic "source does not match tokens" | Forward the source's real lex diagnostic (mapped like siblings); genuine mismatches stay `PAR_INVALID_INPUT` | Refined mismatch test pins both behaviors |
+| Missing coverage | `analyze_bytes` had zero tests; span assertions were presence-only; `bool==bool`, else-if lowering, let-shadows-function, and 11 type-rule checks had no tests or mutation anchors | `test_43`–`test_48` plus 13 new mutation anchors (`test_49`–`test_61`); exact span values pinned | 62 semantics tests; 21 mutation classes, all verified to flip behavior |
+
+The repository inventory is now 299 methods (`test_rynorlang_semantics` 63,
+`test_semantic_api_gauntlet` 8). Third-pass results are recorded below.
+
+## Third-pass verification (observed on the reference host)
+
+* `python tools/build/build.py test` → 299/299 repository.
+* Full `check` (build + 299 repository + 162 integration, 871.019 s) → **OK**,
+  9-configuration QEMU matrix, every emulator reaped, zero leftover processes.
+* Byte-identical rebuild re-verified (`rynoros.img` SHA-256
+  `5BB59E484F4638A08C73693EB37F929E89035F1722602ECD522AA463755DE3AE`).
+* One suite failure during the pass (the shell dispatch-bypass mutation test
+  now hits the earlier long-upper rejection witness) was already reconciled;
+  one doc-count gate failure (missed shell.md line) fixed and re-run green.
+  No test was weakened.

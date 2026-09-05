@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import bisect
+from types import GeneratorType
 import json
 import sys
 from pathlib import Path
@@ -56,6 +58,10 @@ class AnalyzeResult:
     def ok(self):
         return self.diagnostic is None
 
+class _AbortAnalysis(Exception):
+    pass
+
+
 class Analyzer:
     def __init__(self, program: ParseNode, source: str | None = None, tokens: tuple[Token, ...] = ()):
         self.program = program
@@ -64,6 +70,7 @@ class Analyzer:
         self.sym_counter = 0
         self.diagnostic: Optional[Diagnostic] = None
         self.source = source
+        self.line_starts = [0] + [i + 1 for i, char in enumerate(source or "") if char == "\n"]
         self.end_positions: dict[int, tuple[int, int]] = {}
         for token in tokens:
             line, column = token.span.line, token.span.column
@@ -78,11 +85,8 @@ class Analyzer:
         end_offset = span.offset + span.length
         line, column = span.line, span.column
         if self.source is not None:
-            for char in self.source[span.offset:end_offset]:
-                if char == "\n":
-                    line, column = line + 1, 1
-                else:
-                    column += 1
+            line = bisect.bisect_right(self.line_starts, end_offset)
+            column = end_offset - self.line_starts[line - 1] + 1
         elif end_offset in self.end_positions:
             line, column = self.end_positions[end_offset]
         return {
@@ -104,7 +108,7 @@ class Analyzer:
             # use program span
             span = self.program.span
             self.diagnostic = Diagnostic(CODE_DEPTH, f"nesting depth exceeds {MAX_DEPTH}", span)
-            raise StopIteration
+            raise _AbortAnalysis
 
     def _leave(self):
         self.depth -= 1
@@ -112,7 +116,7 @@ class Analyzer:
     def _error(self, code: str, message: str, span: Span, **details):
         if self.diagnostic is None:
             self.diagnostic = Diagnostic(code, message, span, **details)
-        raise StopIteration
+        raise _AbortAnalysis
 
     def analyze(self) -> AnalyzeResult:
         try:
@@ -176,7 +180,7 @@ class Analyzer:
             prog_span = self._node_span(self.program)
             prog = {"kind": "Program", "span": prog_span, "functions": stable_funcs}
             return AnalyzeResult(prog, None)
-        except StopIteration:
+        except _AbortAnalysis:
             return AnalyzeResult(None, self.diagnostic)
         except RecursionError:
             span = self.program.span
@@ -204,11 +208,32 @@ class Analyzer:
             for pname, ptype, pspan in info["params"]:
                 sym, _, _ = func_scope[pname]
                 stable_params.append({"kind": "Param", "span": self._span_dict(pspan), "name": pname, "type": ptype, "symbol": sym})
-            stable_block = self._lower_block(block, scope_stack, ret_type)
+            stable_block = self._drive(self._lower_block(block, scope_stack, ret_type))
             prog_span = self._node_span(fn)
             return {"kind": "Function", "span": prog_span, "name": name, "params": stable_params, "ret_type": ret_type, "body": stable_block, "symbol": info["symbol"]}
         finally:
             self._leave()
+
+    @staticmethod
+    def _drive(work):
+        """Evaluate lowering generators without using the Python call stack."""
+        pending = [work]
+        value = None
+        try:
+            while pending:
+                try:
+                    child = pending[-1].send(value)
+                    value = None
+                    if not isinstance(child, GeneratorType):
+                        raise TypeError("invalid lowering work item")
+                    pending.append(child)
+                except StopIteration as completed:
+                    pending.pop()
+                    value = completed.value
+            return value
+        finally:
+            for generator in reversed(pending):
+                generator.close()
 
     def _lower_block(self, block: ParseNode, scope_stack: list, ret_type) -> dict:
         self._enter()
@@ -217,7 +242,7 @@ class Analyzer:
             scope_stack.append({})
             stmts = []
             for stmt in block.children:
-                stable = self._lower_stmt(stmt, scope_stack, ret_type)
+                stable = yield self._lower_stmt(stmt, scope_stack, ret_type)
                 stmts.append(stable)
                 if self.diagnostic:
                     break
@@ -249,7 +274,13 @@ class Analyzer:
         return sym
 
     def _lower_stmt(self, stmt: ParseNode, scope_stack: list, ret_type):
-        self._enter()
+        # Depth mirrors the parser's per-construct accounting exactly: only
+        # grammar constructs the parser itself charges (block, if) consume
+        # budget here. Statements the parser accepts without charging (let,
+        # return, expr-stmt, while) must not consume budget either, or the
+        # analyzer would reject programs the frozen parser accepts.
+        if stmt.kind == "IfStmt":
+            self._enter()
         try:
             if stmt.kind == "LetStmt":
                 # children: Identifier, Type, Expr
@@ -259,7 +290,7 @@ class Analyzer:
                 name = name_node.text
                 typ = type_node.text
                 # lower init expr first in current scope (before declaration)
-                init, init_type = self._lower_expr(expr_node, scope_stack, False)
+                init, init_type = yield self._lower_expr(expr_node, scope_stack, False)
                 if init_type == "unit":
                     self._error(C_TYPE_MISMATCH, f"let initializer for '{name}' is unit", expr_node.span,
                                 expected=typ, got="unit", name=name, context="let")
@@ -277,7 +308,7 @@ class Analyzer:
                     return {"kind": "Return", "span": self._node_span(stmt), "value": None}
                 else:
                     expr_node = stmt.children[0]
-                    init, init_type = self._lower_expr(expr_node, scope_stack, False)
+                    init, init_type = yield self._lower_expr(expr_node, scope_stack, False)
                     if ret_type is None:
                         self._error(C_TYPE_MISMATCH, f"return with value in unit function", expr_node.span,
                                     expected="unit", got=init_type, context="return")
@@ -293,44 +324,82 @@ class Analyzer:
                 cond_node = stmt.children[0]
                 then_node = stmt.children[1]
                 else_node = stmt.children[2] if len(stmt.children) > 2 else None
-                cond, ctype = self._lower_expr(cond_node, scope_stack, False)
+                cond, ctype = yield self._lower_expr(cond_node, scope_stack, False)
                 if ctype != "bool":
                     self._error(C_TYPE_MISMATCH, f"if condition expects bool got {ctype}", cond_node.span,
                                 expected="bool", got=ctype, context="if condition")
-                then_block = self._lower_block(then_node, scope_stack, ret_type)
+                then_block = yield self._lower_block(then_node, scope_stack, ret_type)
                 else_block = None
                 if else_node is not None:
                     if else_node.kind == "IfStmt":
-                        else_block = self._lower_stmt(else_node, scope_stack, ret_type)  # else if
+                        else_block = yield self._lower_stmt(else_node, scope_stack, ret_type)  # else if
                     else:
-                        else_block = self._lower_block(else_node, scope_stack, ret_type)
+                        else_block = yield self._lower_block(else_node, scope_stack, ret_type)
                 return {"kind": "If", "span": self._node_span(stmt), "cond": cond, "then": then_block, "else": else_block}
             elif stmt.kind == "WhileStmt":
                 cond_node = stmt.children[0]
                 body_node = stmt.children[1]
-                cond, ctype = self._lower_expr(cond_node, scope_stack, False)
+                cond, ctype = yield self._lower_expr(cond_node, scope_stack, False)
                 if ctype != "bool":
                     self._error(C_TYPE_MISMATCH, f"while condition expects bool got {ctype}", cond_node.span,
                                 expected="bool", got=ctype, context="while condition")
-                body = self._lower_block(body_node, scope_stack, ret_type)
+                body = yield self._lower_block(body_node, scope_stack, ret_type)
                 return {"kind": "While", "span": self._node_span(stmt), "cond": cond, "body": body}
             elif stmt.kind == "ExprStmt":
                 expr_node = stmt.children[0]
                 # for ExprStmt, allow unit
-                expr, etype = self._lower_expr(expr_node, scope_stack, True)
+                expr, etype = yield self._lower_expr(expr_node, scope_stack, True)
                 # if expr is Call returning unit, ok; otherwise etype must not be unit (but only Call can be unit)
                 return {"kind": "ExprStmt", "span": self._node_span(stmt), "expr": expr}
             elif stmt.kind == "Block":
-                return self._lower_block(stmt, scope_stack, ret_type)
+                return (yield self._lower_block(stmt, scope_stack, ret_type))
             else:
                 self._error(C_TYPE_MISMATCH, f"unknown statement {stmt.kind}", stmt.span,
                             expected="supported statement", got=stmt.kind, context="lowering")
         finally:
-            self._leave()
+            if stmt.kind == "IfStmt":
+                self._leave()
 
     def _lower_expr(self, node: ParseNode, scope_stack: list, allow_unit: bool):
-        self._enter()
-        try:
+        # Depth mirrors the parser's per-construct accounting exactly: only
+        # grammar constructs the parser itself charges (unary, each call
+        # argument group, grouping parens) consume budget here. Literals,
+        # identifiers and binary operands do not: the parser builds them
+        # iteratively without enter().
+        if node.kind == "UnaryExpr":
+            self._enter()
+            try:
+                return (yield self._lower_unary(node, scope_stack, allow_unit))
+            finally:
+                self._leave()
+        return (yield self._lower_primary_or_binary(node, scope_stack, allow_unit))
+
+    def _lower_unary(self, node: ParseNode, scope_stack: list, allow_unit: bool):
+        if True:
+            operand_node = node.children[0]
+            op = node.text
+            operand, otype = yield self._lower_expr(operand_node, scope_stack, False)
+            if otype == "unit":
+                self._error(C_TYPE_MISMATCH, f"unit as operand for '{op}'", operand_node.span,
+                            expected="non-unit", got="unit", context="unary operand", operator=op)
+            if op == "-":
+                if otype != "int":
+                    self._error(C_TYPE_MISMATCH, f"unary '-' expects int got {otype}", node.span,
+                                expected="int", got=otype, context="unary operator", operator=op)
+                result_type = "int"
+            elif op == "!":
+                if otype != "bool":
+                    self._error(C_TYPE_MISMATCH, f"unary '!' expects bool got {otype}", node.span,
+                                expected="bool", got=otype, context="unary operator", operator=op)
+                result_type = "bool"
+            else:
+                self._error(C_TYPE_MISMATCH, f"unknown unary '{op}'", node.span,
+                            expected=("-", "!"), got=op, context="unary operator", operator=op)
+                result_type = otype
+            return ({"kind": "UnOp", "span": self._node_span(node), "op": op, "operand": operand, "type": result_type}, result_type)
+
+    def _lower_primary_or_binary(self, node: ParseNode, scope_stack: list, allow_unit: bool):
+        if True:
             if node.kind == "IntegerLiteral":
                 return ({"kind": "IntLit", "span": self._node_span(node), "value": node.text, "type": "int"}, "int")
             elif node.kind == "StringLiteral":
@@ -348,18 +417,23 @@ class Analyzer:
                 sym, typ, _ = entry
                 return ({"kind": "Var", "span": self._node_span(node), "name": name, "symbol": sym, "type": typ}, typ)
             elif node.kind == "GroupExpr":
-                # just lower inner
-                inner = node.children[0]
-                return self._lower_expr(inner, scope_stack, allow_unit)
+                # The parser charges one level per grouping paren (enter in
+                # parse_primary), and so does lowering it.
+                self._enter()
+                try:
+                    inner = node.children[0]
+                    return (yield self._lower_expr(inner, scope_stack, allow_unit))
+                finally:
+                    self._leave()
             elif node.kind in ("OrExpr", "AndExpr", "EqualityExpr", "RelationalExpr", "AdditiveExpr", "MultiplicativeExpr"):
                 left_node = node.children[0]
                 right_node = node.children[1]
                 op = node.text
-                left, ltype = self._lower_expr(left_node, scope_stack, False)
+                left, ltype = yield self._lower_expr(left_node, scope_stack, False)
                 if ltype == "unit":
                     self._error(C_TYPE_MISMATCH, f"unit as operand for '{op}'", left_node.span,
                                 expected="non-unit", got="unit", context="binary operand", operator=op)
-                right, rtype = self._lower_expr(right_node, scope_stack, False)
+                right, rtype = yield self._lower_expr(right_node, scope_stack, False)
                 if rtype == "unit":
                     self._error(C_TYPE_MISMATCH, f"unit as operand for '{op}'", right_node.span,
                                 expected="non-unit", got="unit", context="binary operand", operator=op)
@@ -389,83 +463,68 @@ class Analyzer:
                 else:
                     result_type = "int"
                 return ({"kind": "BinOp", "span": self._node_span(node), "op": op, "left": left, "right": right, "type": result_type}, result_type)
-            elif node.kind == "UnaryExpr":
-                operand_node = node.children[0]
-                op = node.text
-                operand, otype = self._lower_expr(operand_node, scope_stack, False)
-                if otype == "unit":
-                    self._error(C_TYPE_MISMATCH, f"unit as operand for '{op}'", operand_node.span,
-                                expected="non-unit", got="unit", context="unary operand", operator=op)
-                if op == "-":
-                    if otype != "int":
-                        self._error(C_TYPE_MISMATCH, f"unary '-' expects int got {otype}", node.span,
-                                    expected="int", got=otype, context="unary operator", operator=op)
-                    result_type = "int"
-                elif op == "!":
-                    if otype != "bool":
-                        self._error(C_TYPE_MISMATCH, f"unary '!' expects bool got {otype}", node.span,
-                                    expected="bool", got=otype, context="unary operator", operator=op)
-                    result_type = "bool"
-                else:
-                    self._error(C_TYPE_MISMATCH, f"unknown unary '{op}'", node.span,
-                                expected=("-", "!"), got=op, context="unary operator", operator=op)
-                    result_type = otype
-                return ({"kind": "UnOp", "span": self._node_span(node), "op": op, "operand": operand, "type": result_type}, result_type)
             elif node.kind == "CallExpr":
-                # children: Identifier callee, ArgList
-                callee_node = node.children[0]
-                arglist_node = node.children[1] if len(node.children) > 1 else None
-                callee_name = callee_node.text if callee_node.kind == "Identifier" else str(callee_node.text)
-                # lookup function
-                if callee_name not in self.global_funcs:
-                    self._error(C_UNKNOWN_FUNCTION, f"unknown function '{callee_name}'", callee_node.span,
-                                expected="known function", got=callee_name, callee=callee_name, context="call")
-                finfo = self.global_funcs[callee_name]
-                expected_arity = len(finfo["params"])
-                # get args
-                args = []
-                arg_types = []
-                if arglist_node is not None:
-                    for arg_expr_node in arglist_node.children:
-                        # each arg is Expr
-                        arg_stable, atype = self._lower_expr(arg_expr_node, scope_stack, False)
-                        if atype == "unit":
-                            self._error(C_TYPE_MISMATCH, f"unit as argument for '{callee_name}'", arg_expr_node.span,
-                                        expected="non-unit", got="unit", callee=callee_name, context="call argument")
-                        args.append(arg_stable)
-                        arg_types.append(atype)
-                if len(args) != expected_arity:
-                    self._error(C_ARITY_MISMATCH, f"arity mismatch for '{callee_name}' expected {expected_arity} got {len(args)}", node.span,
-                                expected=expected_arity, got=len(args), callee=callee_name, context="call")
-                # check each arg type
-                for i, (atype, (pname, ptype, _)) in enumerate(zip(arg_types, finfo["params"])):
-                    if atype != ptype:
-                        self._error(C_TYPE_MISMATCH, f"arg {i} for '{callee_name}' expects {ptype} got {atype}", arglist_node.children[i].span if arglist_node and i < len(arglist_node.children) else node.span,
-                                    expected=ptype, got=atype, callee=callee_name, context=f"argument {i}")
-                # result type
-                result_type = finfo["ret_type"] if finfo["ret_type"] is not None else "unit"
-                if result_type == "unit" and not allow_unit:
-                    self._error(C_TYPE_MISMATCH, f"unit value used as value for '{callee_name}'", node.span,
-                                expected="non-unit", got="unit", callee=callee_name, context="value expression")
-                stable = {"kind": "Call", "span": self._node_span(node), "callee": callee_name, "args": args, "symbol": finfo["symbol"], "type": result_type}
-                return (stable, result_type)
+                # The parser charges one level per call argument group (enter
+                # in parse_postfix around the arg list); lowering matches it.
+                self._enter()
+                try:
+                    # children: callee primary, ArgList
+                    callee_node = node.children[0]
+                    arglist_node = node.children[1] if len(node.children) > 1 else None
+                    # The frozen grammar allows any primary as the callee
+                    # (PostfixExpr), but only an Identifier names a function.
+                    # Every other callee form is semantically non-callable and
+                    # must be rejected at the callee itself -- never resolved
+                    # through str(text) which would look up a function literally
+                    # named "None"/"1" and could even find one.
+                    if callee_node.kind != "Identifier":
+                        self._error(C_UNKNOWN_FUNCTION, f"called expression is not a function name", callee_node.span,
+                                    expected="identifier callee", got=callee_node.kind, context="call")
+                    callee_name = callee_node.text
+                    # lookup function
+                    if callee_name not in self.global_funcs:
+                        self._error(C_UNKNOWN_FUNCTION, f"unknown function '{callee_name}'", callee_node.span,
+                                    expected="known function", got=callee_name, callee=callee_name, context="call")
+                    finfo = self.global_funcs[callee_name]
+                    expected_arity = len(finfo["params"])
+                    # get args
+                    args = []
+                    arg_types = []
+                    if arglist_node is not None:
+                        for arg_expr_node in arglist_node.children:
+                            # each arg is Expr
+                            arg_stable, atype = yield self._lower_expr(arg_expr_node, scope_stack, False)
+                            if atype == "unit":
+                                self._error(C_TYPE_MISMATCH, f"unit as argument for '{callee_name}'", arg_expr_node.span,
+                                            expected="non-unit", got="unit", callee=callee_name, context="call argument")
+                            args.append(arg_stable)
+                            arg_types.append(atype)
+                    if len(args) != expected_arity:
+                        self._error(C_ARITY_MISMATCH, f"arity mismatch for '{callee_name}' expected {expected_arity} got {len(args)}", node.span,
+                                    expected=expected_arity, got=len(args), callee=callee_name, context="call")
+                    # check each arg type
+                    for i, (atype, (pname, ptype, _)) in enumerate(zip(arg_types, finfo["params"])):
+                        if atype != ptype:
+                            self._error(C_TYPE_MISMATCH, f"arg {i} for '{callee_name}' expects {ptype} got {atype}", arglist_node.children[i].span if arglist_node and i < len(arglist_node.children) else node.span,
+                                        expected=ptype, got=atype, callee=callee_name, context=f"argument {i}")
+                    # result type
+                    result_type = finfo["ret_type"] if finfo["ret_type"] is not None else "unit"
+                    # No generic unit rejection here by design: every value
+                    # context above carries its own unit check (let init,
+                    # return, condition, operand, argument), so a unit Call
+                    # always surfaces with the specific span and message of
+                    # the context that misuses it. ExprStmt alone allows unit.
+                    stable = {"kind": "Call", "span": self._node_span(node), "callee": callee_name, "args": args, "symbol": finfo["symbol"], "type": result_type}
+                    return (stable, result_type)
+                finally:
+                    self._leave()
             else:
                 self._error(C_TYPE_MISMATCH, f"unknown expr {node.kind}", node.span,
                             expected="supported expression", got=node.kind, context="lowering")
-        finally:
-            self._leave()
 
 def analyze(source: str, filename: str = "<input>") -> AnalyzeResult:
     if not isinstance(source, str) or not isinstance(filename, str):
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "source and filename must be strings", Span(filename if isinstance(filename,str) else "<input>",1,1,0,0)))
-    if len(source) > 1024*1024:
-        # lex will handle file too large, but we can directly
-        from tools.rynorlang.lex import lex
-        res = lex(source, filename)
-        if res.diagnostic:
-            code = CODE_FILE if res.diagnostic.code=="LEX_FILE_TOO_LARGE" else CODE_LEX
-            return AnalyzeResult(None, Diagnostic(code, res.diagnostic.message, res.diagnostic.span))
-        return AnalyzeResult(None, Diagnostic(CODE_FILE, "source exceeds 1 MiB", Span(filename,1,1,1024*1024,1)))
     # lex+parse
     pres = parse(source, filename)
     if not pres.ok:
@@ -473,7 +532,7 @@ def analyze(source: str, filename: str = "<input>") -> AnalyzeResult:
         d = pres.diagnostic
         return AnalyzeResult(None, Diagnostic(
             d.code, d.message, d.span,
-            expected=getattr(d, "expected", None),
+            expected=getattr(d, "expected", None) or None,
             got_kind=getattr(d, "got_kind", None),
             got_lexeme=getattr(d, "got_lexeme", None),
         ))
@@ -484,13 +543,11 @@ def analyze(source: str, filename: str = "<input>") -> AnalyzeResult:
 def analyze_bytes(data: bytes, filename: str = "<input>") -> AnalyzeResult:
     if not isinstance(data, bytes) or not isinstance(filename, str):
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "data must be bytes", Span(filename if isinstance(filename,str) else "<input>",1,1,0,0)))
-    if len(data) > 1024*1024:
-        return AnalyzeResult(None, Diagnostic(CODE_FILE, "source exceeds 1 MiB", Span(filename,1,1,1024*1024,1)))
     from tools.rynorlang.lex import lex_bytes
     res = lex_bytes(data, filename)
     if res.diagnostic:
         code = CODE_FILE if res.diagnostic.code=="LEX_FILE_TOO_LARGE" else CODE_LEX
-        return AnalyzeResult(None, Diagnostic(code, res.diagnostic.message, res.diagnostic.span))
+        return AnalyzeResult(None, Diagnostic(code, res.diagnostic.message, res.diagnostic.span, got_kind=res.diagnostic.code))
     return analyze_tokens(res.tokens, filename, source=data.decode("ascii"))
 
 def analyze_file(path) -> AnalyzeResult:
@@ -501,12 +558,14 @@ def analyze_file(path) -> AnalyzeResult:
         lres = lex_file(p)
         if lres.diagnostic:
             code = CODE_FILE if lres.diagnostic.code=="LEX_FILE_TOO_LARGE" else CODE_LEX
-            return AnalyzeResult(None, Diagnostic(code, lres.diagnostic.message, lres.diagnostic.span))
+            return AnalyzeResult(None, Diagnostic(code, lres.diagnostic.message, lres.diagnostic.span, got_kind=lres.diagnostic.code))
         return analyze_tokens(lres.tokens, str(p))
     except (OSError, TypeError, ValueError) as e:
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, str(e), Span(str(path),1,1,0,0)))
 
 def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None) -> AnalyzeResult:
+    if not isinstance(filename, str) or (source is not None and not isinstance(source, str)):
+        return AnalyzeResult(None, Diagnostic(CODE_INVALID, "invalid filename or source", Span("<input>",1,1,0,0)))
     if not isinstance(tokens, tuple) or not tokens:
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "tokens must be non-empty tuple", Span(filename,1,1,0,0)))
     # validate tokens via parse_tokens
@@ -515,12 +574,57 @@ def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None)
         d = pres.diagnostic
         return AnalyzeResult(None, Diagnostic(
             d.code, d.message, d.span,
-            expected=getattr(d, "expected", None),
+            expected=getattr(d, "expected", None) or None,
             got_kind=getattr(d, "got_kind", None),
             got_lexeme=getattr(d, "got_lexeme", None),
         ))
+    if source is not None:
+        source_tokens = lex(source, tokens[0].span.filename)
+        if source_tokens.diagnostic is not None:
+            # The supplied source is itself lexically at fault: report its
+            # real diagnostic (mapped like the sibling entry points) instead
+            # of masking it as a token mismatch.
+            lex_diag = source_tokens.diagnostic
+            lex_code = CODE_FILE if lex_diag.code == "LEX_FILE_TOO_LARGE" else CODE_LEX
+            return AnalyzeResult(None, Diagnostic(lex_code, lex_diag.message, lex_diag.span,
+                                                  got_kind=lex_diag.code))
+        if source_tokens.tokens != tokens:
+            return AnalyzeResult(None, Diagnostic(CODE_INVALID, "source does not match tokens", Span(filename,1,1,0,0)))
     analyzer = Analyzer(pres.root, source=source, tokens=tokens)
     return analyzer.analyze()
+
+def iter_ast_json(ast):
+    """Serialize the caller-owned AST without using the Python call stack.
+
+    The AST contract uses string keys exclusively; output is byte-identical
+    to json.dumps(ast, sort_keys=True, separators=(",", ":")) on that domain.
+    """
+    pending = [(False, ast)]
+    while pending:
+        raw, value = pending.pop()
+        if raw:
+            yield value
+        elif isinstance(value, dict):
+            yield "{"
+            pending.append((True, "}"))
+            keys = sorted(value)
+            for index in range(len(keys) - 1, -1, -1):
+                key = keys[index]
+                pending.append((False, value[key]))
+                pending.append((True, ":"))
+                pending.append((False, key))
+                if index:
+                    pending.append((True, ","))
+        elif isinstance(value, list):
+            yield "["
+            pending.append((True, "]"))
+            for index in range(len(value) - 1, -1, -1):
+                pending.append((False, value[index]))
+                if index:
+                    pending.append((True, ","))
+        else:
+            yield json.dumps(value, sort_keys=True, separators=(",", ":"))
+
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Analyze Stage 14 RynorLang source")
@@ -549,7 +653,8 @@ def main(argv=None) -> int:
         return 2 if d.code == CODE_INVALID else 1
     # success: stable AST dump + SEM_OK
     # need deterministic dump
-    print(json.dumps(res.ast, sort_keys=True, separators=(",",":")))
+    sys.stdout.writelines(iter_ast_json(res.ast))
+    print()
     print("SEM_OK")
     return 0
 
