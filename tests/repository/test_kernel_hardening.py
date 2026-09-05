@@ -38,11 +38,18 @@ class KernelHardeningTests(unittest.TestCase):
         self.assertIn('#include "irq.h"', text)
 
     def test_no_new_eval_in_kernel(self):
-        # Ensure no host-side eval leaks into kernel
+        # Ensure no host-side eval leaks into kernel. The ring-0 monitor must
+        # never gain language evaluation: no language toolchain references, no
+        # pipeline/command machinery, no REPL placement under kernel/.
+        import re
+        forbidden = re.compile(r"rynorlang|Pipeline|Cmd\(|REPL|analyze\(|compile\.py|eval\(|exec\(")
         for path in (ROOT / "kernel").rglob("*.c"):
             txt = path.read_text(encoding="utf-8", errors="ignore")
-            self.assertNotIn("eval(", txt)
-            self.assertNotIn("exec(", txt)
+            hit = forbidden.search(txt)
+            self.assertIsNone(hit, f"{path.relative_to(ROOT)}: forbidden "
+                                   f"{hit.group(0)!r}" if hit else "")
+        for path in (ROOT / "kernel").rglob("*repl*"):
+            self.fail(f"REPL placement violation: {path.relative_to(ROOT)}")
 
 if __name__ == "__main__":
     unittest.main()

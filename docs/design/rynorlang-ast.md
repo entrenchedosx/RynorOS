@@ -139,6 +139,17 @@ Exit 0 iff `ok` and `diagnostic is None`; exit 1 for any `LEX_*/PAR_*/SEM_*`; ex
 
 Violations are detected by unit tests that compare kind/span/code/type/symbol, by live temporary-copy mutations that remove semantic checks, and by depth/span tests.
 
+## Future editions (not v1)
+
+The 16 kinds, 5 `SEM_*` codes, type table, and diagnostics above are the
+`ast_version:1` contract pinned by Stage 15. Later shell work adds kinds/codes
+**additively and only behind an explicit edition flag** (default behavior stays
+byte-identical v1); see `rynorlang-shell-language.md` §5 for the edition
+policy and `rynorlang-runtime.md` for the value model those kinds will carry.
+No old kind is renamed/removed/retyped and no old rule is widened by an
+edition change; the Stage 15 compiler rejects non-v1 nodes explicitly instead
+of miscompiling them.
+
 ## Implementation status
 
 **Implemented — Stage 14.** Host analyzer `tools/rynorlang/analyze.py` implements the frozen lowering, scopes, and type rules. The repository's `unittest` suite has 63 semantic test methods covering exact fixture inventories, deterministic symbols, multiline spans, forward references, unit-as-value, string equality versus ordering, bounded malformed input, parser/analyzer depth-boundary parity, `analyze_bytes` round-trips, else-if lowering, honest non-identifier-callee diagnostics, exact span values, and live mutations, plus an 8-test public-API gauntlet covering cross-entrypoint diagnostic equivalence, source/token consistency, the exact 1 MiB boundary, full-schema positions, and iterative serialization. `tools/rynorlang/analyze.py` is the single implementation; `rynorlang/ast/` contains only `.gitkeep`.
