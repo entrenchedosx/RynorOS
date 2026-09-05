@@ -89,6 +89,8 @@ def build_image(root: Path, destination: Path | None = None, *,
         for source, name in (
             ("kernel/core/main.c", "main.o"),
             ("kernel/core/memory.c", "memory.o"),
+            ("kernel/storage/blk.c", "blk.o"),
+            ("kernel/storage/blk-test.c", "blk-test.o"),
             ("kernel/drivers/keyboard.c", "keyboard.o"),
             ("kernel/drivers/keyboard-test.c", "keyboard-test.o"),
             ("kernel/drivers/display.c", "display.o"),

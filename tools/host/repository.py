@@ -8,7 +8,7 @@ from resources import read_icon
 SOURCE_EXTENSION = ".rl"
 REQUIRED_DIRECTORIES = (
     "kernel", "kernel/arch", "kernel/core", "kernel/mm", "kernel/interrupts",
-    "kernel/drivers", "kernel/runtime", "kernel/shell", "kernel/include", "boot", "rynorlang", "rynorlang/lexer",
+    "kernel/drivers", "kernel/runtime", "kernel/shell", "kernel/storage", "kernel/include", "boot", "rynorlang", "rynorlang/lexer",
     "rynorlang/parser", "rynorlang/ast", "rynorlang/compiler", "rynorlang/runtime",
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
     "user/apps", "tools", "tools/build", "tools/host", "tools/rynorlang",
@@ -70,6 +70,11 @@ REQUIRED_FILES = (
     "tests/integration/test_audit.py",
     "tests/repository/test_heap_output.py", "tests/integration/test_heap.py",
     "docs/design/heap.md", "docs/reports/stage6.md",
+    # Stage 17a block storage is kernel-side; sources live under kernel/storage.
+    "kernel/include/blk.h", "kernel/storage/blk.c", "kernel/storage/blk-test.c",
+    "tools/host/blk_image.py", "tools/host/blk_output.py",
+    "tests/repository/test_blk_output.py", "tests/integration/test_storage.py",
+    "docs/design/block-storage.md", "docs/reports/stage17a.md",
     "kernel/include/ksched.h", "kernel/arch/x86_64/switch.asm", "kernel/core/thread.c",
     "kernel/mm/kstack.c", "tools/host/sched_output.py",
     "kernel/core/scheduler-test.c", "kernel/arch/x86_64/scheduler-test.asm",

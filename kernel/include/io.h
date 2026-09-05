@@ -23,6 +23,13 @@ static inline cpu_u8 io_in8(cpu_u16 port)
     return value;
 }
 
+/* Word string transfer for PIO data ports. buf must be 2-byte aligned and
+   hold words 16-bit units; callers validate bounds before touching hardware. */
+static inline void io_insw(cpu_u16 port, cpu_u16 *buf, cpu_u32 words)
+{ __asm__ volatile ("rep insw" : "+D"(buf), "+c"(words) : "d"(port) : "memory"); }
+static inline void io_outsw(cpu_u16 port, const cpu_u16 *buf, cpu_u32 words)
+{ cpu_u16 *p = (cpu_u16 *)buf; __asm__ volatile ("rep outsw" : "+S"(p), "+c"(words) : "d"(port) : "memory"); }
+
 static inline int cpu_interrupts_disabled(void)
 {
     cpu_u64 flags;

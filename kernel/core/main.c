@@ -9,6 +9,7 @@
 #include "display.h"
 #include "krst.h"
 #include "shell.h"
+#include "blk.h"
 
 /* RYNOR_VERSION is supplied from project.json, without timestamps or host paths. */
 void kernel_main(void)
@@ -39,6 +40,10 @@ void kernel_main(void)
     serial_write("[TEST] PMM post-IRQ accounting verified\r\n");
     serial_flush();
     shell_self_test();
+    serial_flush();
+    /* Storage last: its evidence lines trail the shell section so the
+       runtime/shell transcript grammars stay exact on normal boots. */
+    blk_self_test();
     serial_flush();
     /* Returning reaches the entry stub's CLI/HLT loop, never BIOS or host code. */
 }

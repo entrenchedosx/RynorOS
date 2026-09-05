@@ -157,7 +157,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                memory_mib: int = 64, cpu_model: str = "qemu64",
                max_ram_below_4g_mib: int | None = None,
                keys: tuple[str, ...] = KEYS, inject_keys: bool = True,
-                shell_interactive: bool = False, shell_keys=None) -> bytes:
+               shell_interactive: bool = False, shell_keys=None,
+               extra_drives: tuple[str | Path, ...] = ()) -> bytes:
     # Invalidate stale evidence before any validation failure can leave
     # prior success bytes behind as false evidence.
     logs.mkdir(parents=True, exist_ok=True)
@@ -187,6 +188,9 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
         raise ValueError("Low RAM limit must be an integer in [32, 4096] MiB")
     if not image.is_file():
         raise FileNotFoundError(f"Boot image missing: {image}")
+    for extra in extra_drives:
+        if not Path(extra).is_file():
+            raise FileNotFoundError(f"Extra drive image missing: {extra}")
     qemu = find_tool("qemu-system-x86_64", "RYNOR_QEMU")
     qemu_path = Path(qemu).resolve()
     bios = _locate_firmware(qemu_path)
@@ -208,8 +212,16 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     command = [
         str(qemu_path), "-machine", machine, "-accel", "tcg,tb-size=32", "-cpu", cpu_model,
         "-m", f"{memory_mib}M", "-smp", "1", "-bios", str(bios), "-display", "none", "-vga", "std",
-        "-nic", "none", "-parallel", "none", "-boot", "order=c,strict=on",
+        "-nic", "none", "-parallel", "none",         "-boot", "order=c,strict=on",
         "-drive", f"file={str(image.resolve()).replace(',', ',,')},format=raw,if=ide,snapshot=on",
+    ]
+    # Disposable test devices (Stage 17a): additional raw IDE disks behind
+    # snapshot overlays, so guest writes never reach the host files and reruns
+    # stay deterministic. The boot disk stays primary master.
+    for extra in extra_drives:
+        command += ["-drive",
+                    f"file={str(Path(extra).resolve()).replace(',', ',,')},format=raw,if=ide,snapshot=on"]
+    command += [
         "-serial", f"file:{serial}", "-monitor", "stdio", "-no-reboot",
         "-d", "guest_errors,int", "-D", str(debug),
         "-trace", "enable=pckbd_kbd_read_data",

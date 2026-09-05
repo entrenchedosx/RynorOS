@@ -60,15 +60,16 @@ class ForensicRepairTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT / "tools" / "build"))
         import build as _build
         total = sum(_build.REPOSITORY_TEST_INVENTORY.values())
+        itotal = sum(_build.INTEGRATION_TEST_INVENTORY.values())
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         arch = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
         shell = (ROOT / "docs/design/shell.md").read_text(encoding="utf-8")
         self.assertIn(f"{total} repository", readme)
-        self.assertIn("162 integration", readme)
+        self.assertIn(f"{itotal} integration", readme)
         self.assertIn(str(total), arch)
-        self.assertIn("162", arch)
+        self.assertIn(str(itotal), arch)
         self.assertIn(f"{total} repository", shell)
-        self.assertIn("162 integration", shell)
+        self.assertIn(f"{itotal} integration", shell)
         self.assertNotIn("253 repository", readme + shell)
 
     def test_arch_irq_invariant(self):
