@@ -38,6 +38,21 @@ DOUBLE_TOKENS = {
     "->": "ARROW",
 }
 
+# Stage 15b shell edition: exactly one additive double token. It is only
+# recognized when the caller opts into a shell edition; default v1 behavior
+# is byte-identical (a '|' character stays LEX_INVALID_CHAR there).
+SHELL_DOUBLE_TOKENS = {
+    "|>": "PIPE_GT",
+}
+
+VALID_EDITIONS = ("v1", "shell", "shell-preview")
+
+
+def _normalize_edition(edition: str) -> str:
+    if edition in ("shell", "shell-preview"):
+        return "shell"
+    return "v1"
+
 SINGLE_TOKENS = {
     "+": "PLUS",
     "-": "MINUS",
@@ -95,9 +110,10 @@ class LexResult:
 
 
 class _Scanner:
-    def __init__(self, source: str, filename: str) -> None:
+    def __init__(self, source: str, filename: str, edition: str = "v1") -> None:
         self.source = source
         self.filename = filename
+        self.edition = _normalize_edition(edition)
         self.index = 0
         self.line = 1
         self.column = 1
@@ -220,6 +236,13 @@ class _Scanner:
                 self.advance()
                 self.tokens.append(
                     Token(DOUBLE_TOKENS[pair], pair, self.span(line, column, offset, 2))
+                )
+                continue
+            if self.edition == "shell" and pair in SHELL_DOUBLE_TOKENS:
+                self.advance()
+                self.advance()
+                self.tokens.append(
+                    Token(SHELL_DOUBLE_TOKENS[pair], pair, self.span(line, column, offset, 2))
                 )
                 continue
 
@@ -350,7 +373,7 @@ def _too_large(filename: str, data: bytes) -> LexResult:
     )
 
 
-def lex(source: str, filename: str = "<input>") -> LexResult:
+def lex(source: str, filename: str = "<input>", edition: str = "v1") -> LexResult:
     if not isinstance(source, str):
         return _input_error(filename, "LEX_INVALID_INPUT", "source must be text")
     # The size bound is bytes. For the only accepted alphabet, ASCII, a
@@ -361,10 +384,10 @@ def lex(source: str, filename: str = "<input>") -> LexResult:
     # byte-exact handling for callers that already hold encoded bytes.
     if source.isascii() and len(source) > MAX_SOURCE_BYTES:
         return _too_large(filename, source.encode("ascii")[:MAX_SOURCE_BYTES + 1])
-    return _Scanner(source, filename).scan()
+    return _Scanner(source, filename, edition).scan()
 
 
-def lex_bytes(data: bytes, filename: str = "<input>") -> LexResult:
+def lex_bytes(data: bytes, filename: str = "<input>", edition: str = "v1") -> LexResult:
     if not isinstance(data, bytes):
         return _input_error(filename, "LEX_INVALID_INPUT", "source must be bytes")
     if len(data) > MAX_SOURCE_BYTES:
@@ -372,14 +395,14 @@ def lex_bytes(data: bytes, filename: str = "<input>") -> LexResult:
     # Latin-1 preserves each input byte as one character, so the scanner sees
     # non-ASCII bytes in their true source order and byte offsets. They fall
     # through to LEX_INVALID_CHAR like every other unsupported character.
-    return _Scanner(data.decode("latin-1"), filename).scan()
+    return _Scanner(data.decode("latin-1"), filename, edition).scan()
 
 
-def lex_file(path: str | Path) -> LexResult:
+def lex_file(path: str | Path, edition: str = "v1") -> LexResult:
     source_path = Path(path)
     with source_path.open("rb") as source_file:
         data = source_file.read(MAX_SOURCE_BYTES + 1)
-    return lex_bytes(data, str(source_path))
+    return lex_bytes(data, str(source_path), edition)
 
 
 def _span_json(span: Span) -> dict[str, int | str]:
@@ -415,9 +438,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Tokenize Stage 12 RynorLang source")
     parser.add_argument("source", type=Path)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--edition", default="v1",
+                        help="language edition: v1 (default) or shell/shell-preview")
     arguments = parser.parse_args(argv)
+    if arguments.edition not in VALID_EDITIONS:
+        print(f"unknown edition {arguments.edition!r} (expected v1 or shell)", file=sys.stderr)
+        return 2
     try:
-        result = lex_file(arguments.source)
+        result = lex_file(arguments.source, arguments.edition)
     except OSError as error:
         print(f"{arguments.source}: {error}", file=sys.stderr)
         return 2

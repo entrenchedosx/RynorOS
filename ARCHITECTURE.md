@@ -251,7 +251,7 @@ No multicore execution, binary compatibility, or multi-user security is promised
 
 ## 9. Shell
 
-Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `299` repository and `162` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
+Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `433` repository and `162` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
 
 ## 10. RynorLang
 
@@ -260,25 +260,30 @@ subset is ASCII and 1 MiB bounded, uses exact keyword/operator tables, attaches
 one-based line/column and zero-based byte spans, and stops at the first lexical
 diagnostic. The implementation is Python 3.10+ standard library bootstrap
 tooling and is not linked into Rynorkernel. See `rynorlang/README.md` and
-`docs/design/rynorlang-lexer.md` for the exact contract. Stage 13 adds a host-side parser at `tools/rynorlang/parse.py`. It enforces colon return types, rejects trailing commas, implements the documented precedence including unary `!`, and produces a frozen temporary syntax tree with exact lexer spans and depth-bounded diagnostics. See `docs/design/rynorlang-parser.md`. Stage 14 adds a host-side semantic analyzer at `tools/rynorlang/analyze.py` that lowers the temporary tree to a stable, JSON-compatible AST schema (`Program, Function, Param, Block, Let, If, While, Return, ExprStmt, BinOp, UnOp, IntLit, BoolLit, StrLit, Var, Call`) with exact spans, deterministic symbol indices, and type checking (no implicit conversions, `unit` for missing return, forward function references allowed, no shadowing). Returned dictionaries/lists are caller-owned and mutable; “stable” describes the schema. See `docs/design/rynorlang-ast.md`. No compiler, runtime, or language execution beyond that semantic AST exists.
+`docs/design/rynorlang-lexer.md` for the exact contract. Stage 13 adds a host-side parser at `tools/rynorlang/parse.py`. It enforces colon return types, rejects trailing commas, implements the documented precedence including unary `!`, and produces a frozen temporary syntax tree with exact lexer spans and depth-bounded diagnostics. See `docs/design/rynorlang-parser.md`. Stage 14 adds a host-side semantic analyzer at `tools/rynorlang/analyze.py` that lowers the temporary tree to a stable, JSON-compatible AST schema (`Program, Function, Param, Block, Let, If, While, Return, ExprStmt, BinOp, UnOp, IntLit, BoolLit, StrLit, Var, Call`) with exact spans, deterministic symbol indices, and type checking (no implicit conversions, `unit` for missing return, forward function references allowed, no shadowing). Returned dictionaries/lists are caller-owned and mutable; “stable” describes the schema. See `docs/design/rynorlang-ast.md`. Stage 15a adds the typed IR, verifier, native emitter, and test-oracle execution described in §11 below. Stage 15b adds an edition-gated shell surface (`Pipeline`/`Cmd`/`Flag`/`Redirect` AST kinds behind `edition="shell"`, default v1 byte-identical): precedence-0 `|>` pipelines with `str`-only stages and the extended `unit` rule, zero-new-token commands with a stub registry, and a TEST-ONLY bounded host evaluator. No shell codegen, no userspace execution, no kernel evaluation. See `docs/design/rynorlang-shell-language.md`.
 
 ## 11. Compiler
 
-Plan: Stage 15 defines RIR, a typed three-address CFG IR over the frozen
+Stage 15a implements RIR, a typed three-address CFG IR over the frozen
 16-kind AST (`Module{funcs[]} Func{params,blocks[]} Block{id,instrs[],term}`,
-every vreg typed `int|bool|str|unit`), with a JSON golden format, a verifier,
-and a written SysV-subset ABI (unboxed `i64`/`u8`/`(ptr,len)`, `unit` erased,
-no red zone, no SIMD). A small NASM emitter covers arithmetic, comparison,
-branches, loops, and calls; a disclosed host harness links and runs compiled
-fixtures. A tree-walking evaluator may exist ONLY as a differential test
-oracle with honesty rules (separate code from the emitter, same first-error
-order, mismatch = backend bug). The IR carries a reserved-but-rejected
-`type:"value"` extension point for the later dynamic-free shell values — the
-verifier rejects it until Stage 19a, so the static fast path never boxes.
-Separate diagnostics and deterministic outputs from host I/O. No evaluation
-shortcuts masquerade as compilation. Foreign toolchains may bootstrap code
-generation only when disclosed; eventual native output must not depend on a
-host OS runtime.
+every vreg typed `int|bool|str`), at `tools/rynorlang/rir.py`: a builder with
+lexical scope tracking, a verifier with real CFG dominance plus a shared
+liveness home-slot allocator (one implementation used by builder, verifier,
+and emitter, so the three can never disagree), and canonical JSON/text dumps.
+`tools/rynorlang/compile.py` (`rynorlangc`) lowers verified RIR to NASM for
+the written SysV-subset ABI (`docs/design/rynorlang-abi.md`: unboxed
+`i64`/`u8`/`(ptr,len)`, `unit` erased, spill-everything homes, no red zone,
+no SIMD, `ud2` div-zero / hardware `#DE` overflow / `int3` fall-off).
+`tools/rynorlang/harness_start.asm` (`_start` only) links and runs compiled
+fixtures. A tree-walking evaluator exists ONLY as a differential test oracle
+(`tools/rynorlang/interp.py`, honesty rules: separate code from the emitter,
+same first-error order, mismatch = backend bug). The IR carries a
+reserved-but-rejected `type:"value"` extension point for later dynamic-free
+shell values — the verifier rejects it until Stage 19a, so the static fast
+path never boxes. Separate diagnostics and deterministic outputs from host
+I/O. No evaluation shortcuts masquerade as compilation. Foreign toolchains
+may bootstrap code generation only when disclosed; eventual native output
+must not depend on a host OS runtime. See `docs/design/rynorlang-rir.md`.
 
 ## 12. Userspace
 

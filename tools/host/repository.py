@@ -16,6 +16,10 @@ REQUIRED_DIRECTORIES = (
     "tests/fixtures/rynorlang/lexer/bad", "tests/fixtures/rynorlang/parser/good",
     "tests/fixtures/rynorlang/parser/bad", "tests/fixtures/rynorlang/semantics/good",
     "tests/fixtures/rynorlang/semantics/bad",
+    "tests/fixtures/rynorlang/compiler/good",
+    "tests/fixtures/rynorlang/compiler/trap",
+    "tests/fixtures/rynorlang/shell-edition/good",
+    "tests/fixtures/rynorlang/shell-edition/bad",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
     "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
@@ -105,6 +109,19 @@ REQUIRED_FILES = (
     # Stage 14 semantics is host-only; implementation lives under tools/rynorlang.
     "tools/rynorlang/analyze.py", "tests/repository/test_rynorlang_semantics.py",
     "docs/design/rynorlang-ast.md", "docs/reports/stage14.md",
+    # Stage 15a compiler is host-only; RIR, backend, oracle, harness, tests,
+    # fixtures, and design docs live under tools/, tests/, and docs/.
+    "tools/rynorlang/rir.py", "tools/rynorlang/compile.py",
+    "tools/rynorlang/interp.py", "tools/rynorlang/harness_start.asm",
+    "tests/repository/test_rynorlang_rir.py",
+    "tests/repository/test_rynorlang_compiler.py",
+    "docs/design/rynorlang-rir.md", "docs/design/rynorlang-abi.md",
+    "docs/reports/stage15a.md",
+    # Stage 15b shell surface is host-only; edition-gated lexer/parser/
+    # analyzer deltas plus the shell host module, tests, and fixtures.
+    "tools/rynorlang/shell.py",
+    "tests/repository/test_rynorlang_shell.py",
+    "docs/design/rynorlang-shell-language.md", "docs/reports/stage15b.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.

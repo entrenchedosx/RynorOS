@@ -36,6 +36,29 @@ C_TYPE_MISMATCH = "SEM_TYPE_MISMATCH"
 C_ARITY_MISMATCH = "SEM_ARITY_MISMATCH"
 C_UNKNOWN_FUNCTION = "SEM_UNKNOWN_FUNCTION"
 
+# Stage 15b shell-edition codes (additive-only; the five SEM_* above are frozen).
+S_UNKNOWN_COMMAND = "SHELL_UNKNOWN_COMMAND"
+S_AMBIGUOUS_COMMAND = "SHELL_AMBIGUOUS_COMMAND"
+S_PIPELINE_TYPE = "SHELL_PIPELINE_TYPE_MISMATCH"
+S_UNIT_STAGE = "SHELL_UNIT_STAGE"
+S_REDIRECT = "SHELL_REDIRECT_ERROR"
+S_COMMAND_ARITY = "SHELL_COMMAND_ARITY"
+S_COMMAND_TYPE = "SHELL_COMMAND_TYPE_MISMATCH"
+
+SHELL_EDITIONS = ("shell", "shell-preview")
+# Minimal command-signature model for host-side semantic testing. Each entry
+# maps a command name to ([param types], return type or None for unit).
+# Types are str/int/bool/flag. This is a test-stub abstraction, NOT a claim
+# that these commands exist on RynorOS; real commands arrive with modules
+# (19a) and the loader (16). Pass an explicit table in tests.
+STUB_COMMAND_TYPES = ("str", "int", "bool", "flag")
+
+
+def _normalize_edition(edition: str) -> str:
+    if edition in SHELL_EDITIONS:
+        return "shell"
+    return "v1"
+
 @dataclass(frozen=True)
 class Diagnostic:
     code: str
@@ -63,9 +86,14 @@ class _AbortAnalysis(Exception):
 
 
 class Analyzer:
-    def __init__(self, program: ParseNode, source: str | None = None, tokens: tuple[Token, ...] = ()):
+    def __init__(self, program: ParseNode, source: str | None = None, tokens: tuple[Token, ...] = (),
+                 edition: str = "v1", commands: dict | None = None):
         self.program = program
         self.depth = 0
+        self.edition = _normalize_edition(edition)
+        # Host-side stub registry: name -> ([param types], ret or None).
+        # None means no command is known (every Cmd is SHELL_UNKNOWN_COMMAND).
+        self.commands = commands
         self.global_funcs = {}  # name -> {params: [(name,type)], ret_type, span, symbol, node}
         self.sym_counter = 0
         self.diagnostic: Optional[Diagnostic] = None
@@ -120,6 +148,16 @@ class Analyzer:
 
     def analyze(self) -> AnalyzeResult:
         try:
+            if self.commands is not None:
+                if not isinstance(self.commands, dict):
+                    return AnalyzeResult(None, Diagnostic(CODE_INVALID, "command registry must be a dict", self.program.span))
+                for key, value in self.commands.items():
+                    if not isinstance(key, str) or not isinstance(value, (tuple, list)) or len(value) != 2:
+                        return AnalyzeResult(None, Diagnostic(CODE_INVALID, f"bad registry entry for {key!r}", self.program.span))
+                    params, ret = value
+                    if (not isinstance(params, list) or any(p not in STUB_COMMAND_TYPES for p in params)
+                            or (ret is not None and ret not in ("str", "int", "bool"))):
+                        return AnalyzeResult(None, Diagnostic(CODE_INVALID, f"bad signature for command {key!r}", self.program.span))
             # first pass: collect functions
             func_nodes = list(self.program.children)  # Program children are FunctionDef
             function_params = []
@@ -398,6 +436,138 @@ class Analyzer:
                 result_type = otype
             return ({"kind": "UnOp", "span": self._node_span(node), "op": op, "operand": operand, "type": result_type}, result_type)
 
+    def _lower_pipeline(self, node: ParseNode, scope_stack: list, allow_unit: bool):
+        # MVP: every non-final stage is str; a unit final stage makes a unit
+        # pipeline, legal only as an ExprStmt (checked by the Stmt context via
+        # the returned unit type, mirroring the frozen Call rule). Like the
+        # parser's iterative loop, lowering charges no depth per stage.
+        stages = []
+        stage_types = []
+        for index, stage_node in enumerate(node.children):
+            stage, stype = yield self._lower_stage(stage_node, scope_stack, piped=index > 0)
+            stages.append(stage)
+            stage_types.append(stype)
+        for index, stype in enumerate(stage_types[:-1]):
+            if stype == "unit":
+                self._error(S_UNIT_STAGE, f"pipeline stage {index} is unit; only the final stage may be unit", node.children[index].span,
+                            expected="non-unit str stage", got="unit", context=f"pipeline stage {index}")
+            if stype != "str":
+                self._error(S_PIPELINE_TYPE, f"pipeline stage {index} expects str got {stype}", node.children[index].span,
+                            expected="str", got=stype, context=f"pipeline stage {index}")
+        final_type = stage_types[-1]
+        if final_type == "unit":
+            ptype = "unit"
+        elif final_type != "str":
+            self._error(S_PIPELINE_TYPE, f"pipeline result expects str got {final_type}", node.children[-1].span,
+                        expected="str", got=final_type, context="pipeline result")
+            ptype = final_type
+        else:
+            ptype = "str"
+        void = allow_unit  # unit-ness is reported via the type, as for Call.
+        return ({"kind": "Pipeline", "span": self._node_span(node), "stages": stages, "type": ptype}, ptype)
+
+    def _lower_stage(self, node: ParseNode, scope_stack: list, piped: bool = False):
+        # One pipeline stage: a command (which observes the piped input) or
+        # any ordinary expression (evaluated independently; implicit flow
+        # applies to commands only). Stages observe actual types
+        # (allow_unit) so the pipeline rule reports the precise stage span
+        # instead of a generic context error.
+        if node.kind == "CmdExpr":
+            return (yield self._lower_cmd(node, scope_stack, True, piped))
+        return (yield self._lower_expr(node, scope_stack, True))
+
+    def _lower_cmd(self, node: ParseNode, scope_stack: list, allow_unit: bool, piped: bool = False):
+        # The parser charges one enter() per CmdExpr; lowering matches it so
+        # depth-boundary parity holds in both editions.
+        self._enter()
+        try:
+            name = node.text
+            argv_nodes = []
+            redirect_nodes = []
+            for child in node.children[1:]:
+                if child.kind == "CmdArgs":
+                    argv_nodes.extend(child.children)
+                elif child.kind == "Redirect":
+                    redirect_nodes.append(child)
+                else:
+                    self._error(S_REDIRECT, f"unexpected command child {child.kind}", child.span,
+                                expected="argument or redirect", got=child.kind, context="command")
+            bare = not argv_nodes and not redirect_nodes
+            entry = self.commands.get(name) if isinstance(self.commands, dict) else None
+            if bare:
+                # Lone word: lexical variables keep their v1 meaning first,
+                # so `let ls: str = ...; ls |> count` uses the variable even
+                # when a stub command shares the name. (No-shadowing keeps
+                # this disjoint from the function/command ambiguity below.)
+                found = self._lookup(name, scope_stack)
+                if found is not None:
+                    sym, typ, _ = found
+                    return ({"kind": "Var", "span": self._node_span(node), "name": name, "symbol": sym, "type": typ}, typ)
+            if name in self.global_funcs and entry is not None:
+                self._error(S_AMBIGUOUS_COMMAND, f"'{name}' names both a function and a command", node.span,
+                            expected="unambiguous command", got=name, name=name, context="command")
+            if entry is None:
+                if name in self.global_funcs:
+                    self._error(S_UNKNOWN_COMMAND, f"'{name}' is a function, not a command (use {name}(...))", node.span,
+                                expected="known command", got=name, name=name, context="command")
+                self._error(S_UNKNOWN_COMMAND, f"unknown command '{name}'", node.span,
+                            expected="known command", got=name, name=name, context="command")
+            want_params, want_ret = entry
+            # Piped input fills the command's first parameter when this Cmd
+            # is a non-head stage (MVP implicit flow, commands only). The
+            # head stage satisfies its signature from explicit args alone.
+            # Piping into a zero-parameter command is an arity error: the
+            # input would have nowhere typed to go.
+            if piped:
+                got_types: list = ["str"]
+                span_offset = 1
+            else:
+                got_types = []
+                span_offset = 0
+            lowered_argv = []
+            for arg in argv_nodes:
+                if arg.kind == "FlagArg":
+                    lowered_argv.append({"kind": "Flag", "span": self._node_span(arg), "name": arg.text, "type": "flag"})
+                    got_types.append("flag")
+                elif arg.kind == "UnaryExpr":
+                    stable, atype = yield self._lower_expr(arg, scope_stack, False)
+                    lowered_argv.append(stable)
+                    got_types.append(atype)
+                else:
+                    stable, atype = yield self._lower_expr(arg, scope_stack, False)
+                    if atype == "unit":
+                        self._error(C_TYPE_MISMATCH, f"unit as command argument", arg.span,
+                                    expected="non-unit", got="unit", name=name, context="command argument")
+                    lowered_argv.append(stable)
+                    got_types.append(atype)
+            lowered_redirects = []
+            for redir in redirect_nodes:
+                target_node = redir.children[0]
+                target, ttype = yield self._lower_expr(target_node, scope_stack, False)
+                if ttype != "str":
+                    self._error(S_REDIRECT, f"redirect target expects str got {ttype}", target_node.span,
+                                expected="str", got=ttype, context="redirect")
+                lowered_redirects.append({"kind": "Redirect", "span": self._node_span(redir),
+                                          "op": redir.text, "target": target, "type": "str"})
+            if len(got_types) != len(want_params):
+                self._error(S_COMMAND_ARITY, f"arity mismatch for command '{name}' expected {len(want_params)} got {len(got_types)}", node.span,
+                            expected=len(want_params), got=len(got_types), name=name, context="command")
+            for index, (got, want) in enumerate(zip(got_types, want_params)):
+                explicit = index - span_offset
+                span = argv_nodes[explicit].span if 0 <= explicit < len(argv_nodes) else node.span
+                if got != want:
+                    self._error(S_COMMAND_TYPE, f"arg {index} for command '{name}' expects {want} got {got}", span,
+                                expected=want, got=got, name=name, context=f"argument {index}")
+            result_type = want_ret if want_ret is not None else "unit"
+            void = allow_unit
+            sym = self.sym_counter
+            self.sym_counter += 1
+            return ({"kind": "Cmd", "span": self._node_span(node), "name": name,
+                     "argv": lowered_argv, "redirects": lowered_redirects,
+                     "type": result_type, "symbol": sym}, result_type)
+        finally:
+            self._leave()
+
     def _lower_primary_or_binary(self, node: ParseNode, scope_stack: list, allow_unit: bool):
         if True:
             if node.kind == "IntegerLiteral":
@@ -463,6 +633,17 @@ class Analyzer:
                 else:
                     result_type = "int"
                 return ({"kind": "BinOp", "span": self._node_span(node), "op": op, "left": left, "right": right, "type": result_type}, result_type)
+            elif node.kind in ("PipeExpr", "CmdExpr", "FlagArg", "Redirect", "CmdArgs"):
+                if self.edition != "shell":
+                    self._error(CODE_UNEXP_TOKEN, f"shell syntax requires the shell edition (got {node.kind})", node.span,
+                                expected="v1 expression", got=node.kind, context="edition gate")
+                if node.kind == "PipeExpr":
+                    return (yield self._lower_pipeline(node, scope_stack, allow_unit))
+                elif node.kind == "CmdExpr":
+                    return (yield self._lower_cmd(node, scope_stack, allow_unit))
+                else:
+                    self._error(C_TYPE_MISMATCH, f"unexpected shell fragment {node.kind}", node.span,
+                                expected="pipeline or command context", got=node.kind, context="lowering")
             elif node.kind == "CallExpr":
                 # The parser charges one level per call argument group (enter
                 # in parse_postfix around the arg list); lowering matches it.
@@ -522,11 +703,11 @@ class Analyzer:
                 self._error(C_TYPE_MISMATCH, f"unknown expr {node.kind}", node.span,
                             expected="supported expression", got=node.kind, context="lowering")
 
-def analyze(source: str, filename: str = "<input>") -> AnalyzeResult:
+def analyze(source: str, filename: str = "<input>", edition: str = "v1", commands: dict | None = None) -> AnalyzeResult:
     if not isinstance(source, str) or not isinstance(filename, str):
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "source and filename must be strings", Span(filename if isinstance(filename,str) else "<input>",1,1,0,0)))
     # lex+parse
-    pres = parse(source, filename)
+    pres = parse(source, filename, edition)
     if not pres.ok:
         # pass through PAR_*/LEX_*
         d = pres.diagnostic
@@ -537,39 +718,39 @@ def analyze(source: str, filename: str = "<input>") -> AnalyzeResult:
             got_lexeme=getattr(d, "got_lexeme", None),
         ))
     # lowering + semantics
-    analyzer = Analyzer(pres.root, source=source)
+    analyzer = Analyzer(pres.root, source=source, edition=edition, commands=commands)
     return analyzer.analyze()
 
-def analyze_bytes(data: bytes, filename: str = "<input>") -> AnalyzeResult:
+def analyze_bytes(data: bytes, filename: str = "<input>", edition: str = "v1", commands: dict | None = None) -> AnalyzeResult:
     if not isinstance(data, bytes) or not isinstance(filename, str):
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "data must be bytes", Span(filename if isinstance(filename,str) else "<input>",1,1,0,0)))
     from tools.rynorlang.lex import lex_bytes
-    res = lex_bytes(data, filename)
+    res = lex_bytes(data, filename, edition)
     if res.diagnostic:
         code = CODE_FILE if res.diagnostic.code=="LEX_FILE_TOO_LARGE" else CODE_LEX
         return AnalyzeResult(None, Diagnostic(code, res.diagnostic.message, res.diagnostic.span, got_kind=res.diagnostic.code))
-    return analyze_tokens(res.tokens, filename, source=data.decode("ascii"))
+    return analyze_tokens(res.tokens, filename, source=data.decode("ascii"), edition=edition, commands=commands)
 
-def analyze_file(path) -> AnalyzeResult:
+def analyze_file(path, edition: str = "v1", commands: dict | None = None) -> AnalyzeResult:
     try:
         p = Path(path)
         # use lex_file for bounds
         from tools.rynorlang.lex import lex_file
-        lres = lex_file(p)
+        lres = lex_file(p, edition)
         if lres.diagnostic:
             code = CODE_FILE if lres.diagnostic.code=="LEX_FILE_TOO_LARGE" else CODE_LEX
             return AnalyzeResult(None, Diagnostic(code, lres.diagnostic.message, lres.diagnostic.span, got_kind=lres.diagnostic.code))
-        return analyze_tokens(lres.tokens, str(p))
+        return analyze_tokens(lres.tokens, str(p), edition=edition, commands=commands)
     except (OSError, TypeError, ValueError) as e:
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, str(e), Span(str(path),1,1,0,0)))
 
-def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None) -> AnalyzeResult:
+def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None, edition: str = "v1", commands: dict | None = None) -> AnalyzeResult:
     if not isinstance(filename, str) or (source is not None and not isinstance(source, str)):
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "invalid filename or source", Span("<input>",1,1,0,0)))
     if not isinstance(tokens, tuple) or not tokens:
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "tokens must be non-empty tuple", Span(filename,1,1,0,0)))
     # validate tokens via parse_tokens
-    pres = parse_tokens(tokens)
+    pres = parse_tokens(tokens, edition)
     if not pres.ok:
         d = pres.diagnostic
         return AnalyzeResult(None, Diagnostic(
@@ -579,7 +760,7 @@ def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None)
             got_lexeme=getattr(d, "got_lexeme", None),
         ))
     if source is not None:
-        source_tokens = lex(source, tokens[0].span.filename)
+        source_tokens = lex(source, tokens[0].span.filename, edition)
         if source_tokens.diagnostic is not None:
             # The supplied source is itself lexically at fault: report its
             # real diagnostic (mapped like the sibling entry points) instead
@@ -590,7 +771,7 @@ def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None)
                                                   got_kind=lex_diag.code))
         if source_tokens.tokens != tokens:
             return AnalyzeResult(None, Diagnostic(CODE_INVALID, "source does not match tokens", Span(filename,1,1,0,0)))
-    analyzer = Analyzer(pres.root, source=source, tokens=tokens)
+    analyzer = Analyzer(pres.root, source=source, tokens=tokens, edition=edition, commands=commands)
     return analyzer.analyze()
 
 def iter_ast_json(ast):
@@ -630,11 +811,18 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Analyze Stage 14 RynorLang source")
     ap.add_argument("source", type=Path, nargs="?")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--edition", default="v1",
+                    help="language edition: v1 (default) or shell/shell-preview")
     args = ap.parse_args(argv)
     if args.source is None:
         ap.print_usage(sys.stderr)
         return 2
-    res = analyze_file(args.source)
+    if args.edition not in ("v1", "shell", "shell-preview"):
+        print(f"unknown edition {args.edition!r} (expected v1 or shell)", file=sys.stderr)
+        return 2
+    from tools.rynorlang.shell import DEMO_COMMANDS
+    commands = DEMO_COMMANDS if _normalize_edition(args.edition) == "shell" else None
+    res = analyze_file(args.source, args.edition, commands)
     if not res.ok:
         d = res.diagnostic
         # diagnostic line
