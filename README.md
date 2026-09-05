@@ -7,9 +7,9 @@ values) filling a PowerShell-like *role* with an original design, not a clone.
 Inspired by the simplicity of TempleOS, not based
 on its implementation, Linux, BSD, or an existing userspace.
 
-## Current state — Stage 14 RynorLang semantics (verified, host-side)
+## Current state — Stage 16 host-native programs (verified, host-side)
 
-This is a single-CPU kernel development platform plus a **host-side RynorLang lexical, syntactic, and semantic subset**, **not a usable or
+This is a single-CPU kernel development platform plus a **host-side RynorLang toolchain through native programs**, **not a usable or
 production-ready OS**. The independently [audited Stage 7 scheduler](docs/reports/stage7-audit.md)
 (repair, ownership and limits), the [Stage 8 keyboard](docs/reports/stage8-audit.md),
 and the [Stage 9 display](docs/reports/stage9-audit.md) are the prior verified
@@ -17,7 +17,7 @@ milestones. Stage 10 adds bounded strings/byte buffers and ring-0 runtime
 services driven from real worker threads; see [docs/reports/stage10-audit.md](docs/reports/stage10-audit.md)
 and [docs/design/runtime.md](docs/design/runtime.md). Stage 11 adds a verified
 ring-0 kernel monitor (`kernel/shell/`) with real `IRQ1` input; see
-[docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md). **Stage 12 freezes the RynorLang lexical subset** and provides one host-side `tools/rynorlang/lex.py` implementation with precise spans, first-error diagnostics, and deterministic output; see [docs/reports/stage12.md](docs/reports/stage12.md) and [docs/design/rynorlang-lexer.md](docs/design/rynorlang-lexer.md). **Stage 13 parses that token stream** into a documented temporary syntax tree with exact spans, precedence, associativity, dangling-else, and depth-bounded diagnostics; see [docs/reports/stage13.md](docs/reports/stage13.md) and [docs/design/rynorlang-parser.md](docs/design/rynorlang-parser.md). **Stage 14 lowers that tree** into a stable JSON-compatible AST and performs name resolution and type checking with exact `SEM_*` diagnostics; see [docs/reports/stage14.md](docs/reports/stage14.md) and [docs/design/rynorlang-ast.md](docs/design/rynorlang-ast.md).
+[docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md). **Stage 12 freezes the RynorLang lexical subset** and provides one host-side `tools/rynorlang/lex.py` implementation with precise spans, first-error diagnostics, and deterministic output; see [docs/reports/stage12.md](docs/reports/stage12.md) and [docs/design/rynorlang-lexer.md](docs/design/rynorlang-lexer.md). **Stage 13 parses that token stream** into a documented temporary syntax tree with exact spans, precedence, associativity, dangling-else, and depth-bounded diagnostics; see [docs/reports/stage13.md](docs/reports/stage13.md) and [docs/design/rynorlang-parser.md](docs/design/rynorlang-parser.md). **Stage 14 lowers that tree** into a stable JSON-compatible AST and performs name resolution and type checking with exact `SEM_*` diagnostics; see [docs/reports/stage14.md](docs/reports/stage14.md) and [docs/design/rynorlang-ast.md](docs/design/rynorlang-ast.md). **Stage 15a adds a typed IR, verifier, and native backend** with real dominance and a SysV-subset ABI; see [docs/reports/stage15a.md](docs/reports/stage15a.md). **Stage 15b adds an edition-gated shell surface** (`|>` pipelines, commands); see [docs/reports/stage15b.md](docs/reports/stage15b.md). **Stage 16 turns verified sources into real host-native ELF programs** with exact-bytes `print`; see [docs/reports/stage16.md](docs/reports/stage16.md). The [roadmap](ROADMAP.md) stages 0–16 as implemented milestones (not production readiness); Stage 17 onward remains planned.
 
 Implemented and exercised in QEMU:
 
