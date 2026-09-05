@@ -1,7 +1,10 @@
 <h1><img src="assets/branding/icon.png" width="56" height="56" alt="RynorOS icon"> RynorOS</h1>
 
 An original operating-system project: **Rynorkernel**, with **RynorLang** (`.rl`)
-planned as its native language. Inspired by the simplicity of TempleOS, not based
+planned as its native language — a statically typed shell and scripting
+language (interactive REPL, scripts, structured `|>` pipelines over typed
+values) filling a PowerShell-like *role* with an original design, not a clone.
+Inspired by the simplicity of TempleOS, not based
 on its implementation, Linux, BSD, or an existing userspace.
 
 ## Current state — Stage 14 RynorLang semantics (verified, host-side)

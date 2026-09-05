@@ -264,12 +264,21 @@ tooling and is not linked into Rynorkernel. See `rynorlang/README.md` and
 
 ## 11. Compiler
 
-Plan: Stage 15 will define a small x86-64 native backend with a written ABI and output format. Separate
-diagnostics and deterministic outputs from host I/O. No evaluation shortcuts
-should masquerade as compilation. Linking, relocation, runtime calls, and
-executable loading need tested contracts before native applications. Foreign
-toolchains may bootstrap code generation only when disclosed; eventual native
-output must not depend on a host OS runtime.
+Plan: Stage 15 defines RIR, a typed three-address CFG IR over the frozen
+16-kind AST (`Module{funcs[]} Func{params,blocks[]} Block{id,instrs[],term}`,
+every vreg typed `int|bool|str|unit`), with a JSON golden format, a verifier,
+and a written SysV-subset ABI (unboxed `i64`/`u8`/`(ptr,len)`, `unit` erased,
+no red zone, no SIMD). A small NASM emitter covers arithmetic, comparison,
+branches, loops, and calls; a disclosed host harness links and runs compiled
+fixtures. A tree-walking evaluator may exist ONLY as a differential test
+oracle with honesty rules (separate code from the emitter, same first-error
+order, mismatch = backend bug). The IR carries a reserved-but-rejected
+`type:"value"` extension point for the later dynamic-free shell values — the
+verifier rejects it until Stage 19a, so the static fast path never boxes.
+Separate diagnostics and deterministic outputs from host I/O. No evaluation
+shortcuts masquerade as compilation. Foreign toolchains may bootstrap code
+generation only when disclosed; eventual native output must not depend on a
+host OS runtime.
 
 ## 12. Userspace
 
@@ -278,7 +287,13 @@ services, not wrappers over host APIs. Initial trusted programs may execute in
 kernel mode as an explicit intermediate milestone. Protected userspace requires
 user-mode entry, validated memory access, syscalls, process exit, and loading.
 Runtime I/O such as `print` will bind to real OS services only when available.
-The API and ownership/error conventions are experimental.
+The API and ownership/error conventions are experimental. The native shell is a
+RynorLang program (REPL + scripts, structured `|>` pipelines over typed values
+per `docs/design/rynorlang-shell-language.md`), running only in CPL3; the
+ring-0 monitor (`kernel/shell/`) stays a frozen trusted monitor and never gains
+evaluation. RynorLang itself stays fully statically typed at every stage —
+heterogeneity comes from explicit closed unions (`record`, `list<T,N>`,
+`status`), never from dynamic typing; see `docs/design/rynorlang-runtime.md`.
 
 ## 13. Testing strategy
 
