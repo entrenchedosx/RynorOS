@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, and the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking), the Stage 15a typed IR plus native backend with real dominance and a SysV-subset ABI, the Stage 15b edition-gated shell surface, and Stage 16 host-native `.rl` programs (exact-bytes `print`, deterministic ELF pipeline). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -295,8 +295,13 @@ no userspace, no self-hosting. See `docs/design/rynorlang-program-model.md`.
 
 ## 12. Userspace
 
-Plan: a minimal native library, shell, and `.rl` applications using RynorOS
-services, not wrappers over host APIs. Initial trusted programs may execute in
+Plan, in four independently testable steps (see `ROADMAP.md` stages
+18a–18d): (a) protected-userspace foundation — CPL3 entry, per-process
+address-space isolation, fault containment, clean exit; (b) native
+executable loader plus a small explicit syscall boundary, turning Stage 16
+host-native programs into loadable RynorOS userspace programs; (c) a native
+runtime library over those syscalls; (d) the native RynorLang shell and REPL
+in CPL3. Initial trusted programs may execute in
 kernel mode as an explicit intermediate milestone. Protected userspace requires
 user-mode entry, validated memory access, syscalls, process exit, and loading.
 Runtime I/O such as `print` will bind to real OS services only when available.
@@ -307,6 +312,20 @@ ring-0 monitor (`kernel/shell/`) stays a frozen trusted monitor and never gains
 evaluation. RynorLang itself stays fully statically typed at every stage —
 heterogeneity comes from explicit closed unions (`record`, `list<T,N>`,
 `status`), never from dynamic typing; see `docs/design/rynorlang-runtime.md`.
+
+### 12b. Future native subsystems (Stages 20c–20e, planned)
+
+One shared device model, not per-class bus abstractions: PCI/firmware
+discovery feeds a small device manager with classes for input, audio,
+storage, network, and graphics, with DMA/IOMMU readiness for containment.
+Graphics grows a display abstraction, buffers, presentation/sync, a software
+fallback, and a first hardware backend on top of Stage 9 discovery — the
+Stage 9 framebuffer alone never counts as GPU support. Networking grows a
+bounded IPv4/UDP/TCP/DNS/socket stack (IPv6 deferred). Audio grows
+discovery, bounded buffers, and a first backend. Windows graphics,
+networking, and audio compatibility (Stages 21d–21f, 21j) sit on these
+native stacks, never directly on Stage 9 or on bare kernel services. See
+`ROADMAP.md` (rows 20c–20e and the dependency graph).
 
 ## 13. Testing strategy
 

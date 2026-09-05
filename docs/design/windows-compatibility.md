@@ -125,7 +125,7 @@ Violations halt or return `STATUS_ACCESS_VIOLATION`/`STATUS_INVALID_HANDLE`/`STA
 
 ## Dependencies
 
-Hard gate: **Stage 18a Protected userspace** (`user-mode processes, loader validation, syscalls, address-space isolation, clean exit`) and **Stage 17a/b** (block driver + native filesystem read for file-backed images). `21b/c` additionally need blocking scheduler waits (`THREAD_WAITING` + wait queues) and `CR3` switching with `TSS.RSP0`/`IST`. `21d/e` need native or paravirt display/GPU (Stage 9 LFB alone insufficient). `21k` (driver containment) needs `VT-x`/`AMD-V` + `EPT`/`NPT` + `IOMMU` (`VT-d`/`AMD-Vi`, `DMAR`, `ATS`), `APIC`/`MSI-X`, PCIe enumeration (`capabilities`, `Resizable BAR`). Label all pre-18a Windows milestones `research-only`.
+Hard gate: **Stage 18a–18b Protected userspace and loader/syscalls** (`user-mode processes, loader validation, syscalls, address-space isolation, clean exit`) and **Stage 17a/b** (block driver + native filesystem read for file-backed images). `21b/c` additionally need blocking scheduler waits (`THREAD_WAITING` + wait queues) and `CR3` switching with `TSS.RSP0`/`IST`. `21d/e` need the Stage 20c native graphics stack (native or paravirt display/GPU; Stage 9 LFB alone insufficient). `21f` needs the Stage 20e device/audio stack; `21j` needs the Stage 20d networking stack; `21g` needs the 18b native loader. `21k` (driver containment) needs `VT-x`/`AMD-V` + `EPT`/`NPT` + `IOMMU` (`VT-d`/`AMD-Vi`, `DMAR`, `ATS`), `APIC`/`MSI-X`, PCIe enumeration (`capabilities`, `Resizable BAR`) via the 20e device manager. Label all pre-18a Windows milestones `research-only`.
 
 ## Tests
 

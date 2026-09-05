@@ -10,10 +10,10 @@ Stages 0–10  implemented (boot, CPU, PIC/PIT, PMM, VM, heap, scheduler,
 Stage 11     Shell/monitor (ring-0; interactive input is opt-in in test images)
 Stages 12–14 RynorLang lexer/parser/semantics (host)
 Stage 15     Compiler ABI
-Stage 16     Native .rl programs (trusted, kernel-mode bundle)
+Stage 16     Native .rl host programs (Linux ELF test executables, not RynorOS ABI)
 Stage 17a/b  Block storage + native filesystem (read, then write)
-Stage 18a/b  Protected userspace (syscalls, isolation, native shell/lib)
-Stages 19–20 Language readiness, self-hosting compiler, native tools, self-hosting OS
+Stage 18a-d  Protected userspace (foundation; loader + syscalls; runtime lib; shell + REPL)
+Stages 19-20 Language growth (19a aggregates → 19e self-hosting compiler), native tools, self-hosting OS, then native graphics/networking/devices (20c-e)
 ──────────────────────────────────────────────────────────────────────────────
 Stage 21a–21m Windows Compatibility Program (this document)
 ```
@@ -23,56 +23,66 @@ No Windows stage is placed before `18a`+`17a/b` without an explicit `research-on
 ## Dependency graph (text)
 
 ```text
-Rynorkernel (PMM/VM/heap/kstack/scheduler/PIC/PIT/keyboard/BGA LFB)
-   │
-   ├── 17a Block driver (PCIe enumeration, virtio-blk or IDE, DMA/IOMMU later)
-   ├── 17b Native filesystem (versioned image tool, corruption rejection)
-   │
-   ▼
-18a Protected userspace
-   ├── GDT user selectors (0x1B/0x23), TSS.RSP0/IST, IDT DPL3
-   ├── syscall gate (MSR_LSTAR/STAR/SFMASK or int 0x80)
-   ├── per-process vm_space (U/S=1, CR3 switch, INVLPG/PCID, SMEP/SMAP)
-   ├── loader validation (ELF/PE bounds, W^X, fault-arm #PF)
-   └── blocking scheduler (THREAD_WAITING, wait queues, timeout via IRQ0/APIC)
-   │
-   ▼
-21a PE/COFF foundation  ──────────────────────────────────┐
-   │  parse/validate headers, sections, relocs, imports,   │
-   │  exports, TLS, pdata/xdata; malformed rejection      │
-   ▼                                                      │
-21b User-mode ABI foundation                               │
-   │  handles, VirtualAlloc, sync primitives, env, DLL     │
-   │  model, TLS, SEH substrate, blocking waits            │
-   ▼                                                      │
-21c Win32 API compatibility  ◄──────────────────────────────┤
-   │  kernel32/NT semantics, file/memory/thread/sync       │
-   ▼                                                      │
-21d GUI compatibility                                      │
-   │  window/input/message loop/GDI basics                 │
-   ▼                                                      │
-21e Graphics compatibility  ───────────┐                    │
-   │  DXGI/D3D boundary, shaders,     │                    │
-   │  resources, presentation        │                    │
-   ▼                                │                    │
-21f Audio/input/device  ──────────────┤                    │
-   ▼                                │                    │
-21g PE loader + DLL ecosystem  ◄─────┘                    │
-   ▼                                                      │
-21h Advanced runtime (SEH/VEH, fibers, TLS, overlapped)   │
-   ▼                                                      │
-21i Game compatibility foundation (harness)                │
-   ▼                                                      │
-21j Multiplayer/network (Winsock/DNS/UDP/TCP)             │
-   ▼                                                      │
-21k Driver compatibility environment (contained NT driver) │
-   │  requires VT-x/EPT/IOMMU or Ring-3 NT emulation     │
-   ▼                                                      │
-21l Advanced game compatibility (matrix  app→3D→offline→online→high-perf)
-   ▼                                                      │
-21m Certification framework  ──────────────────────────────┘
-      binary/env/API/driver/graphics/input/network/security/observed/limitations
-```
+  Rynorkernel (PMM/VM/heap/kstack/scheduler/PIC/PIT/keyboard/BGA LFB)
+    │
+    ├── 17a Block driver (PCIe enumeration, virtio-blk or IDE, DMA/IOMMU later)
+    ├── 17b Native filesystem (versioned image tool, corruption rejection)
+    │
+    ▼
+  18a Protected userspace foundation
+    ├── GDT user selectors (0x1B/0x23), TSS.RSP0/IST, IDT DPL3
+    ├── per-process vm_space (U/S=1, CR3 switch, INVLPG/PCID, SMEP/SMAP)
+    └── fault containment + clean exit (traps, never panics)
+    │
+    ▼
+  18b Loader + syscall boundary
+    ├── loader validation (ELF/PE bounds, W^X, fault-arm #PF)
+    ├── syscall gate (MSR_LSTAR/STAR/SFMASK or int 0x80)
+    └── blocking scheduler (THREAD_WAITING, wait queues, timeout via IRQ0/APIC)
+    │
+    ▼
+  21a PE/COFF foundation  ──────────────────────────────────┐
+    │  parse/validate headers, sections, relocs, imports,   │
+    │  exports, TLS, pdata/xdata; malformed rejection      │
+    ▼                                                      │
+  21b User-mode ABI foundation                               │
+    │  handles, VirtualAlloc, sync primitives, env, DLL     │
+    │  model, TLS, SEH substrate, blocking waits            │
+    ▼                                                      │
+  21c Win32 API compatibility  ◄──────────────────────────────┤
+    │  kernel32/NT semantics, file/memory/thread/sync       │
+    ▼  (needs 18c runtime lib + 17b file images)            │
+  21d GUI compatibility                                      │
+    │  window/input/message loop/GDI basics                 │
+    │  (needs 20c native graphics; Stage 9 LFB insufficient)│
+    ▼                                                      │
+  21e Graphics compatibility  ───────────┐                    │
+    │  DXGI/D3D boundary, shaders,     │                    │
+    │  resources, presentation        │                    │
+    │  (needs 20c native stack)      │                    │
+    ▼                                │                    │
+  21f Audio/input/device  ──────────────┤                    │
+    │  (needs 20e device/audio stack)  │                    │
+    ▼                                │                    │
+  21g PE loader + DLL ecosystem  ◄─────┘                    │
+    │  (needs 18b native loader)                           │
+    ▼                                                      │
+  21h Advanced runtime (SEH/VEH, fibers, TLS, overlapped)   │
+    ▼                                                      │
+  21i Game compatibility foundation (harness)                │
+    ▼                                                      │
+  21j Multiplayer/network (Winsock/DNS/UDP/TCP)            │
+    │  (needs 20d native networking stack)                 │
+    ▼                                                      │
+  21k Driver compatibility environment (contained NT driver) │
+    │  requires VT-x/EPT/IOMMU or Ring-3 NT emulation     │
+    │  (needs 18a isolation + 20e DMA/IOMMU readiness)     │
+    ▼                                                      │
+  21l Advanced game compatibility (matrix  app→3D→offline→online→high-perf)
+    ▼                                                      │
+  21m Certification framework  ──────────────────────────────┘
+       binary/env/API/driver/graphics/input/network/security/observed/limitations
+  ```
 
 `21e`/`21g` are partially independent of `21d`; `21j` can proceed after `21c`; `21k` may be implemented as a hypervisor-hosted Windows kernel rather than a re-implemented NT executive — both require `18a` and `IOMMU`.
 

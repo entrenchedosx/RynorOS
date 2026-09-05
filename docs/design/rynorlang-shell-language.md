@@ -126,7 +126,7 @@ exactly as today.
   `Flag`/`Redirect` kinds and 7 `SHELL_*` codes without touching v1 goldens).
   Non-v1 nodes are rejected explicitly instead of miscompiled.
 
-## 6. REPL contract (userspace only, Stage 18b)
+## 6. REPL contract (userspace only, Stage 18d)
 
 The REPL never runs in the kernel and never evaluates untrusted text in ring 0.
 It runs in CPL3 with the session model below:
@@ -145,7 +145,7 @@ It runs in CPL3 with the session model below:
   arena for persisted values only; a balance walk asserts zero leak per prompt.
 * **Interrupt:** `Ctrl-C` sets an abort flag via the IRQ1 path, discards the
   current partial block, preserves the session; it never kills the REPL thread.
-* **No history/cursor** until the 18b shell milestone itself lands.
+* **No history/cursor** until the 18d shell milestone itself lands.
 
 ## 7. Scripts (before any filesystem)
 
@@ -155,7 +155,7 @@ the read-only boot bundle (magic+version+count manifest, per-entry
 executes; corrupt input halts with a diagnostic). No serial-paste execution —
 paste stays a QEMU test-harness facility. Exit status is the `return` value of
 `main()->int`, emitted as an `[RL] exit=N` serial marker. `argv`/pipes/files
-arrive with 18b.
+arrive with 18d.
 
 ## 8. Testing requirements (binding)
 
@@ -181,5 +181,5 @@ arrive with 18b.
 
 ## 9. Open questions (for the shell RFC, not this doc)
 
-Exact pipe-buffer cap; `$?`-style status in MVP vs 18b; `run` as ring-0 stub
-vs 18b-only; `status`-propagation syntax (`?` vs `match`); `map` key types.
+Exact pipe-buffer cap; `$?`-style status in MVP vs 18d; `run` as ring-0 stub
+vs 18d-only; `status`-propagation syntax (`?` vs `match`); `map` key types.

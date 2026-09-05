@@ -1,9 +1,10 @@
 # Roadmap
 
-Stages 0–14 are implemented. Stage 15 onward remains **planned**; language and ABI
-details are **experimental** until specified and tested. Each row is a small
-delivery target with an observable exit condition, not a claim of functionality.
-Stages may be split further. Numbering is a working sequence, not a schedule.
+Stages 0–16 are implemented within their documented scopes. Stage 17 onward
+remains **planned**. Stage labels are milestone boundaries, not claims of
+production readiness. Each row has an observable exit condition, not a claim
+of functionality. Stages may be split further. Numbering is a working
+sequence, not a schedule.
 
 The incoming Stage 6 heap required correctness repairs despite passing its
 original suite, and the Stage 7 scheduling milestone was rebuilt from that
@@ -31,26 +32,34 @@ defects and repaired them. Current evidence is in `docs/reports/stage7-audit.md`
 | 15a | Typed IR + native compiler (static core) — implemented | One Python 3.10+ stdlib implementation: `tools/rynorlang/rir.py` (typed 3-address CFG builder + verifier with real dominance, shared liveness slot allocator, canonical dumps), `tools/rynorlang/compile.py` (`rynorlangc`: NASM emitter for the SysV-subset ABI — unboxed `i64`/`u8`/`(ptr,len)`, `unit` erased, spill-everything homes, `ud2`/`int3` traps), and `tools/rynorlang/interp.py` (differential test oracle only, with honesty rules). The 48 RIR tests and 39 compiler tests use 17 good + 3 trap fixtures with JSON goldens, verifier units, determinism checks, native differential runs, and a 21-mutation matrix; bad fixtures rejected pre-emit; v2 AST kinds explicitly rejected (`COMP_V2_UNSUPPORTED`). See `docs/design/rynorlang-rir.md`, `docs/design/rynorlang-abi.md`, and `docs/reports/stage15a.md`. No dynamic values, no GC, no shell syntax. |
 | 15b | Shell language surface (host-side, edition-gated) — implemented | One Python 3.10+ stdlib implementation: edition-gated `|>` token plus `Pipeline`/`Cmd` AST kinds behind `edition="shell"` (alias `"shell-preview"`; default v1 byte-identical); precedence-0 left-associative pipelines; `str`-only stages with the extended `unit` rule; zero-new-token commands (bare words, adjacent `-flags`, quoted `>`/`>>` targets); piped input fills a non-head command's first parameter; stub registry for host tests; 15a backend rejects v2 kinds; TEST-ONLY bounded evaluator plus REPL block accumulator. The 47 shell tests use 12 good + 11 bad `shell-edition/` fixtures. See `docs/design/rynorlang-shell-language.md` and `docs/reports/stage15b.md`. |
 | 16 | Native `.rl` programs (host-native) — implemented | One Python 3.10+ stdlib program pipeline at `tools/rynorlang/program.py` (`.rl` → RIR → NASM → object → Linux x86-64 ELF via NASM + LLD, deterministic byte-identical artifacts) plus a labeled host program runtime (`tools/rynorlang/runtime/rt_linux.asm`: `_start`, exact-bytes `print(int/bool/str)`, static-only, no heap); entry stays `fn main(): int|unit` with no args (argc/argv explicitly deferred); exit is low-8-bit with documented truncation (300 → 44, -1 → 255; full width via `print`); `print` builtin with reserved name and `rt_*` helper table (`COMP_V2_UNSUPPORTED` for shell kinds still); TEST-ONLY oracle extended with print capture for stdout differentials. The 44 program tests use 22 good + 2 trap `programs/` fixtures with exit/stdout goldens, generated matrices, authenticity attacks, and a 5-mutation matrix. Host-native only: no RynorOS syscalls, no userspace, no self-hosting. Deferred (future native-execution milestone, requirements preserved): read-only boot-bundle loader (magic+version+count manifest, per-entry `{name[32],len,fnv1a}`, whole bundle `< 64 KiB`, validated before any byte executes; corrupt input halts, never executes); `print` bound to serial; UNPROTECTED kernel-mode batch with opcode-scanning loader, known-slot memory checks, and the IRQ0-preemptible guest contract. See `docs/design/rynorlang-program-model.md` and `docs/reports/stage16.md`. |
-| 17a | Block storage | One tested block driver on disposable images, with bounds and I/O failure tests. |
+| 17a | Block storage | One tested block driver on disposable images (with controller discovery for the target bus: virtio-blk or IDE probe), with bounds and I/O failure tests. |
 | 17b | Native filesystem read | Specify original versioned format and image tool; verify directory/file reads and corrupted-image rejection. |
 | 17c | Native filesystem write | Allocation/writes and explicitly tested recovery guarantees; no premature durability claim. |
-| 18a | Protected userspace | User-mode processes, loader validation, syscalls, address-space isolation, and clean exit tests. |
-| 18b | Native shell, REPL, and library (userspace) | RynorLang REPL + file-backed scripts + standard library in CPL3 via syscalls; per-block evaluation with whole-buffer re-analysis (deterministic symbols); session + per-submission arenas with zero-leak walks; `Ctrl-C` abort preserves session; true streaming pipelines with scheduler backpressure; `$?`-style status query. Exit: denied OOB/mem and bad-syscall tests trap; shell runs from the filesystem, not the bundle; placement guard asserts no `kernel/shell/repl*` ever exists. The ring-0 monitor stays frozen and gains no evaluation. |
-| 19a | Language readiness for self-hosting | Specify and implement needed aggregate types (`record`, `list<T,N>`, `status`/`Result`, `map`), `match` narrowing, string/byte ops, fixed-int/bitops, `break`/`continue`, modules (`use "path";`, file = module, hash-pinned manifests, cycle = error), memory and file APIs, error/diagnostic convention, determinism/canonical-encoding spec; conformance tests. |
-| 19b | Self-hosting RynorLang | RynorLang compiler written in the frozen core subset (`dialect="core"`, enforced by `--profile=strict` + CI gate) runs on RynorOS and rebuilds itself; deterministic comparison and seed instructions. |
+| 18a | Protected userspace foundation | User-mode entry (CPL3 selectors, TSS.RSP0, IDT DPL3), per-process address-space isolation (user CR3, U/S, INVLPG/PCID, SMEP/SMAP), fault containment (user faults trap, never panic), and clean process exit with accounting. Exit: CPL3 entry/return round-trip, OOB/mem violations trapped (not panicked), exit-status propagation, and QEMU fault-injection tests. No loader, no syscalls beyond exit, no files. |
+| 18b | Process and executable loader + syscall boundary | Validated native executable loading (ELF bounds, W^X, fault-armed #PF), a small explicit syscall set (exit, write, yield, sbrk-style growth or fixed arenas — decided here), and blocking scheduler waits with timeouts. The Stage 16 host-native programs become loadable RynorOS userspace programs. Exit: malformed-image rejection matrix, syscall conformance tests incl. bad-syscall traps, denied-OOB tests, and a loaded `.rl` program printing via real syscalls. |
+| 18c | Native runtime library | RynorLang-facing native library in CPL3: bounded strings/formatting, memory helpers, file-descriptor wrappers, and timer/sync wrappers over 18b syscalls; ownership/error conventions frozen. Exit: library conformance tests, zero-leak walks per call class, no host-API wrappers. |
+| 18d | Native shell and REPL | Interactive RynorLang shell in CPL3 (per-block evaluation with whole-buffer re-analysis for deterministic symbols; session + per-submission arenas with zero-leak walks; `Ctrl-C` abort preserves session), file-backed scripts, true streaming pipelines with scheduler backpressure, and `$?`-style status query. The ring-0 monitor stays frozen and gains no evaluation; placement guard asserts no `kernel/shell/repl*` ever exists. Exit: script + interactive session tests from the filesystem (not the bundle), preemption-during-pipeline proof, abort tests. |
+| 19a | Aggregate language values | `record` (nominal static shape), `list<T,N>` (fixed-cap array + length), `map<K,V,N>`, static sizes/offsets known at analyze time, inline or arena-scoped storage (no aliasing, no cycles, no inheritance, no null), plus string/byte operations, fixed-width integers, and bitops. Exit: per-type good/bad fixtures, exact-cap accept/reject pairs, arena-exhaustion yields `err` (never trap), mutation gate per new check. |
+| 19b | Match, control flow, and status | `match` with narrowing, `break`/`continue`, `status`/`Result<T,E>` with explicit threading (`Error{code,message,span?,trace}`), and the frozen error/diagnostic convention (first-error preserved through later stages). Exit: narrowing tests, control-flow lowering goldens, transparent error propagation (no squash codes), mutation gate. |
+| 19c | Modules and OS-facing APIs | `use "path";` (file = module, hash-pinned manifests, cycle = error), memory and file APIs over the 18b/18c boundary, and the edition/version policy for the grown language (additive-only, v1 goldens untouched). Exit: module cycle/pinning tests, API conformance tests, v1 regression gate. |
+| 19d | Language conformance and determinism | Canonical encoding/determinism specification for the full language, a conformance suite covering every type/rule/cap pairing, 3x byte-identical host/guest outputs, and the self-hosting preparation checklist (core-dialect lock `--profile=strict`, seed plan, ~1.5 kLOC budget verification). Exit: conformance suite green on host; determinism evidence recorded. |
+| 19e | Self-hosting RynorLang | RynorLang compiler written in the frozen core subset (`dialect="core"`, enforced by `--profile=strict` + CI gate) runs on RynorOS and rebuilds itself; deterministic comparison and seed instructions. |
 | 20a | Native system tools | Native build/link/image tools replace documented host dependencies; audited reproducible outputs. |
-| 20b | Self-hosting RynorOS | Rebuild kernel, libraries, shell, applications, and boot artifacts inside RynorOS from source, with reproducibility evidence. |
+| 20b | Self-hosting RynorOS | Rebuild kernel, libraries, shell, applications, and boot artifacts inside RynorOS from source, with reproducibility evidence. Headless/serial scope: no GPU, network, or audio drivers required (those land in 20c–20e). |
+| 20c | Native graphics subsystem | Display abstraction over Stage 9 discovery (no raw-LFB pokes by clients): buffers, presentation, vsync/fence synchronization, software rasterizer fallback, a command-submission abstraction, capability query, and a first hardware backend; GPU/device discovery with explicit bare-metal limits. Exit: native API demo (composited rect/text via the API with pixel evidence), backend matrix incl. fallback-only QEMU, no-silently-dropped-frames proof. No Windows API here. |
+| 20d | Native networking subsystem | Minimal bounded stack: NIC/device hooks, packet buffers, Ethernet + ARP, IPv4, UDP, TCP with explicit retransmission bounds, a stub DNS resolver, and a native socket API; IPv6 explicitly deferred. Exit: loopback + two-QEMU-guest UDP/TCP/DNS exchanges with corruption/reorder tests, buffer-exhaustion yields errors (never silent drops). No Windows API here. |
+| 20e | Native device and audio subsystem | PCI/firmware discovery, a small device manager with classes (input, audio, storage, network, graphics — the storage class integrates the 17a driver, it does not rewrite it), DMA/IOMMU readiness for containment, input aggregation (keyboard now, mouse/gamepad later), and an audio pipeline (device discovery, bounded buffers, mixer stub, first backend). Exit: enumeration evidence on QEMU targets (virtio/AC97/Intel-HDA-class as available), overrun/underrun behavior tests, containment-ready DMA flags. No Windows API here. |
 | 21a | Windows executable format foundation | PE/COFF parsing, header/section validation, relocations, imports/exports, TLS, exception/unwind, x64 (0x8664) only; malformed rejection; no execution. |
 | 21b | Windows user-mode ABI foundation | Handles, virtual memory reserve/commit, synchronization primitives, timers, environment, DLL load model, TLS, Structured Exception Handling substrate; small explicit contracts. |
 | 21c | Win32 API compatibility | kernel32-like file/memory/thread/sync/timer/console/process semantics; NT object semantics; tested against real binaries (no proprietary assets shipped). |
-| 21d | Windows GUI compatibility | Window creation, input, message loop, GDI-compatible basics, clipboard, system UI primitives; separate from native RynorOS GUI. |
-| 21e | Windows graphics compatibility | Direct3D/DXGI boundary, shaders, GPU resources, command submission, presentation, fences; implementation technology decided later from hardware/licensing. |
-| 21f | Windows audio/input/device compatibility | XInput/keyboard/mouse/audio/gamepad, device notifications; native drivers remain separate. |
-| 21g | PE loader + DLL ecosystem | In-image loader, imports/exports/TLS/relocations/unwind, API-sets, versioned compatibility libraries; tested where legally permitted. |
+| 21d | Windows GUI compatibility | Window creation, input, message loop, GDI-compatible basics, clipboard, system UI primitives; separate from native RynorOS GUI. Requires 20c (display abstraction, input) — Stage 9 alone is insufficient. |
+| 21e | Windows graphics compatibility | Direct3D/DXGI boundary, shaders, GPU resources, command submission, presentation, fences; implementation technology decided later from hardware/licensing. Requires the 20c native stack (API, backends, sync) — never directly on the Stage 9 framebuffer. |
+| 21f | Windows audio/input/device compatibility | XInput/keyboard/mouse/audio/gamepad, device notifications; native drivers remain separate. Requires 20e (device manager, audio pipeline, input aggregation). |
+| 21g | PE loader + DLL ecosystem | In-image loader, imports/exports/TLS/relocations/unwind, API-sets, versioned compatibility libraries; tested where legally permitted. Requires the 18b native loader. |
 | 21h | Advanced Windows runtime | SEH/VEH, fibers, TLS, overlapped I/O, named objects, registry/services, high-resolution timers; no speculative APIs. |
 | 21i | Windows game compatibility foundation | Harness for startup, DLL load, graphics init, shaders, input/audio/filesystem/threads/timers/sockets/controllers; reproducible fixtures. |
-| 21j | Multiplayer/network compatibility | Winsock/DNS/UDP/TCP/timers/threading; separate from game-specific behavior. |
-| 21k | Windows driver compatibility environment | Contained Windows kernel/driver semantics under Rynorkernel; explicit security boundary; no uncontrolled driver access to Rynorkernel. |
+| 21j | Multiplayer/network compatibility | Winsock/DNS/UDP/TCP/timers/threading; separate from game-specific behavior. Requires the 20d native stack (sockets, UDP/TCP/DNS) — never a standalone Winsock without packets underneath. |
+| 21k | Windows driver compatibility environment | Contained Windows kernel/driver semantics under Rynorkernel; explicit security boundary; no uncontrolled driver access to Rynorkernel. Requires 18a isolation plus 20e device/DMA/IOMMU readiness. |
 | 21l | Advanced game compatibility | Progressive matrix: simple app → 3D → offline → online → high-performance multiplayer; per-subsystem failure tracking. |
 | 21m | Compatibility certification framework | Standard test format (binary/environment/API/driver/graphics/input/network/security/observed/limitations); supported = passes declared criteria. |
 
@@ -77,12 +86,68 @@ filesystem work. Stage 18 depends on memory isolation, tasks, executable
 loading, and storage. Stages 19–20 need more language facilities than the
 initial syntax draft; Stage 20 needs original native system tooling and a
 deliberate plan for any bootstrap loader still in use. **Stage 21a requires
-18a (protected userspace) and 17a/b (storage) for file-backed images; 21b/c
+18b (native loader) and 17a/b (storage) for file-backed images; 21b/c
 require 21a plus blocking scheduler waits and syscall/address-space switching;
-21d/e require native or paravirt display/GPU (Stage 9 framebuffer alone is
-insufficient); 21k requires the isolation/virtualization boundary and VT-x/IOMMU
+21d/e require the 20c native graphics stack (Stage 9 framebuffer alone is
+insufficient); 21f requires the 20e device/audio stack; 21g requires the 18b
+native loader; 21j requires the 20d native networking stack; 21k requires the
+isolation/virtualization boundary (18a), the 20e device/DMA/IOMMU readiness,
+and VT-x/IOMMU
 readiness; 21i–21m require the full chain and must be labeled research-only
 until prerequisites are verified.**
+Userspace arrives in four testable steps (18a foundation, 18b loader and
+syscalls, 18c runtime library, 18d shell and REPL); the language grows in
+four steps before self-hosting (19a aggregates, 19b match/control/status,
+19c modules/APIs, 19d conformance, then the 19e self-hosting compiler).
+
+## Native-subsystem dependency graph
+
+Branches after Stage 16 are partially parallel; only the arrows are ordering
+constraints. Device classes share one manager (20e); graphics, networking,
+and audio never grow separate incompatible bus abstractions.
+
+```text
+0-11 kernel (PMM/VM/heap/threads/scheduler/keyboard/BGA text)
+  |
+  +-- 12-14 RynorLang frontend -- 15a RIR/backend -- 16 host programs
+  |         15b shell surface (host)                19a-d language
+  |                                                  (file parts need 18c)
+  |                                                           |
+  |                                              19e self-hosting compiler
+  |                                                  (runs on 18a-c)
+  |                                                           |
+  +-- 17a block -- 17b fs-read -- 17c fs-write
+  |         |
+  |         +--> 18a userspace foundation (CPL3, isolation, exit)
+  |                   |
+  |                   +--> 18b loader + syscalls (blocking waits)
+  |                             |
+  |                             +--> 18c runtime lib --> 18d shell + REPL
+  |
+  +-- 19e self-hosting compiler (runs on 18a-c) + 17c fs-write
+  |         --> 20a native tools --> 20b self-hosting OS (headless/serial)
+  |
+  +-- 20b self-hosting OS (headless/serial scope)
+  |         |
+  |         +--> 20c graphics (needs Stage 9 + 18a-b)
+  |         +--> 20d networking (NIC/Ethernet/IPv4/UDP/TCP/DNS/sockets)
+  |         +--> 20e devices/audio (PCI discovery, manager, DMA/IOMMU)
+  |
+  +-- 21a PE -- 21b ABI -- 21c Win32 -- 21h runtime
+  |     (needs 18b + 17b)      |
+  +-- 21g loader (needs 18b) --+
+  +-- 21d GUI + 21e D3D/DXGI (need 20c)
+  +-- 21f audio/input (needs 20e)
+  +-- 21j Winsock (needs 20d)
+  +-- 21k drivers (needs 18a + 20e + IOMMU)
+  +-- 21i/21l games (need 21c/d/e/f/g/h/j) --> 21m certification
+```
+
+QEMU pass is developer evidence, never hardware certification; the
+framebuffer is not GPU support; the kernel shell is not userspace; a Linux
+ELF is not a RynorOS executable. Each future row keeps the four questions
+answered: capability afterward, prerequisite consumed, test method, and what
+it explicitly does NOT provide.
 
 Networking, GUI composition, SMP, package management, multi-user security,
 POSIX compatibility, and broad hardware support are not initial milestones.

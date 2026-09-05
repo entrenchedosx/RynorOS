@@ -16,7 +16,7 @@ closed, statically-checked unions -- never with erased types. Rationale: the
 Stage 15 backend is a single-pass freestanding x86-64 emitter over a bounded
 heap with no GC; the 63-test mutation gate and byte-identical JSON discipline
 depend on every expression having one static type; the self-hosted compiler
-(Stage 19b, ~1.5 kLOC budget) must remain writable in the frozen subset. A
+(Stage 19e, ~1.5 kLOC budget) must remain writable in the frozen subset. A
 dynamic fallback would move today's host-caught `bad/` fixture failures into
 unobservable QEMU faults.
 
@@ -82,8 +82,8 @@ The split is strict and permanent:
   compiler-known slots with explicit string length checks; statically bounded
   frames), cap exhaustion halts with a diagnostic, and guest code runs under
   the normal preemptible contract (bounded, non-blocking, no locks across
-  service calls). Faults halt. Banner labels the mode `UNPROTECTED`. Deleted
-  or kernel-gated once 18b lands.
+   service calls). Faults halt. Banner labels the mode `UNPROTECTED`. Deleted
+   or kernel-gated once 18b–18d land (loader, runtime, and shell in userspace).
 * **L2 -- userspace, untrusted (Stage 18a+).** `CPL3`, per-process address
   spaces, validated buffers, clean exit. Only here do the interactive REPL,
   file-backed scripts, and true streaming pipelines exist. The existing

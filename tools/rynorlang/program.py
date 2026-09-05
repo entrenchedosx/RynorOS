@@ -9,7 +9,7 @@ runtime in tools/rynorlang/runtime/rt_linux.asm), and executes the result.
 
 HOST BOOTSTRAP honesty: every artifact here is a host-native Linux x86-64
 ELF for testing. It is NOT a RynorOS userspace program: no RynorOS syscall
-interface exists yet (Stage 18a), so printing and startup use Linux syscalls
+interface exists yet (Stage 18b), so printing and startup use Linux syscalls
 through the labeled runtime object. Nothing here ships in any RynorOS image.
 
 All entry points return (value, None) or (None, {"code","message"}) and never

@@ -215,7 +215,7 @@ class BlockAccumulator:
     push(text) appends a line and reports ("continue", None) while braces
     are unbalanced or the buffer does not yet parse, else ("ready", buffer).
     Failed submissions never mutate anything beyond the text buffer; semantic
-    session state arrives with the userspace REPL (Stage 18b), not here.
+    session state arrives with the userspace REPL (Stage 18d), not here.
     """
 
     def __init__(self, edition: str = "v1") -> None:

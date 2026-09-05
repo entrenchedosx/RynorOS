@@ -118,8 +118,11 @@ frames. No heap, no allocator, no GC; the runtime source contains no
 ```
 Stage 16 host-native (this document: Linux ELF test programs)
   -> future RynorOS ABI (syscalls, loader, bundle validation)
-  -> 18a protected userspace (CPL3, isolation, clean exit)
-  -> 18b native shell/runtime, 19a values/modules, 20 self-hosting
+  -> 18a userspace foundation, 18b loader+syscalls, 18c runtime,
+     18d shell+REPL, 19a values, 19b-19d language, 19e self-hosting
+     compiler, 20a-20b tools/self-host
+  -> 20c graphics, 20d networking, 20e devices/audio
+  -> 21 Windows compatibility
 ```
 
 The kernel trusted-batch loader from the earlier Stage 16 sketch (boot
