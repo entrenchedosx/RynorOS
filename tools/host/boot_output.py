@@ -11,6 +11,7 @@ from kbd_output import KBD_START, KEYS, validate_kbd_output, parse_kbd_output
 from display_output import DISPLAY_START, DISPLAY_END, validate_display_output, parse_display_output
 from runtime_output import validate_runtime_output, parse_runtime_output
 from shell_output import SHELL_START, SHELL_END, SCRIPT, validate_shell_output
+from blk_output import validate_blk_section
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -74,11 +75,12 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
         errors.append("Post-IRQ accounting missing or not final")
         return errors
     # Stage 11 shell output is optional and follows POST_IRQ. When present it
-    # must be a complete shell section with nothing before or after it.
+    # must be a complete shell section. A Stage 17a block-evidence section
+    # may trail it (test images only); normal boots end at SHELL_END.
     shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
     if shell_sep != b"":
         shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
-        if shell_head != b"" or tail_sep == b"" or tail != b"":
+        if shell_head != b"" or tail_sep == b"":
             errors.append("Shell output incomplete or not final")
         else:
             if runtime_state is None:
@@ -86,8 +88,9 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             else:
                 errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state,
                                                     shell_script))
+            errors.extend(validate_blk_section(tail))
     elif require_shell:
         errors.append("Required interactive shell output missing")
     elif post != b"":
-        errors.append("Unexpected output after Post-IRQ accounting")
+        errors.extend(validate_blk_section(post))
     return errors

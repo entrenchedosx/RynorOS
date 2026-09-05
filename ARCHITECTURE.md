@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking), the Stage 15a typed IR plus native backend with real dominance and a SysV-subset ABI, the Stage 15b edition-gated shell surface, and Stage 16 host-native `.rl` programs (exact-bytes `print`, deterministic ELF pipeline). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking), the Stage 15a typed IR plus native backend with real dominance and a SysV-subset ABI, the Stage 15b edition-gated shell surface, and Stage 16 host-native `.rl` programs (exact-bytes `print`, deterministic ELF pipeline), and Stage 17a IDE block storage (PIO discovery, reads, test-device writes, host-recomputed digests). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -220,19 +220,27 @@ project resource. Host builds package it and a manifest in a separate determinis
 `rynoros-resources.zip`; it is not in the kernel/boot image. No guest reads or
 renders it. A GUI, PNG decoder, resource loading and conversion are future work.
 
-Plan: keyboard/display coverage beyond the documented subsets, and block-device
-support for a documented emulator configuration. Drivers validate device inputs
-and expose narrow internal interfaces. Polling can precede interrupts where it
-simplifies bring-up, with limitations documented. DMA requires reserved buffers
+Plan: keyboard/display coverage beyond the documented subsets. Stage 17a
+implements the block-device foundation: PIIX3 IDE compatibility-mode PIO,
+LBA28, polled single-sector commands, PCI provenance, geometry validation,
+and a controller-independent `BlockDevice` API (`kernel/storage/blk.c`,
+`kernel/include/blk.h`) with per-request bounds, test-device-only writes,
+and bounded timeouts — no DMA, no interrupts, no filesystem. Drivers
+validate device inputs and expose narrow internal interfaces. Polling can
+precede interrupts where it simplifies bring-up, with limitations
+documented. DMA requires reserved buffers
 and address/lifetime rules before use. Real hardware, USB, networking, and broad
 driver coverage are deferred. Future device models and register contracts remain
-open; the current keyboard and framebuffer contracts are documented above.
+open; the current keyboard, framebuffer, and block contracts are documented above.
+See `docs/design/block-storage.md`.
 
 ## 7. Filesystem
 
 Plan: bootstrap programs can initially come from a loader-supplied, read-only
 bundle with explicit bounds and format checks; this is not the native filesystem.
-Develop an original, small on-disk filesystem after a tested block interface.
+Develop an original, small on-disk filesystem after a tested block interface
+(Stage 17a provides `blk_read/blk_write/capacity/block_size` with no
+controller leakage for exactly this handoff).
 Specify versioning, allocation, directories, file lengths, and corruption checks
 before enabling writes. Begin read-only; add writable images with recovery tests
 on disposable disks. Experimental: disk format and recovery mechanism. Do not
@@ -251,7 +259,7 @@ No multicore execution, binary compatibility, or multi-user security is promised
 
 ## 9. Shell
 
-Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `477` repository and `162` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
+Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `490` repository and `172` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
 
 ## 10. RynorLang
 

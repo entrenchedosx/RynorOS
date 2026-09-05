@@ -34,6 +34,7 @@ REPOSITORY_TEST_INVENTORY = {
     "test_rynorlang_semantics": 63, "test_rynorlang_rir": 48,
     "test_rynorlang_compiler": 39, "test_rynorlang_shell": 47,
     "test_rynorlang_programs": 44, "test_sched_output": 8,
+    "test_blk_output": 13,
     "test_semantic_api_gauntlet": 8,
     "test_shell_output": 7, "test_timer_output": 4, "test_vm_output": 5,
 }
@@ -41,6 +42,7 @@ INTEGRATION_TEST_INVENTORY = {
     "test_audit": 4, "test_boot": 14, "test_display": 31, "test_heap": 5,
     "test_keyboard": 26, "test_pmm": 7, "test_runtime": 35,
     "test_scheduler": 23, "test_shell": 9, "test_vm": 8,
+    "test_storage": 10,
 }
 
 
