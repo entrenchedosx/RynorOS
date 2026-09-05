@@ -50,7 +50,7 @@ class OracleRefused(Exception):
 
 
 def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
-            call_limit: int = CALL_LIMIT) -> dict:
+            call_limit: int = CALL_LIMIT, out: list | None = None) -> dict:
     """Evaluate a verified RIR module's entry function.
 
     Returns {"exit": int|None, "trapped": str|None, "steps": int} where exit
@@ -58,6 +58,10 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
     of "div0" (zero divisor or INT_MIN/-1), "falloff" (unreachable reached),
     "depth" (call budget), "steps" (step budget). Exactly one of exit/trapped
     is set. Raises OracleRefused on invalid RIR or a missing/bad entry.
+
+    Stage 16: runtime-helper calls (rt_print_*) render into `out` when it is
+    a list (int as signed decimal, bool as true/false, str as raw text);
+    when None their output is discarded. The return shape never changes.
     """
     problems = _rir.verify_module(module)
     if problems:
@@ -69,6 +73,7 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
         raise OracleRefused(f"oracle entry must return int or unit")
     funcs = {f["name"]: f for f in module["funcs"]}
     strtab = {e["id"]: e["bytes"] for e in module.get("strtab", [])}
+    emitted: list = out if out is not None else []
     # frames: [func, block_id, ip, env] plus pending dest slot appended on call.
     frames = [[entry, "bb0", 0, {}]]
     steps = 0
@@ -81,7 +86,7 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
             steps += 1
             if steps > step_limit:
                 return {"exit": None, "trapped": "steps", "steps": steps}
-            outcome = _exec_instr(blk["instrs"][ip], env, funcs, strtab)
+            outcome = _exec_instr(blk["instrs"][ip], env, funcs, strtab, emitted)
             frames[-1][2] += 1
             if outcome is None:
                 continue
@@ -116,7 +121,7 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
     return {"exit": 0, "trapped": None, "steps": steps}  # unreachable; defensive
 
 
-def _exec_instr(instr: dict, env: dict, funcs: dict, strtab: dict):
+def _exec_instr(instr: dict, env: dict, funcs: dict, strtab: dict, emitted: list | None = None):
     """Execute one instruction; returns None, ("call", ...), or ("trap", kind)."""
     op = instr["op"]
     if op == "const":
@@ -142,9 +147,24 @@ def _exec_instr(instr: dict, env: dict, funcs: dict, strtab: dict):
             env[instr["dst"]] = 1 if not operand else 0
         return None
     if op == "call":
-        target = funcs.get(instr["name"])
+        name = instr["name"]
+        if name in _rir.RT_HELPERS:
+            # Stage 16 host-runtime helper: render exactly what the native
+            # runtime writes (no newline, no truncation). Re-derived here,
+            # not imported from the emitter.
+            value = env[instr["args"][0]]
+            if name == "rt_print_int":
+                rendered = str(_signed(value))
+            elif name == "rt_print_bool":
+                rendered = "true" if value else "false"
+            else:
+                rendered = strtab[value] if isinstance(value, int) else value
+            if emitted is not None:
+                emitted.append(rendered)
+            return None
+        target = funcs.get(name)
         if target is None:  # pragma: no cover - verifier excludes this
-            raise OracleRefused(f"call to unknown function {instr['name']!r}")
+            raise OracleRefused(f"call to unknown function {name!r}")
         argvals = [env[a] for a in instr["args"]]
         return ("call", (target, argvals, instr.get("dst")))
     raise OracleRefused(f"unknown opcode {op!r}")  # pragma: no cover

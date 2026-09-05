@@ -12,6 +12,7 @@ REQUIRED_DIRECTORIES = (
     "rynorlang/parser", "rynorlang/ast", "rynorlang/compiler", "rynorlang/runtime",
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
     "user/apps", "tools", "tools/build", "tools/host", "tools/rynorlang",
+    "tools/rynorlang/runtime",
     "tests", "tests/repository", "tests/fixtures/rynorlang/lexer/good",
     "tests/fixtures/rynorlang/lexer/bad", "tests/fixtures/rynorlang/parser/good",
     "tests/fixtures/rynorlang/parser/bad", "tests/fixtures/rynorlang/semantics/good",
@@ -20,6 +21,8 @@ REQUIRED_DIRECTORIES = (
     "tests/fixtures/rynorlang/compiler/trap",
     "tests/fixtures/rynorlang/shell-edition/good",
     "tests/fixtures/rynorlang/shell-edition/bad",
+    "tests/fixtures/rynorlang/programs/good",
+    "tests/fixtures/rynorlang/programs/trap",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
     "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
@@ -122,6 +125,12 @@ REQUIRED_FILES = (
     "tools/rynorlang/shell.py",
     "tests/repository/test_rynorlang_shell.py",
     "docs/design/rynorlang-shell-language.md", "docs/reports/stage15b.md",
+    # Stage 16 host-native programs: program pipeline, host runtime,
+    # program fixtures, tests, and design docs.
+    "tools/rynorlang/program.py",
+    "tools/rynorlang/runtime/rt_linux.asm",
+    "tests/repository/test_rynorlang_programs.py",
+    "docs/design/rynorlang-program-model.md", "docs/reports/stage16.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.

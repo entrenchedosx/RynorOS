@@ -1,0 +1,4 @@
+fn main(): int {
+    print("abc");
+    return 0;
+}

@@ -1,0 +1,5 @@
+fn main(): int {
+    if false {
+        return 1;
+    }
+}

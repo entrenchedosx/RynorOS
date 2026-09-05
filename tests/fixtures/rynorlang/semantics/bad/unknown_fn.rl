@@ -1,4 +1,4 @@
 fn main(): int {
-    let x: int = print("hi");
+    let x: int = frobnicate("hi");
     return x;
 }

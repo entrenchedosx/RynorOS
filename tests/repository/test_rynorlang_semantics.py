@@ -292,7 +292,7 @@ class SemanticsRuleTests(unittest.TestCase):
         _assert_ok("fn foo(a: int): int { return a; } fn main(): int { return foo(1); }")
 
     def test_19_unknown_fn(self):
-        _assert_err("fn main(): int { return print(1); }", "SEM_UNKNOWN_FUNCTION")
+        _assert_err("fn main(): int { return print(1); }", "SEM_TYPE_MISMATCH")
         _assert_err("fn main(): int { return unknown(); }", "SEM_UNKNOWN_FUNCTION")
         _assert_ok("fn foo(): int { return 1; } fn main(): int { return foo(); }")
 

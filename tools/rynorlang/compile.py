@@ -104,6 +104,19 @@ class _Emitter:
         self.out("default rel")
         self.out("section .note.GNU-stack noalloc noexec no progbits")
         self.out("")
+        # Runtime helpers (rt_*) live in the linked program runtime object,
+        # not in this translation unit: declare exactly the referenced ones.
+        # Modules without print emit no extern lines (Stage 15a goldens
+        # stay byte-identical).
+        needed = sorted({instr["name"] for func in self.module["funcs"]
+                         for block in func["blocks"]
+                         for instr in block["instrs"]
+                         if isinstance(instr, dict) and instr.get("op") == "call"
+                         and instr.get("name") in _rir.RT_HELPERS})
+        for name in needed:
+            self.out(f"extern {_mangle(name)}")
+        if needed:
+            self.out("")
         self._emit_rodata()
         self.out("section .text")
         for func in self.module["funcs"]:
@@ -479,10 +492,18 @@ def main(argv=None) -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--rir", action="store_true", help="print RIR text instead of assembly")
     group.add_argument("--asm", action="store_true", help="print assembly (default)")
+    group.add_argument("--build", metavar="DIR",
+                       help="build a host-native program into DIR (prog.asm/prog.o/rt_linux.o/prog)")
+    group.add_argument("--run", action="store_true",
+                       help="build to a temp dir, run it, forward its stdout; "
+                            "exit code is the program's (diagnostics stay on stderr)")
     args = parser.parse_args(argv)
     if args.source is None:
         parser.print_usage(sys.stderr)
         return 2
+    if args.build is not None or args.run:
+        from tools.rynorlang import program as _program
+        return _program.main_build(args)
     try:
         raw = args.source.read_bytes()
     except OSError as error:

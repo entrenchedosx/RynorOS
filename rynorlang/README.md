@@ -122,7 +122,26 @@ with dominance verifier and shared slot allocator, NASM backend for the
 SysV-subset ABI (`int`/`bool`/`str`/`unit`, spill-everything homes, `ud2`/`int3`
 traps), disclosed host harness, and a test-only oracle.
 
-Not implemented: modules/imports, object format beyond flat NASM text, linker
-integration, runtime services, OS bindings, native applications,
-self-hosting, or in-kernel execution. No `print` builtin (`print` is
-`SEM_UNKNOWN_FUNCTION` until Stage 16); no type inference, no all-paths return checking, no shadowing, no builtins.
+Not implemented: modules/imports, runtime services beyond exact-bytes
+`print`, OS bindings, native RynorOS applications, argv, heap allocation,
+self-hosting, or in-kernel execution. No type inference, no all-paths
+return checking, no shadowing, no builtins beyond `print`.
+
+## Stage 16 host-native programs
+
+```rl
+fn main(): int {
+    print("hello");
+    print(6 * 7);
+    return 0;
+}
+```
+
+`rynorlangc prog.rl --build DIR` writes `DIR/prog.{asm,o,exe}` (plus
+`rt_linux.o`); `--run` builds in a temp dir and forwards stdout verbatim.
+Entry is `fn main(): int|unit` with no args (argc/argv deferred); exit is
+low-8-bit with documented truncation; `print(int/bool/str)` writes exact
+bytes (no newline) through the labeled Linux host runtime
+(`tools/rynorlang/runtime/rt_linux.asm`, static-only, no heap). Test
+executables only: no RynorOS syscalls, no userspace, no self-hosting. See
+`docs/design/rynorlang-program-model.md`.
