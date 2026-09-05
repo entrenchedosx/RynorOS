@@ -100,6 +100,7 @@ REQUIRED_FILES = (
     # Stage 11 implementation, verifier, and linked design/report contracts.
     # Windows documents are research-only architecture, never executable code.
     "kernel/include/shell.h", "kernel/shell/shell.c", "kernel/shell/shell-test.c",
+    "kernel/shell/shell-internal.h",
     "tools/host/shell_output.py", "docs/design/shell.md", "docs/reports/stage11.md",
     "docs/design/windows-compatibility.md", "docs/windows-compatibility-program.md",
     # Stage 12 is host-only. The implementation intentionally lives under tools/.

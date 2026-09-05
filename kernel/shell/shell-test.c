@@ -8,6 +8,7 @@
    services. */
 
 #include "shell.h"
+#include "shell-internal.h"
 #include "serial.h"
 #include "cpu.h"
 #include "kbd.h"
@@ -190,6 +191,30 @@ static void interactive_tests(void)
 }
 #endif
 
+static void editor_tests(void)
+{
+    /* Line-editor boundary: exactly SHELL_LINE_MAX bytes fit; the 65th is
+       rejected with the len/NUL invariant intact. Silent on pass (the host
+       validator requires an exact transcript); any require() failure halts
+       with [SHELL] failure=. Regression: an off-by-one here once evaded
+       every gate and wrote one NUL past data[]. */
+    struct shell_line line;
+    line.len = 0;
+    line.data[0] = '\0';
+    for (cpu_u64 i = 0; i < SHELL_LINE_MAX; ++i)
+        require(line_insert(&line, (char)('a' + (i % 26))) == 1, "editor_fill");
+    require(line.len == SHELL_LINE_MAX && line.data[SHELL_LINE_MAX] == '\0', "editor_full");
+    require(line_insert(&line, 'z') == 0, "editor_reject");
+    require(line.len == SHELL_LINE_MAX && line.data[SHELL_LINE_MAX] == '\0', "editor_stable");
+    line_backspace(&line);
+    require(line.len == SHELL_LINE_MAX - 1 && line.data[line.len] == '\0', "editor_backspace");
+    require(line_insert(&line, 'q') == 1 && line.len == SHELL_LINE_MAX, "editor_refill");
+    line.len = 0;
+    line.data[0] = '\0';
+    line_backspace(&line);
+    require(line.len == 0 && line.data[0] == '\0', "editor_backspace_empty");
+}
+
 void shell_self_test(void)
 {
     require(cpu_interrupts_disabled(), "if0");
@@ -197,6 +222,7 @@ void shell_self_test(void)
     text("[SYSTEM] RynorOS " RYNOR_VERSION " | Rynorkernel | stage11 shell monitor\r\n"
          "[SHELL] self-test started\r\n");
     parser_tests();
+    editor_tests();
 #if RYNOR_SHELL_INTERACTIVE
     interactive_tests();
 #else

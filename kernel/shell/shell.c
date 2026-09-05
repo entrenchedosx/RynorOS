@@ -7,6 +7,7 @@
    program execution; unsupported or malformed commands are rejected. */
 
 #include "shell.h"
+#include "shell-internal.h"
 #include "serial.h"
 #include "cpu.h"
 #include "kbd.h"
@@ -44,11 +45,6 @@ static const struct scan_map SHELL_SCAN_TABLE[] = {
 /* Text translation and line editor                                   */
 /* ------------------------------------------------------------------ */
 
-struct shell_line {
-    char data[SHELL_LINE_MAX + 1];
-    cpu_u64 len;
-};
-
 static enum shell_char shell_translate(cpu_u8 scan, char *ascii)
 {
     if (scan == 0x1c) return SHELL_CHAR_ENTER;
@@ -61,7 +57,7 @@ static enum shell_char shell_translate(cpu_u8 scan, char *ascii)
 
 /* Bounded line-editor insertion. Returns 1 if the buffer can hold one more
    byte, 0 otherwise; on overrun the byte is rejected (never overflows). */
-static int line_insert(struct shell_line *line, char c)
+int line_insert(struct shell_line *line, char c)
 {
     if (line->len >= SHELL_LINE_MAX) return 0;
     line->data[line->len++] = c;
@@ -69,7 +65,7 @@ static int line_insert(struct shell_line *line, char c)
     return 1;
 }
 
-static void line_backspace(struct shell_line *line)
+void line_backspace(struct shell_line *line)
 {
     if (line->len == 0) return;
     line->data[--line->len] = '\0';
