@@ -62,7 +62,7 @@ Use logical commits such as `init: create RynorOS repository structure`,
 `build: add foundation validation and tests`, or `docs: record bootstrap decision`.
 Configure your own author identity before committing. Review staged changes and
 run checks first. Stage only files relevant to your change; avoid meaningless
-commits and unrelated formatting churn. All initial code is MIT-licensed.
+commits and unrelated formatting churn. All initial code is Apache-2.0-licensed.
 
 For every fully completed milestone, inspect the complete diff, run the full
 verification suite one final time, commit only intentional milestone changes,

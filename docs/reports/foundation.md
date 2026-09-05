@@ -32,7 +32,7 @@ discovery, and failing test exit codes. Failure fixtures are temporary and isola
 
 ## Delivered scope and limitations
 
-Root documentation and MIT license; canonical project metadata; subsystem
+Root documentation and Apache-2.0 license; canonical project metadata; subsystem
 reservations and documentation contract; experimental RynorLang syntax plus one
 non-executable `.rl` sample; standard-library-only host commands; and repository
 tests. The workspace itself is the repository root (no extra nested `rynor-os/`).

@@ -4,7 +4,7 @@
 
 All tools were already present on the Windows verification host. Nothing was
 downloaded, installed, or copied from another operating-system project for this
-milestone sequence. Kernel and loader sources are original RynorOS code under MIT.
+milestone sequence. Kernel and loader sources are original RynorOS code under Apache-2.0.
 Stages 2–4 add only original freestanding C/NASM code and standard-library Python
 tests; no toolchain, emulator, firmware, library, or package dependency changed.
 Stage 3 uses Python's `zipfile`/`struct` to package the user-supplied original icon,
