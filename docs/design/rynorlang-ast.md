@@ -8,7 +8,7 @@ State the responsibility, non-goals, and dependencies. This section satisfies `d
 
 **Responsibility.** Lower the Stage 13 temporary syntax tree (`tools/rynorlang/parse.py` `ParseNode`) into a stable, JSON-compatible AST and perform name resolution and type checking for the syntactic subset. The result is host-side and deterministic, with exact source spans, resolved symbols, inferred types, and a single first-error diagnostic. The AST schema is frozen, but its Python dictionary/list representation is caller-owned and mutable. The implementation is the Python 3.10+ standard-library module `tools/rynorlang/analyze.py`; `rynorlang/ast/` remains reserved for the future self-hosted implementation.
 
-**Non-goals.** No interpretation, code generation, constant folding, optimization, module/import resolution, inference, all-paths return checking, or execution. No `print` builtin (calls to `print` are `SEM_UNKNOWN_FUNCTION` until Stage 16). No implicit conversions, no composite types, no generics, no shadowing.
+**Non-goals.** No interpretation, code generation, constant folding, optimization, module/import resolution, inference, all-paths return checking, or execution. `print(int/bool/str)` arrived as a reserved builtin in Stage 16 (see `rynorlang-program-model.md`); it is the only builtin. No implicit conversions, no composite types, no generics, no shadowing.
 
 **Dependencies.** The frozen lexer (`tools/rynorlang/lex.py`, `docs/design/rynorlang-lexer.md`) and frozen parser (`tools/rynorlang/parse.py`, `docs/design/rynorlang-parser.md`) are the sole front ends. The analyzer consumes `ParseResult.root` (`Program` temporary node) and `Span` values defined there. Source rules (ASCII, 1 MiB, `//` comments) and bounds (depth 256, 1 MiB) are inherited. Parser diagnostics pass through unchanged; lexer failures retain their message/span and the parser's documented `PAR_LEX_ERROR` or `PAR_FILE_TOO_LARGE` normalization.
 
@@ -83,7 +83,7 @@ Parser diagnostics are exact strings, no aliases, mirroring `LexResult` discipli
 | `SEM_DUPLICATE` | duplicate declaration (no shadowing) | second declaration span | `name` already in enclosing scope |
 | `SEM_TYPE_MISMATCH` | type rule violation | offending expr span | `expected` type, `got` type, `op` or `context` (e.g., `let`, `if cond`, `return`, `binop +`, `unop !`) |
 | `SEM_ARITY_MISMATCH` | call arity ≠ param count | `CallExpr` span | `callee`, `expected` arity, `got` arity |
-| `SEM_UNKNOWN_FUNCTION` | call to unknown function, or non-identifier callee (grouped/chained/literal) | callee span | `callee` not in global function table (builtins like `print` are unknown until Stage 16); a non-identifier callee reports "called expression is not a function name" and is never resolved through its text |
+| `SEM_UNKNOWN_FUNCTION` | call to unknown function, or non-identifier callee (grouped/chained/literal) | callee span | `callee` not in global function table and not the `print` builtin; a non-identifier callee reports "called expression is not a function name" and is never resolved through its text |
 
 All diagnostics carry `code`, `message`, and `span` (`{filename,line,column,offset,length}`). Every `SEM_*` diagnostic also carries structured `expected` and `got`; `name`, `callee`, `context`, and `operator` are populated when applicable. The first diagnostic ends analysis; there is no recovery, secondary diagnostic, or partial tree. Lexer/parser diagnostics are never wrapped as `SEM_*`.
 

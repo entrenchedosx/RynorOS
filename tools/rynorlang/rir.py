@@ -54,6 +54,18 @@ STABLE_KINDS = (
 
 # Diagnostic codes emitted by build_rir. Verifier failures are plain
 # human-readable strings (see verify_module); only the builder mints codes.
+# Stage 16 host-runtime helpers: name -> ([param types], ret or None).
+# These are the only RIR-level callees that need no RIR function definition;
+# the program linker resolves them against the host runtime object
+# (tools/rynorlang/runtime/rt_linux.asm). The rt_ prefix is reserved: user
+# functions may not claim it (builder and verifier both refuse).
+RT_HELPERS = {
+    "rt_print_int": (["int"], None),
+    "rt_print_bool": (["bool"], None),
+    "rt_print_str": (["str"], None),
+}
+RT_PREFIX = "rt_"
+_RT_PRINT_BY_TYPE = {"int": "rt_print_int", "bool": "rt_print_bool", "str": "rt_print_str"}
 COMP_V2_UNSUPPORTED = "COMP_V2_UNSUPPORTED"
 COMP_STR_TOO_LONG = "COMP_STR_TOO_LONG"
 COMP_BAD_AST = "COMP_BAD_AST"
@@ -124,6 +136,8 @@ def _build(ast: dict, source_name: str) -> dict:
         name = fn.get("name")
         if not _identifier(name):
             _fail(COMP_BAD_AST, "Function name must be an ASCII identifier")
+        if name.startswith(RT_PREFIX):
+            _fail(COMP_BAD_AST, f"function '{name}' uses the reserved '{RT_PREFIX}' runtime namespace")
         if name in seen:
             _fail(COMP_BAD_AST, f"duplicate function '{name}'")
         seen.add(name)
@@ -154,6 +168,8 @@ def _build(ast: dict, source_name: str) -> dict:
                 _fail(COMP_V2_UNSUPPORTED, f"function '{name}' uses reserved type '{ret}'")
             _fail(COMP_BAD_AST, f"function '{name}' has invalid return type {ret!r}")
         sigs[name] = (ptypes, ret)
+    for helper, hsig in RT_HELPERS.items():
+        sigs[helper] = (list(hsig[0]), hsig[1])
     strtab: list[dict] = []
     str_ids: dict[str, int] = {}
     rir_funcs = [_lower_function(fn, sigs, strtab, str_ids) for fn in functions]
@@ -670,6 +686,17 @@ def _lower_expr(low: _FunctionLowering, node: object, cur: int, fname: str) -> s
             else:
                 active_nodes.remove(id(item))
                 arg_temps = [results.pop(sub) for sub in kids]
+                if callee == "print":
+                    # Stage 16 builtin: exactly one int/bool/str argument
+                    # (the analyzer guarantees the shape; re-checked here so
+                    # the backend never trusts the frontend blindly).
+                    if len(arg_temps) != 1:
+                        _fail(COMP_BAD_AST, "print call must carry exactly one lowered argument")
+                    atype = low.vreg_types.get(arg_temps[0])
+                    helper = _RT_PRINT_BY_TYPE.get(atype)
+                    if helper is None:
+                        _fail(COMP_BAD_AST, f"print of {atype!r} needs int, bool, or str")
+                    callee = helper
                 results[key] = _lower_call(low, item, callee, arg_temps, cur, fname)
         elif kind in RESERVED_AST_KINDS:
             _fail(COMP_V2_UNSUPPORTED, f"expression kind '{kind}' is reserved for a later edition")
@@ -854,6 +881,8 @@ def verify_module(module: object) -> list:
     names: set[str] = set()
     for func in funcs:
         _collect_sig(func, names, sigs, errors)
+    for helper, hsig in RT_HELPERS.items():
+        sigs[helper] = (list(hsig[0]), hsig[1])
     for index, func in enumerate(funcs):
         if isinstance(func, dict) and (type(func.get("symbol")) is not int
                                       or func.get("symbol") != index):
@@ -867,6 +896,9 @@ def _collect_sig(func: object, names: set, sigs: dict, errors: list) -> None:
         return
     name = func.get("name")
     if not _identifier(name):
+        return
+    if isinstance(name, str) and name.startswith(RT_PREFIX):
+        errors.append(f"func: '{name}' uses the reserved '{RT_PREFIX}' runtime namespace")
         return
     if name in names:
         errors.append(f"func: duplicate function name '{name}'")

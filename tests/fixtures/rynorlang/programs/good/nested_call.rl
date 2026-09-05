@@ -1,0 +1,12 @@
+fn mul(a: int, b: int): int {
+    return a * b;
+}
+
+fn add(a: int, b: int): int {
+    return a + b;
+}
+
+fn main(): int {
+    print(add(mul(2, 3), mul(4, 5)));
+    return 0;
+}

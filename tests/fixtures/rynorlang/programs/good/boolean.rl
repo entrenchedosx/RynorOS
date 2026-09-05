@@ -1,0 +1,4 @@
+fn main(): int {
+    print(true && false || !false);
+    return 0;
+}

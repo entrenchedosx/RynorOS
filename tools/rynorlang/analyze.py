@@ -168,6 +168,9 @@ class Analyzer:
                 if name in self.global_funcs:
                     self._error(C_DUPLICATE, f"duplicate function '{name}'", span,
                                 expected="unique function", got=name, name=name, context="function")
+                if name == "print":
+                    self._error(C_DUPLICATE, "'print' is a reserved builtin", span,
+                                expected="non-reserved function name", got=name, name=name, context="function")
                 # extract params and ret_type
                 # children: [Identifier name, ParamList?, Type?, Block]
                 params = []
@@ -662,6 +665,25 @@ class Analyzer:
                         self._error(C_UNKNOWN_FUNCTION, f"called expression is not a function name", callee_node.span,
                                     expected="identifier callee", got=callee_node.kind, context="call")
                     callee_name = callee_node.text
+                    # Stage 16 builtin: print(x: int|bool|str): unit. A user
+                    # function named print is rejected as reserved (see
+                    # analyze()), so reaching here with that name means the
+                    # builtin. It behaves like a unit call everywhere,
+                    # hence ExprStmt-natural via the shared unit rules.
+                    if callee_name == "print":
+                        arg_nodes = list(arglist_node.children) if arglist_node is not None else []
+                        if len(arg_nodes) != 1:
+                            self._error(C_ARITY_MISMATCH, f"arity mismatch for 'print' expected 1 got {len(arg_nodes)}", node.span,
+                                        expected=1, got=len(arg_nodes), callee=callee_name, context="call")
+                        arg_stable, atype = yield self._lower_expr(arg_nodes[0], scope_stack, False)
+                        if atype == "unit":
+                            self._error(C_TYPE_MISMATCH, "unit as argument for 'print'", arg_nodes[0].span,
+                                        expected="non-unit", got="unit", callee=callee_name, context="call argument")
+                        if atype not in ("int", "bool", "str"):
+                            self._error(C_TYPE_MISMATCH, f"print expects int, bool, or str got {atype}", arg_nodes[0].span,
+                                        expected=("int", "bool", "str"), got=atype, callee=callee_name, context="call argument")
+                        stable = {"kind": "Call", "span": self._node_span(node), "callee": "print", "args": [arg_stable], "symbol": -1, "type": "unit"}
+                        return (stable, "unit")
                     # lookup function
                     if callee_name not in self.global_funcs:
                         self._error(C_UNKNOWN_FUNCTION, f"unknown function '{callee_name}'", callee_node.span,

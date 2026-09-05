@@ -34,7 +34,7 @@ Synthetic evidence (always): `tokenizer, bounds and empty line` → `exec versio
 
 * `python tools/build/build.py test` — `tests/repository/test_shell_output.py` (7 tests): valid fixture, every-line-required, structural damage, accounting, script well-formed, `-O` fails closed, stage10 early rejected.
 * `python -m unittest discover -s tests/integration -p test_shell.py` — runs 8 test methods: two positive 39-key QEMU sessions (default and alternate host-selected scripts) and six mutation-negative guests. The validator requires `SHELL_END`, `keys=39 received=78`, all host inputs, exact per-key/per-command output, and the keyboard device/PIC trace. Mutations cover canned output, dispatch bypass, runtime-service bypass, tokenizer bypass, low-byte-only count decoding, and a realistic keyboard-draining canned transcript. Kernel synthetic tests separately cover tokenizer/result-code/error boundaries and service-result widths.
-* The reviewed inventory currently contains 433 repository and 162 integration test methods. The positive QEMU configuration matrix has 9 distinct configurations: 8/16/64/128/256/512/4096 MiB, `max` CPU, and the low-32/high-RAM layout.
+* The reviewed inventory currently contains 477 repository and 162 integration test methods. The positive QEMU configuration matrix has 9 distinct configurations: 8/16/64/128/256/512/4096 MiB, `max` CPU, and the low-32/high-RAM layout.
 * `python tools/build/build.py boot-test` / `check` / QEMU matrix (`8…4096` MiB, `max`, `low-32`) now include shell synthetic output in every normal boot.
 
 ## Known limitations
