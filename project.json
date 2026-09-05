@@ -8,7 +8,7 @@
     "source_extension": ".rl",
     "status": "semantic-subset-frozen"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "stage": 14,
   "status": "rynorlang-semantics",
   "assets": {

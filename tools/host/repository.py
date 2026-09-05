@@ -135,7 +135,7 @@ EXPECTED_METADATA = {
         "source_extension": SOURCE_EXTENSION,
         "status": "semantic-subset-frozen",
     },
-    "license": "MIT",
+    "license": "Apache-2.0",
     "stage": 14,
     "status": "rynorlang-semantics",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
