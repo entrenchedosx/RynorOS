@@ -91,9 +91,10 @@ deterministic symbol space the Stage 15 backend pins. The honest core is new
   matches transactional runtime services, prevents `"error: unknown"` being
   consumed as data. Error-as-value arrives only with `status`/`Result` (Stage
   19a); userspace adds a `$?`-style status query, never sooner.
-* **Cap:** one pipe buffer is bounded (exact cap fixed in the shell RFC; 64 B
-  line discipline vs 4 KiB page are the candidates). Full buffer = abort in
-  MVP, backpressure later — never silent truncation.
+* **Cap:** one pipe buffer is bounded at 4096 bytes (`PIPE_BUF_CAP`, the
+  `str` cap) in the Stage 15b host evaluator; overflow aborts, never
+   truncates. The streaming redesign (pull-iterator ring, backpressure) may
+   revisit the constant, but the abort-never-truncate rule is frozen.
 
 ## 4. Property access: `.` (deferred to records, Stage 19a)
 
