@@ -16,7 +16,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from tools.rynorlang.lex import Diagnostic as LexDiagnostic
-from tools.rynorlang.lex import Span, Token, lex, lex_bytes, lex_file
+from tools.rynorlang.lex import MAX_SOURCE_BYTES, Span, Token, lex, lex_bytes, lex_file
 
 
 PARSE_MAX_DEPTH = 256
@@ -329,7 +329,9 @@ class _Parser:
 def _input_error(tokens: object, message: str) -> ParseResult:
     filename = "<tokens>"
     if isinstance(tokens, tuple) and tokens and isinstance(tokens[0], Token):
-        filename = tokens[0].span.filename
+        span = tokens[0].span
+        if isinstance(span, Span) and isinstance(span.filename, str):
+            filename = span.filename
     return ParseResult(None, ParseDiagnostic("PAR_INVALID_INPUT", message, Span(filename, 1, 1, 0, 0)))
 
 
@@ -342,13 +344,51 @@ def parse_tokens(tokens: tuple[Token, ...]) -> ParseResult:
     if eof_positions != [len(tokens) - 1]:
         return _input_error(tokens, "tokens must contain exactly one final EOF")
     previous_end = 0
+    previous_line = 1
+    previous_column = 1
+    filename = None
     for token in tokens:
         span = token.span
         if not isinstance(span, Span):
             return _input_error(tokens, "every token must contain a lexer Span")
+        if not isinstance(span.filename, str) or any(
+            type(value) is not int for value in (span.line, span.column, span.offset, span.length)
+        ):
+            return _input_error(tokens, "span filename must be a string and coordinates must be integers")
         if span.line < 1 or span.column < 1 or span.offset < previous_end or span.length < 0:
             return _input_error(tokens, "token spans must be ordered and non-overlapping")
+        if filename is None:
+            filename = span.filename
+        if span.filename != filename:
+            return _input_error(tokens, "token spans must belong to one source file")
+        if span.offset + span.length > MAX_SOURCE_BYTES:
+            return _input_error(tokens, "token spans must fit within the source byte limit")
+        # Source bytes are unavailable here, but every token occupies one line.
+        # A gap must have enough bytes for its newlines and final column; on the
+        # same line every ASCII byte (including a tab) advances one column.
+        gap = span.offset - previous_end
+        lines = span.line - previous_line
+        if (lines < 0
+                or (lines == 0 and span.column != previous_column + gap)
+                or (lines > 0 and lines + span.column - 1 > gap)):
+            return _input_error(tokens, "token line and column must agree with byte offsets")
+        if (not isinstance(token.kind, str) or not isinstance(token.lexeme, str)
+                or (token.value is not None and not isinstance(token.value, str))):
+            return _input_error(tokens, "token kind, lexeme and optional value must be strings")
+        if span.length != len(token.lexeme):
+            return _input_error(tokens, "token span length must match its lexeme")
+        # Reuse the frozen lexer so caller-created tokens cannot bypass literal
+        # range/escape rules or supply a decoded value inconsistent with the text.
+        checked = lex(token.lexeme)
+        expected_count = 1 if token.kind == "EOF" else 2
+        if (not checked.ok or len(checked.tokens) != expected_count
+                or checked.tokens[0].kind != token.kind
+                or checked.tokens[0].lexeme != token.lexeme
+                or checked.tokens[0].value != token.value):
+            return _input_error(tokens, "token kind, lexeme and value must agree with the lexer")
         previous_end = span.offset + span.length
+        previous_line = span.line
+        previous_column = span.column + span.length
     parser = _Parser(tokens)
     # CPython consumes several interpreter frames for one grammar nesting level.
     # Serialize the temporary recursion-limit adjustment and restore it before

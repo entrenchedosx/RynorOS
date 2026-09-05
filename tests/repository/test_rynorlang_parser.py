@@ -244,6 +244,77 @@ class Stage13ParserTests(unittest.TestCase):
         lexed = parser.lex("fn f() {}")
         parser.parse_tokens(tuple(reversed(lexed.tokens)))
         self.assertEqual("PAR_INVALID_INPUT", parser.parse_tokens(tuple(reversed(lexed.tokens))).diagnostic.code)
+        eof = parser.lex("", "test.rl").tokens[0]
+        malformed = [(dataclasses.replace(eof, span=None),), (None, eof)]
+        for field in ("line", "column", "offset", "length"):
+            for value in (None, "bad", 1.5, True):
+                malformed.append((dataclasses.replace(
+                    eof, span=dataclasses.replace(eof.span, **{field: value})),))
+        malformed.extend([
+            (dataclasses.replace(eof, span=dataclasses.replace(eof.span, filename=None)),),
+            (dataclasses.replace(eof, lexeme=" "),),
+            (dataclasses.replace(eof, value="unexpected"),),
+            (dataclasses.replace(eof, kind=[]), eof),
+        ])
+        for changes in (
+            {"line": 2}, {"column": 2},
+            {"offset": 2, "line": 3, "column": 2},
+            {"offset": 1024 * 1024 + 1, "column": 1024 * 1024 + 2},
+        ):
+            malformed.append((dataclasses.replace(eof, span=dataclasses.replace(eof.span, **changes)),))
+        positioned = parser.lex("fn f(){\n return;\n}", "test.rl").tokens
+        for index, changes in (
+            (1, {"filename": "other.rl"}),
+            (1, {"column": 3}),
+            (1, {"line": 3, "column": 1}),
+            (6, {"line": 1}),
+            (6, {"column": 100}),
+        ):
+            token = positioned[index]
+            changed = dataclasses.replace(token, span=dataclasses.replace(token.span, **changes))
+            malformed.append(positioned[:index] + (changed,) + positioned[index + 1:])
+        for tokens in malformed:
+            with self.subTest(tokens=tokens):
+                result = parser.parse_tokens(tokens)
+                self.assertFalse(result.ok)
+                self.assertIsNone(result.root)
+                self.assertEqual("PAR_INVALID_INPUT", result.diagnostic.code)
+                self.assertIsInstance(result.diagnostic.span.filename, str)
+                self.assertEqual((1, 1, 0, 0), (
+                    result.diagnostic.span.line, result.diagnostic.span.column,
+                    result.diagnostic.span.offset, result.diagnostic.span.length))
+        for source in (" \tfn f() {}", "\n\nfn f(){\r\n\treturn;\n}",
+                       "// lead\nfn f() {} // end", " " * (1024 * 1024)):
+            with self.subTest(valid_positions=source[:40]):
+                self.assertTrue(parser.parse_tokens(parser.lex(source, "test.rl").tokens).ok)
+
+        tokens = parser.lex('fn f(){ "abc"; }').tokens
+        literal_index = next(i for i, token in enumerate(tokens) if token.kind == "STRING")
+        literal = tokens[literal_index]
+        for changes in (
+            {"kind": "INTEGER", "lexeme": "99999", "value": None},
+            {"kind": "TRUE", "lexeme": "false", "value": None},
+            {"kind": "IDENTIFIER", "lexeme": "while", "value": None},
+            {"lexeme": '"a\\q"'},
+            {"value": None}, {"value": 1}, {"value": "wrong"},
+            {"lexeme": None}, {"kind": []},
+            {"span": dataclasses.replace(literal.span, length=0)},
+        ):
+            changed = dataclasses.replace(literal, **changes)
+            candidate = tokens[:literal_index] + (changed,) + tokens[literal_index + 1:]
+            with self.subTest(changes=changes):
+                # The well-formed integer replacement is a positive control.
+                if changes.get("kind") == "INTEGER":
+                    self.assertTrue(parser.parse_tokens(candidate).ok)
+                else:
+                    self.assertEqual("PAR_INVALID_INPUT", parser.parse_tokens(candidate).diagnostic.code)
+        for text in ("9223372036854775808", "1_000", "12abc", "-1", "１２"):
+            span = dataclasses.replace(eof.span, length=len(text))
+            integer = parser.Token("INTEGER", text, span)
+            end = dataclasses.replace(eof, span=dataclasses.replace(
+                eof.span, offset=len(text), column=len(text) + 1))
+            with self.subTest(integer=text):
+                self.assertEqual("PAR_INVALID_INPUT", parser.parse_tokens((integer, end)).diagnostic.code)
 
     def test_43_missing_eof_rejected(self):
         tokens = parser.lex("fn f() {}").tokens[:-1]
