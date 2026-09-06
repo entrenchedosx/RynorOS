@@ -2,6 +2,7 @@
 #define RYNOR_KSCHED_H
 #include "cpu.h"
 #include "vm.h"
+#include "user.h"
 
 #define KSTACK_BASE 0xffffe00000000000ULL /* PML4 slot 448 */
 #define KSTACK_PAGES 4u
@@ -31,6 +32,11 @@ int scheduler_initialize(void); /* foreground IF=0, once, after VM and IRQ setup
 int scheduler_check(void);      /* live structural invariants, IF=0 */
 int thread_create(thread_id *out, thread_fn entry, void *arg);
 int thread_join(thread_id id);  /* nonblocking reap of an EXITED worker */
+/* thread_create with an explicit initial RFLAGS image. Only 0x002 (IF=0,
+   for threads that must never take an interrupt in kernel code, e.g. the
+   userspace test worker) and 0x202 (default) are accepted; anything else
+   fails closed. The image must still satisfy frame_valid. */
+int thread_create_with_flags(thread_id *out, thread_fn entry, void *arg, cpu_u64 rflags);
 int thread_state(thread_id id, enum thread_state *out);
 thread_id thread_current(void);
 int thread_current_stack_base(cpu_u64 *base);
@@ -45,7 +51,16 @@ int scheduler_statistics(struct sched_statistics *out);
 struct exception_frame *sched_tick(struct exception_frame *frame);
 /* Last C validation before assembly changes RSP; unknown pointers never read. */
 struct exception_frame *sched_handoff(struct exception_frame *original,
-                                      struct exception_frame *selected);
+                                       struct exception_frame *selected);
+/* One-way resume used by userspace gate/fault exits (noreturn). */
+void sched_resume(struct exception_frame *next) __attribute__((noreturn));
+/* Userspace binding: the current thread's link, or 0. IF=0 required. */
+struct user_link *thread_user_link(void);
+int thread_attach_user(struct user_link *link); /* foreground, once */
+int thread_detach_user(void);                   /* foreground, bound only */
+/* Record kern_save with retcode, select next, return its frame. The
+   caller finishes with sched_resume. Never IRQ context. */
+struct exception_frame *user_schedule_next(struct user_link *link, cpu_u64 retcode);
 
 /* Single CPU. irq_restore restores IF exactly, not arithmetic flags. Locks
    require IF=0; contention/recursive lock/wrong unlock fail, never spin forever.

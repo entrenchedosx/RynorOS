@@ -1,6 +1,7 @@
 #include "cpu.h"
 #include "serial.h"
 #include "vm.h"
+#include "user.h"
 
 extern int cpu_test_trigger(void);
 extern const char cpu_test_fault[], cpu_test_after[];
@@ -68,14 +69,14 @@ static int expected_test_frame(const struct exception_frame *f, cpu_u64 cr2)
         cpu_u64 expected = 0x101 + i;
         if (RYNOR_TEST_VECTOR == 0 && i == 0) expected = 1;
         if (RYNOR_TEST_VECTOR == 0 && (i == 2 || i == 3)) expected = 0;
-        if (RYNOR_TEST_VECTOR == 13 && i == 0) expected = 0x18;
+        if (RYNOR_TEST_VECTOR == 13 && i == 0) expected = 0x38;
         if (saved[i] != expected) return 0;
     }
     cpu_u64 rip = (cpu_u64)((RYNOR_TEST_VECTOR == 3 || RYNOR_TEST_VECTOR == 1) ?
                            cpu_test_after : cpu_test_fault);
     cpu_u64 flags = RYNOR_TEST_VECTOR == 3 ? 0x402 :
                    (RYNOR_TEST_VECTOR == 1 ? 0x102 : 0x10002);
-    cpu_u64 error = RYNOR_TEST_VECTOR == 13 ? 0x18 : 0;
+    cpu_u64 error = RYNOR_TEST_VECTOR == 13 ? 0x38 : 0;
     return f->vector == RYNOR_TEST_VECTOR && f->rip == rip &&
            f->cs == CPU_CODE_SELECTOR && f->ss == CPU_DATA_SELECTOR &&
            f->rsp == cpu_test_rsp && f->rflags == flags && f->error == error &&
@@ -85,6 +86,12 @@ static int expected_test_frame(const struct exception_frame *f, cpu_u64 cr2)
 void exception_dispatch(struct exception_frame *frame, cpu_u64 cr2)
 {
     /* Best-effort recursion guard, not a substitute for an IST emergency stack. */
+    /* CPL3 faults take the userspace kill path (record + schedule next,
+       noreturn) and are never resolved. The kill path never touches the
+       diagnostic guard below, so it must run first. NMI/double-fault/
+       machine-check and reserved vectors keep the halt path. */
+    if ((frame->cs & 3) == 3 && user_fault_managed(frame->vector))
+        user_handle_fault(frame, cr2);
     if (diagnostic_active) {
         emit("[EXCEPTION] action=halt reason=nested\r\n");
         cpu_halt();

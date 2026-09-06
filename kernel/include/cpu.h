@@ -8,6 +8,9 @@ typedef unsigned char cpu_u8;
 
 #define CPU_CODE_SELECTOR 0x08
 #define CPU_DATA_SELECTOR 0x10
+#define CPU_USER_DATA_SELECTOR 0x1b
+#define CPU_USER_CODE_SELECTOR 0x23
+#define CPU_TSS_SELECTOR 0x28
 
 /* Low-to-high layout at exception_common's RSP; see docs/design/cpu.md. */
 struct exception_frame {
@@ -30,6 +33,13 @@ _Static_assert(__builtin_offsetof(struct exception_frame, rsp) == 160, "RSP offs
 _Static_assert(__builtin_offsetof(struct exception_frame, ss) == 168, "SS offset");
 
 int cpu_initialize(void);
+void cpu_set_rsp0(cpu_u64 top);
+cpu_u64 cpu_get_rsp0(void);
+/* Ground truth for runtime descriptor verification (Stage 18a user_check):
+   the TSS address baked into the GDT and the GDT base itself. */
+cpu_u64 cpu_tss_base(void);
+cpu_u64 cpu_gdt_base(void);
+cpu_u64 cpu_idt_base(void);
 void cpu_exception_self_test(void);
 void exception_dispatch(struct exception_frame *frame, cpu_u64 cr2);
 __attribute__((noreturn)) void cpu_halt(void);

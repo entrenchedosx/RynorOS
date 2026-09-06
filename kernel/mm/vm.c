@@ -349,6 +349,12 @@ enum vm_result vm_protect(struct vm_space *s, cpu_u64 va, unsigned int p)
     if ((r = permissions_valid(s, p)) != VM_OK) return r;
     struct vm_mapping m;
     if ((r = vm_query(s, va, &m)) != VM_OK) return r;
+    /* Non-kernel spaces may only reprotect their own user leaves: flipping
+       a supervisor replica or shared-high leaf to user-accessible would
+       hand CPL3 a window into kernel memory. (Creating supervisor maps
+       in user spaces is likewise only possible through reviewed
+       callers; replica auditing in user.c detects any drift.) */
+    if (s != &kernel_space && !(m.permissions & VM_USER)) return VM_PERMISSION;
     cpu_u64 path[VM_LEVELS];
     if ((r = walk(s, va, path)) != VM_OK) return r;
     page_entry e = leaf(m.physical, p);
@@ -414,6 +420,110 @@ enum vm_result vm_destroy(struct vm_space *s)
     if (!vm_check(s)) return VM_CORRUPT;
     destroy_tree(s, s->root, 3);
     s->root = 0; s->identity = (void *)0;
+    return VM_OK;
+}
+
+static int table_form(page_entry e)
+{
+    if (!pte_has(e, PTE_PRESENT) || pte_has(e, PTE_HUGE)) return 0;
+    return (e.value & ~(PTE_ADDRESS | PTE_ACCESS)) == PTE_TABLE_FLAGS;
+}
+
+/* Release every table linked under a private PD (replica or user PTs
+   already drained by the caller); used to unwind a failed clone. */
+static void unwind_pd(struct vm_space *s, cpu_u64 pd)
+{
+    for (unsigned int j = 0; j < VM_ENTRIES; ++j) {
+        page_entry e = read_entry(pd, j);
+        if (!e.value) continue;
+        write_entry(pd, j, (page_entry){0});
+        release_table(s, pte_address(e));
+    }
+}
+
+enum vm_result vm_clone_low(struct vm_space *dst)
+{
+    enum vm_result r = context(dst);
+    if (r != VM_OK) return r;
+    if (dst == &kernel_space) return VM_PERMISSION;
+    if (read_entry(dst->root, 0).value) return VM_EXISTS;
+    page_entry pml4e = read_entry(kernel_space.root, 0);
+    if (!table_form(pml4e)) return VM_CORRUPT;
+    cpu_u64 kpdpt = pte_address(pml4e);
+    for (unsigned int j = 1; j < VM_ENTRIES; ++j)
+        if (read_entry(kpdpt, j).value) return VM_UNSUPPORTED;
+    page_entry pde = read_entry(kpdpt, 0);
+    if (!table_form(pde)) return VM_CORRUPT;
+    cpu_u64 kpd = pte_address(pde);
+    cpu_u64 pdpt = 0, pd = 0;
+    if ((r = allocate_table(dst, &pdpt)) != VM_OK) return r;
+    if ((r = allocate_table(dst, &pd)) != VM_OK) {
+        release_table(dst, pdpt);
+        return r;
+    }
+    for (unsigned int j = 0; j < VM_ENTRIES; ++j) {
+        page_entry ke = read_entry(kpd, j);
+        if (!ke.value) continue;
+        if (!table_form(ke)) { r = VM_CORRUPT; break; }
+        cpu_u64 pt = 0;
+        if ((r = allocate_table(dst, &pt)) != VM_OK) break;
+        cpu_u64 chunk[64];
+        for (unsigned int base = 0; base < VM_ENTRIES && r == VM_OK; base += 64) {
+            for (unsigned int i = 0; i < 64; ++i)
+                chunk[i] = read_entry(pte_address(ke), base + i).value;
+            /* Kernel low leaves are supervisor-only; a user leaf here
+               would be an isolation hole, never copied. */
+            for (unsigned int i = 0; i < 64; ++i)
+                if (chunk[i] & PTE_USER) { r = VM_CORRUPT; break; }
+            if (r != VM_OK) {
+                release_table(dst, pt);
+                break;
+            }
+            for (unsigned int i = 0; i < 64; ++i)
+                write_entry(pt, base + i, (page_entry){chunk[i]});
+        }
+        if (r != VM_OK) break;
+        write_entry(pd, j, (page_entry){pt | PTE_TABLE_FLAGS});
+    }
+    if (r != VM_OK) {
+        unwind_pd(dst, pd);
+        release_table(dst, pd);
+        release_table(dst, pdpt);
+        return r;
+    }
+    write_entry(pdpt, 0, (page_entry){pd | PTE_TABLE_FLAGS});
+    /* Link last: a failure above leaves dst PML4[0] zero (nothing to undo). */
+    write_entry(dst->root, 0, (page_entry){pdpt | PTE_TABLE_FLAGS});
+    return VM_OK;
+}
+
+enum vm_result vm_release_low(struct vm_space *dst)
+{
+    enum vm_result r = context(dst);
+    if (r != VM_OK) return r;
+    if (dst == &kernel_space) return VM_PERMISSION;
+    page_entry mine = read_entry(dst->root, 0);
+    page_entry kern = read_entry(kernel_space.root, 0);
+    if (!table_form(mine) || pte_address(mine) == pte_address(kern)) return VM_CORRUPT;
+    cpu_u64 pdpt = pte_address(mine);
+    for (unsigned int j = 1; j < VM_ENTRIES; ++j)
+        if (read_entry(pdpt, j).value) return VM_CORRUPT;
+    page_entry pde = read_entry(pdpt, 0);
+    if (!table_form(pde)) return VM_CORRUPT;
+    cpu_u64 pd = pte_address(pde);
+    /* Every present PD entry must be a private replica table: the caller
+       unmapped all user leaves first, so no user PT can remain. A table
+       that fails the intermediate form is corruption, never released. */
+    for (unsigned int j = 0; j < VM_ENTRIES; ++j) {
+        page_entry e = read_entry(pd, j);
+        if (!e.value) continue;
+        if (!table_form(e)) return VM_CORRUPT;
+        release_table(dst, pte_address(e));
+        write_entry(pd, j, (page_entry){0});
+    }
+    write_entry(dst->root, 0, (page_entry){0});
+    release_table(dst, pd);
+    release_table(dst, pdpt);
     return VM_OK;
 }
 struct vm_space *vm_kernel_space(void) { return active ? &kernel_space : (void *)0; }

@@ -150,14 +150,30 @@ class SchedulerTests(unittest.TestCase):
 
     def test_preempted_register_corruption_is_detected(self):
         self.broken("bad-register", "kernel/core/thread.c",
-                    "return &next->saved;",
-                    "next->saved.r12 ^= 1; return &next->saved;",
+                    "current->saved = *frame;\n    ++current->statistics.preemptions;\n"
+                    "    current->statistics.irq_rsp = frame->rsp;\n"
+                    "    current->statistics.irq_rip = frame->rip;\n"
+                    "    ++next->statistics.dispatches;\n    select_thread(next, 0);\n"
+                    "    ++switches;\n    return &next->saved;",
+                    "current->saved = *frame;\n    ++current->statistics.preemptions;\n"
+                    "    current->statistics.irq_rsp = frame->rsp;\n"
+                    "    current->statistics.irq_rip = frame->rip;\n"
+                    "    ++next->statistics.dispatches;\n    select_thread(next, 0);\n"
+                    "    ++switches;\n    next->saved.r12 ^= 1; return &next->saved;",
                     "[SCHED] failure=register_or_flags_restore")
 
     def test_preempted_arithmetic_flag_corruption_is_detected(self):
         self.broken("bad-arithmetic-flag", "kernel/core/thread.c",
-                    "return &next->saved;",
-                    "next->saved.rflags ^= 0x10; return &next->saved;",
+                    "current->saved = *frame;\n    ++current->statistics.preemptions;\n"
+                    "    current->statistics.irq_rsp = frame->rsp;\n"
+                    "    current->statistics.irq_rip = frame->rip;\n"
+                    "    ++next->statistics.dispatches;\n    select_thread(next, 0);\n"
+                    "    ++switches;\n    return &next->saved;",
+                    "current->saved = *frame;\n    ++current->statistics.preemptions;\n"
+                    "    current->statistics.irq_rsp = frame->rsp;\n"
+                    "    current->statistics.irq_rip = frame->rip;\n"
+                    "    ++next->statistics.dispatches;\n    select_thread(next, 0);\n"
+                    "    ++switches;\n    next->saved.rflags ^= 0x10; return &next->saved;",
                     "[SCHED] failure=register_or_flags_restore")
 
     def test_bootstrap_cannot_exit(self):

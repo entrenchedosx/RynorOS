@@ -35,23 +35,32 @@ interface. The existing serial API is unchanged.
 
 ## GDT design and verification
 
-`kernel/arch/x86_64/cpu.c` owns an aligned, constant three-entry table:
+`kernel/arch/x86_64/cpu.c` owns an aligned, constant seven-entry table (Stage 18a
+added the user descriptors and TSS; see `docs/design/userspace.md`):
 
 | Selector | Descriptor | Purpose |
 | --- | --- | --- |
 | 0x00 | Null, all zero | Architecturally invalid null selector |
 | 0x08 | `0x00af9b000000ffff` | Present DPL-0 executable/readable code, L=1, D=0 |
 | 0x10 | `0x00cf93000000ffff` | Present DPL-0 writable data/stack, L=0 |
+| 0x1B | `0x00cff3000000ffff` | Present DPL-3 writable data/stack (RPL 3), L=0 |
+| 0x23 | `0x00affb000000ffff` | Present DPL-3 executable/readable code (RPL 3), L=1, D=0 |
+| 0x28 | 64-bit TSS pair | Available type 0x9 at build; LTR selects 0x28, the CPU writes back accessed type 0xB |
 
-Both non-null descriptors have the accessed bit preset. All execution is CPL 0;
-no user descriptors, TSS, LDT, or call gates are installed. Long mode ignores
-most data-segment base/limit semantics; this table does not provide isolation.
+Both code/data descriptors have the accessed bit preset. Kernel execution stays
+CPL 0; the user descriptors exist only for the Stage 18a `iretq` CPL3 entries,
+and the TSS supplies RSP0 for CPL3 exits (IST entries zero, no I/O bitmap).
+Long mode ignores most data-segment base/limit semantics; the GDT limit still
+bounds selector loads: index 7 (selector 0x38) is the first invalid index and
+is the vector-13 self-test trigger.
 
 `descriptors.asm` executes LGDT, performs a far return to reload CS=0x08, reloads
-DS/ES/SS=0x10, and sets FS/GS selectors to null. C then uses SGDT and reads all
-six selectors, checking base, limit, and selector values before printing
-`[CPU] GDT initialized`. This replaces the transition GDT's 0x18 code selector;
-it does not re-enter protected/long mode or modify paging.
+DS/ES/SS=0x10, sets FS/GS selectors to null, and `cpu_load_task` loads TR=0x28
+after the TSS is zeroed with RSP0=0 and no I/O bitmap. C then uses SGDT/STR and
+reads all seven selectors, checking base, limit, descriptor values, and selector
+values before printing `[CPU] GDT initialized`. This replaces the transition
+GDT's 0x18 code selector; it does not re-enter protected/long mode or modify
+paging.
 
 ## IDT design and vector mapping
 
@@ -71,7 +80,7 @@ enables IRQ0 for its bounded timer test; NMI/UART interrupts remain disabled.
 | 1 | Debug (#DB) | No | Real TF single-step after NOP, controlled halt |
 | 3 | Breakpoint (#BP) | No | Real INT3; frame checked and IRETQ return verified |
 | 6 | Invalid Opcode (#UD) | No | Real UD2, controlled halt |
-| 13 | General Protection (#GP) | Yes | Real invalid selector load, error=0x18 |
+| 13 | General Protection (#GP) | Yes | Real invalid selector load, error=0x38 |
 | 14 | Page Fault (#PF) | Yes | Real unmapped read, error=0 and CR2=0x200000 |
 | 2, 4, 5, 7 | NMI, Overflow, Bound Range, Device Unavailable | No | Wired, unexercised |
 | 8, 10, 11, 12 | Double Fault, Invalid TSS, Segment Not Present, Stack Fault | Yes | Wired, unexercised; no emergency stack |
@@ -143,7 +152,7 @@ checks all restored GPRs, RSP, and RFLAGS after IRETQ, clears DF before returnin
 to C, and only then can `[TEST] exception handling verified` be printed.
 
 Separate integration images select one other required vector each. DIV/UD2,
-invalid DS selector 0x18, and an assembly read at the unmapped address 0x200000
+invalid DS selector 0x38, and an assembly read at the unmapped address 0x200000
 cause real faults without C undefined behavior; TF/NOP causes a real debug trap.
 Their expected frame is checked, then the handler prints `action=halt` and the
 verified marker and halts without retrying the instruction. #PF uses only the

@@ -38,7 +38,7 @@ cpu_test_trigger:
     xor ecx, ecx
     xor edx, edx
 %elif RYNOR_TEST_VECTOR == 13
-    mov eax, 0x18              ; Index 3 is beyond the kernel's three-entry GDT.
+    mov eax, 0x38              ; Index 7 is beyond the kernel's seven-entry GDT.
 %endif
 %if RYNOR_TEST_VECTOR == 3
     push qword 0x402           ; DF deliberately set; handler must clear for C.

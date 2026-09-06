@@ -13,6 +13,7 @@ struct thread {
     thread_fn entry;
     void *arg;
     struct thread_statistics statistics;
+    struct user_link *user;
 };
 static struct thread threads[SCHED_THREADS];
 static struct thread *current;
@@ -22,7 +23,6 @@ static cpu_u64 ticks, switches;
 static unsigned int held_locks;
 extern char __kernel_stack_start[], __kernel_stack_end[], __text_start[], __text_end[];
 extern void thread_switch(struct exception_frame *, struct exception_frame *);
-extern void sched_resume(struct exception_frame *) __attribute__((noreturn));
 
 static void panic(const char *why) __attribute__((noreturn));
 static void panic(const char *why)
@@ -82,6 +82,7 @@ int scheduler_check(void)
         struct thread *t = &threads[i];
         if (t == current) found = 1;
         if (t->state < THREAD_FREE || t->state > THREAD_EXITED) return 0;
+        if (t->user && (!t->user->bound || !t->user->context)) return 0;
         if (t->state == THREAD_FREE) {
             if (t->id || t->stack.generation) return 0;
             continue;
@@ -141,8 +142,17 @@ int scheduler_initialize(void)
 }
 int thread_create(thread_id *out, thread_fn entry, void *arg)
 {
+    return thread_create_with_flags(out, entry, arg, 0x202);
+}
+int thread_create_with_flags(thread_id *out, thread_fn entry, void *arg, cpu_u64 rflags)
+{
     if (!foreground() || !initialized || !out || !executable((cpu_u64)entry) || next_id >= (1ULL << 63))
         return 0;
+    if ((rflags & 2) != 2 || (rflags & ~0x10ed7ULL))
+        return 0;
+    /* Only plain interruptable/interrupted images; no arithmetic, DF, or
+       system bits in a fresh thread. Bit 1 is mandatory (RFLAGS.1). */
+    if (rflags != 0x002 && rflags != 0x202) return 0;
     check();
     for (unsigned int i = 1; i < SCHED_THREADS; ++i) {
         struct thread *t = &threads[i];
@@ -156,7 +166,7 @@ int thread_create(thread_id *out, thread_fn entry, void *arg)
         *(cpu_u64 *)(hi - 8) = 0;
         t->saved.rip = (cpu_u64)thread_entry_trampoline;
         t->saved.cs = CPU_CODE_SELECTOR; t->saved.ss = CPU_DATA_SELECTOR;
-        t->saved.rsp = hi - 8; t->saved.rflags = 0x202;
+        t->saved.rsp = hi - 8; t->saved.rflags = rflags;
         t->state = THREAD_READY; /* publish only after successful initialization */
         *out = t->id;
         check();
@@ -255,6 +265,34 @@ void thread_exit(void)
 struct exception_frame *sched_tick(struct exception_frame *frame)
 {
     if (!initialized) return frame;
+    /* CPL3 origin: record user state (switches to kernel CR3 first),
+       park the kernel resume, and run the unchanged selection path.
+       The parked frame is frame_valid-compatible by construction. */
+    if ((frame->cs & 3) == 3) {
+        require(cpu_interrupts_disabled() && irq_in_context() && !held_locks,
+                "user_tick_context");
+        check();
+        struct user_link *link = current->user;
+        require(link && link->bound && link->context, "user_tick_link");
+        /* Validate before touching anything: the stop-flag store below
+           runs on the user CR3 and must only hit the current data page. */
+        if (!user_origin_ok(link->context, frame)) frame_failure(frame);
+        ++ticks;
+        if (user_note_cpl3_tick() && !user_publish_stop(link->context, frame))
+            frame_failure(frame);
+        if (!user_save_state(link->context, frame)) frame_failure(frame);
+        struct thread *next = pick_next();
+        link->kern_save.rax = USER_RUN_PREEMPTED;
+        current->saved = link->kern_save;
+        ++current->statistics.preemptions;
+        current->statistics.irq_rsp = frame->rsp;
+        current->statistics.irq_rip = frame->rip;
+        if (!next) return &current->saved;
+        ++next->statistics.dispatches;
+        select_thread(next, 0);
+        ++switches;
+        return &next->saved;
+    }
     require(cpu_interrupts_disabled() && irq_in_context() && !held_locks, "tick_context");
     check();
     cpu_u64 lo, hi;
@@ -268,6 +306,55 @@ struct exception_frame *sched_tick(struct exception_frame *frame)
     ++current->statistics.preemptions;
     current->statistics.irq_rsp = frame->rsp;
     current->statistics.irq_rip = frame->rip;
+    ++next->statistics.dispatches;
+    select_thread(next, 0);
+    ++switches;
+    return &next->saved;
+}
+struct user_link *thread_user_link(void)
+{
+    if (!cpu_interrupts_disabled() || !initialized) return 0;
+    return current ? current->user : 0;
+}
+int thread_attach_user(struct user_link *link)
+{
+    if (!foreground() || !initialized || !link || link->bound)
+        return 0;
+    /* Only a pristine ACTIVE context may bind: pinning a terminal or
+       foreign record would leak the slot (destroy refuses bound links)
+       and let stale state linger on a thread. Mirrors enter_valid. */
+    struct user_context *c = link->context;
+    if (!c || &c->link != link || c->state != USER_ACTIVE ||
+        !c->space.root || c->space.identity != &c->space)
+        return 0;
+    check();
+    if (current->user) return 0;
+    link->bound = 1;
+    current->user = link;
+    check();
+    return 1;
+}
+int thread_detach_user(void)
+{
+    if (!foreground() || !initialized || !current->user) return 0;
+    check();
+    current->user->bound = 0;
+    current->user = 0;
+    check();
+    return 1;
+}
+struct exception_frame *user_schedule_next(struct user_link *link, cpu_u64 retcode)
+{
+    require(cpu_interrupts_disabled() && !irq_in_context(), "user_next_context");
+    require(initialized, "user_next_init");
+    check();
+    require(link && current->user == link && link->bound && link->context,
+            "user_next_link");
+    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_FAULTED, "user_next_code");
+    link->kern_save.rax = retcode;
+    current->saved = link->kern_save;
+    struct thread *next = pick_next();
+    if (!next) return &current->saved;
     ++next->statistics.dispatches;
     select_thread(next, 0);
     ++switches;

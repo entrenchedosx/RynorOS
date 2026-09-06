@@ -142,6 +142,14 @@ REQUIRED_FILES = (
     "tools/rynorlang/runtime/rt_linux.asm",
     "tests/repository/test_rynorlang_programs.py",
     "docs/design/rynorlang-program-model.md", "docs/reports/stage16.md",
+    # Stage 18a protected userspace: entry asm plus blobs, context
+    # lifecycle, scheduler integration, host validator, tests, and docs.
+    "kernel/include/user.h", "kernel/arch/x86_64/user_entry.asm",
+    "kernel/core/user.c", "kernel/core/user-test.c",
+    "tools/host/user_output.py",
+    "tests/repository/test_user_output.py",
+    "tests/integration/test_userspace.py",
+    "docs/design/userspace.md", "docs/reports/stage18a.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.
