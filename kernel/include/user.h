@@ -1,0 +1,136 @@
+#ifndef RYNOR_USER_H
+#define RYNOR_USER_H
+#include "cpu.h"
+#include "vm.h"
+
+/* Stage 18a protected-userspace foundation. Static model: fixed user
+   layout, two contexts max, int $0x80 gate with exit/yield reasons.
+   See docs/design/userspace.md. All operations require IF=0; create,
+   destroy, enter and resume additionally require foreground (never IRQ)
+   context. */
+
+#define USER_MAX_CONTEXTS 2u
+#define USER_CODE_BASE 0x400000ULL
+#define USER_DATA_BASE 0x600000ULL
+#define USER_STACK_TOP 0x800000ULL
+#define USER_STACK_PAGE (USER_STACK_TOP - VM_PAGE_SIZE)
+#define USER_GUARD_PAGE (USER_STACK_PAGE - VM_PAGE_SIZE)
+#define USER_EXIT_STACK_PAGES 1u
+#define USER_EXIT_STACK_BYTES (USER_EXIT_STACK_PAGES * VM_PAGE_SIZE)
+
+/* Deterministic preemption-test length. The spin tasks cannot exit
+   before the flag ticks (timing-independent: flags are tick-driven, so
+   any host speed yields the same counts). Tick 25 flags the current
+   task, tick 26 flags the other; both then exit: 26 ticks, 28 switches,
+   13/13 preemptions, 14/14 dispatches. */
+#define USER_PREEMPT_TICKS 26u
+#define USER_FLAG_TICKS 25u
+/* Anti-hang backstop for the spin loop (iterations, never reached when
+   flags work: 26 ticks land in ~0.26 s, far below this bound on any
+   host). Tripping it fails the exact-count asserts loudly. */
+#define USER_SPIN_BACKSTOP 1000000000ULL
+
+/* Data-page offsets shared by guest blobs and the kernel. */
+#define USER_DATA_STOP 0x00ULL
+#define USER_DATA_COUNT 0x08ULL
+#define USER_DATA_GPRS 0x10ULL
+#define USER_DATA_GPR_COUNT 15u
+/* Attack-blob parameters (kernel text/data VAs, prefilled by
+   user_create past the spill area). */
+#define USER_DATA_KTEXT 0x90ULL
+#define USER_DATA_KDATA 0x98ULL
+
+/* Gate reasons in EAX (low 32 bits); EBX carries the exit code. */
+#define USER_CALL_EXIT 0u
+#define USER_CALL_YIELD 1u
+
+/* Return codes from user_enter/user_resume in RAX. Details (exit code,
+   fault vector/error/CR2, yield count) live in the context record. */
+#define USER_RUN_EXITED 1u
+#define USER_RUN_YIELDED 2u
+#define USER_RUN_PREEMPTED 3u
+#define USER_RUN_FAULTED 4u
+
+enum user_state { USER_FREE, USER_ACTIVE, USER_EXITED, USER_FAULTED };
+
+/* Scheduler-visible link. kern_save is frame_valid-compatible by
+   construction (resume label RIP, entry RSP in own stack, kernel
+   selectors, masked RFLAGS, vector/error zero) so preempted-user
+   threads validate with zero scheduler changes. */
+struct user_link {
+    struct user_context *context;
+    struct exception_frame kern_save;
+    int bound;
+};
+
+struct user_context {
+    enum user_state state;
+    unsigned int slot;
+    struct vm_space space;
+    cpu_u64 code_frame, data_frame, stack_frame;
+    cpu_u64 exit_base, exit_top;
+    cpu_u64 table_pages_at_create;
+    /* Recorded user state (full GPRs for faithful preemption resume). */
+    cpu_u64 gprs[15];
+    cpu_u64 rip, rsp, rflags;
+    /* Termination record. */
+    cpu_u64 exit_code;
+    cpu_u64 fault_vector, fault_error, fault_cr2;
+    int fault_class; /* 0 none, 1 trap, 2 invalid_call */
+    /* Statistics. */
+    cpu_u64 entries, resumes, gate_exits, yields, preemptions, faults;
+    cpu_u64 code_size;
+    struct user_link link;
+};
+
+/* Which blob image user_create copies into the code page. Extension
+   blobs are CPL3 attack payloads: each must fault in a pinned way
+   (see user_self_test fault rows); none may ever complete. */
+enum user_blob {
+    USER_BLOB_EXIT, USER_BLOB_SPIN, USER_BLOB_YIELD,
+    USER_BLOB_UD2, USER_BLOB_READKERN_LO, USER_BLOB_READKERN_HI,
+    USER_BLOB_WRITE_RX, USER_BLOB_EXEC_DATA, USER_BLOB_CLI,
+    USER_BLOB_NULL, USER_BLOB_BADCALL,
+    USER_BLOB_READKERN_TEXT, USER_BLOB_WRITEKERN_DATA,
+    USER_BLOB_EXECKERN_TEXT, USER_BLOB_EXECSTACK,
+    USER_BLOB_READCR3, USER_BLOB_KERNSEL, USER_BLOB_BADSEL,
+    USER_BLOB_TIBIT, USER_BLOB_FARJMP_KCS, USER_BLOB_FARJMP_UDATA,
+    USER_BLOB_MOVSS, USER_BLOB_DIVZERO, USER_BLOB_SYSCALL,
+    USER_BLOB_SS_RSP, USER_BLOB_KERN_RSP,
+};
+
+int user_initialize(void); /* probe + static checks, once, foreground */
+int user_check(void);      /* structural invariants, IF=0 */
+int user_fault_managed(cpu_u64 vector); /* CPL3 kill-path whitelist, pure */
+int user_create(struct user_context **out, enum user_blob blob);
+/* Destroy an EXITED/FAULTED context, or a pristine ACTIVE one (never
+   entered, unbound). Anything live is rejected fail-closed. */
+int user_destroy(struct user_context *context);
+cpu_u64 user_enter(struct user_link *link);  /* initial entry, returns run code */
+cpu_u64 user_resume(struct user_link *link); /* re-entry from recorded state */
+/* Record + validate a CPL3 frame on the IRQ path. All pure checks run
+   pre-switch (still on the entry CR3); the switch happens only on
+   success, so failure returns with the entry stack still addressable
+   for a clean diagnostic halt. Returns 0 without touching state on
+   any violation. */
+int user_save_state(struct user_context *context, struct exception_frame *frame);
+/* Pure origin validation (no switch, no state change) for pre-switch use. */
+int user_origin_ok(struct user_context *context, struct exception_frame *frame);
+/* Stop-flag store for the flag tick; call only on the user CR3 in IRQ
+   context right after user_origin_ok passed. */
+int user_publish_stop(struct user_context *context, struct exception_frame *frame);
+void user_handle_exit(struct exception_frame *frame) __attribute__((noreturn));
+void user_handle_fault(struct exception_frame *frame, cpu_u64 cr2) __attribute__((noreturn));
+/* CPL3 tick counting for the deterministic preemption test. */
+int user_note_cpl3_tick(void);
+cpu_u64 user_cpl3_ticks(void);
+void user_self_test(void);
+
+/* CPL3 gate stub address (defined in exceptions.asm) for IDT checks. */
+extern const char user_exit_stub[];
+
+/* Kernel text/data addresses backing the attack-blob parameters
+   (prefilled into each data page; also the exact fault-CR2 oracles). */
+extern cpu_u64 user_kernel_cr3;
+
+#endif

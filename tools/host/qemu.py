@@ -11,6 +11,7 @@ import time
 from image import find_tool
 from exception_output import BOOT_PREFIX, VECTOR_NAMES
 from boot_output import validate_boot_output
+from user_output import VERIFIED_LINE as USER_VERIFIED
 from kbd_output import KEYS, KBD_END, key_sequence, validate_keyboard_trace, validate_irq0_trace
 from display_output import DISPLAY_END, DISPLAY_START, parse_display_output, verify_display_pixels, verify_display_scanout
 from shell_output import SHELL_END, SHELL_KEYS, SCANS as SHELL_SCANS
@@ -19,7 +20,31 @@ from runtime_output import verify_runtime_memory, verify_runtime_trace
 
 
 EXPECTED_OUTPUT = BOOT_PREFIX  # Compatibility prefix, not the full execution log.
+# USER_VERIFIED (imported) is the final line of the Stage 18a userspace
+# self-test. A normal (vector 3) boot runs shell (stage 11) then userspace
+# (stage 18a); the serial validator accepts a valid prefix with no userspace
+# section yet, so the boot loop must not declare success until this marker
+# proves the guest finished. Guests that halt early by design (fault
+# fixtures, unarmed vectors) keep their existing timeout / fail-fast behavior.
 _PROVENANCE = {}
+
+
+def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
+                  require_shell: bool = False, shell_script=()) -> bool:
+    """Pure completion predicate for the boot loop (unit-testable).
+
+    Defaults mirror boot_image's non-interactive path. A normal
+    (vector 3) boot is complete only when the transcript validates AND
+    the trailing userspace section reached its final marker. The
+    validator alone accepts a valid prefix with no userspace section
+    yet, so the marker is what proves the guest finished instead of
+    being killed mid-self-test.
+    """
+    if validate_boot_output(observed, test_vector, key_sequence(keys),
+                            require_shell=require_shell,
+                            shell_script=shell_script):
+        return False
+    return test_vector != 3 or USER_VERIFIED in observed
 
 
 def _file_provenance(path: Path, *, version_command=None) -> dict:
@@ -284,9 +309,9 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                 if inject_keys:
                     _inject_pending_keys(process, observed, list(keys), next_key,
                                          list(shell_keys), shell_key)
-                if not validate_boot_output(observed, test_vector, keys,
-                                            require_shell=shell_interactive,
-                                            shell_script=shell_keys):
+                if boot_complete(observed, test_vector, keys,
+                                require_shell=shell_interactive,
+                                shell_script=shell_keys):
                     if test_vector == 3 and next_key[0] != len(keys):
                         failure = "Keyboard completed without all host inputs"
                     elif test_vector == 3:

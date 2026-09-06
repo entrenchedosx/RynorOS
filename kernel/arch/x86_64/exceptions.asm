@@ -4,6 +4,7 @@ section .text
 extern exception_dispatch
 extern irq_dispatch
 extern sched_handoff
+extern user_handle_exit
 
 ; No-error vectors get a synthetic zero. Hardware-error vectors already have
 ; a qword error slot. Do not use INT n to test a hardware-error vector.
@@ -29,6 +30,14 @@ irq_stub_%+vector:
 %assign vector vector + 1
 %endrep
 
+; CPL3 exit gate. Pushes the same normalized error/vector slots and joins
+; the shared entry; the common path routes vector 128 to user_handle_exit.
+global user_exit_stub
+user_exit_stub:
+    push qword 0
+    push qword 128
+    jmp exception_common
+
 exception_common:
     push rax
     push rbx
@@ -52,6 +61,8 @@ exception_common:
     mov rbx, rsp
     cld                       ; SysV C requires DF=0, interrupted flags stay saved.
     and rsp, -16              ; Align before CALL without moving the saved frame.
+    cmp qword [rdi + 120], 128
+    je .userexit
     cmp qword [rdi + 120], 32
     jb .exception
     call irq_dispatch         ; Returns the frame to resume from in RAX (RAX is
@@ -61,6 +72,9 @@ exception_common:
     mov rsi, rax              ; untrusted selected pointer is checked before use
     call sched_handoff
     jmp .switch_back
+.userexit:
+    call user_handle_exit     ; Noreturn: records the exit and transfers with
+                              ; sched_resume to the next thread's frame.
 .exception:
     call exception_dispatch
     mov rax, rbx              ; Synchronous faults resume from the same frame.

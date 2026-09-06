@@ -47,12 +47,12 @@ def validate_exception_output(output: bytes, vector: int = 3) -> list[str]:
         return errors or ["diagnostic format/order/count or completion state is invalid"]
     state = {key: int(value, 16) for key, value in match.groupdict().items()}
     expected = {name: 0x101 + i for i, name in enumerate(name for row in GPR_ROWS for name in row)}
-    expected.update(cs=8, ss=16, error=0x18 if vector == 13 else 0,
+    expected.update(cs=8, ss=16, error=0x38 if vector == 13 else 0,
                     rflags=0x402 if vector == 3 else (0x102 if vector == 1 else 0x10002))
     if vector == 0:
         expected.update(rax=1, rcx=0, rdx=0)
     if vector == 13:
-        expected.update(rax=0x18)
+        expected.update(rax=0x38)
     if vector == 14:
         expected.update(cr2=0x200000)
     errors = [f"captured {name}: expected 0x{value:x}, got 0x{state[name]:x}"

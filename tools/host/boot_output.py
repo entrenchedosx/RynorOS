@@ -13,6 +13,7 @@ from runtime_output import validate_runtime_output, parse_runtime_output
 from shell_output import SHELL_START, SHELL_END, SCRIPT, validate_shell_output
 from blk_output import validate_blk_section
 from fs_output import split_fs_sections, validate_fs_section
+from user_output import split_user_sections, validate_user_section
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -78,7 +79,10 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
     # Stage 11 shell output is optional and follows POST_IRQ. When present it
     # must be a complete shell section. A Stage 17a block-evidence section
     # may trail it (test images only), optionally followed by a Stage 17b
-    # filesystem section; normal boots end at SHELL_END.
+    # filesystem section and a Stage 18a userspace section. A trailing
+    # userspace section, when present, must be structurally complete; an
+    # absent one is valid here (the host boot loop, not this validator,
+    # waits for the final verified marker before declaring success).
     shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
     if shell_sep != b"":
         shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
@@ -90,13 +94,17 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             else:
                 errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state,
                                                     shell_script))
-            blk_part, fs_part = split_fs_sections(tail)
+            pre, user_part = split_user_sections(tail)
+            blk_part, fs_part = split_fs_sections(pre)
             errors.extend(validate_blk_section(blk_part))
             errors.extend(validate_fs_section(fs_part))
+            errors.extend(validate_user_section(user_part))
     elif require_shell:
         errors.append("Required interactive shell output missing")
     elif post != b"":
-        blk_part, fs_part = split_fs_sections(post)
+        pre, user_part = split_user_sections(post)
+        blk_part, fs_part = split_fs_sections(pre)
         errors.extend(validate_blk_section(blk_part))
         errors.extend(validate_fs_section(fs_part))
+        errors.extend(validate_user_section(user_part))
     return errors

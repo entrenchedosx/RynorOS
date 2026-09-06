@@ -23,6 +23,18 @@ enum vm_result vm_initialize(void);
 struct vm_space *vm_kernel_space(void);
 enum vm_result vm_create(struct vm_space *space);
 enum vm_result vm_destroy(struct vm_space *space);
+/* Deep-copy the kernel PML4[0] low chain into dst with private tables and
+   verbatim leaves, linked last for atomicity. dst PML4[0] must be zero;
+   the kernel low chain must live under PDPT entry 0 only (anything else
+   is VM_UNSUPPORTED, fail closed). Lets a low-half kernel reach its
+   IDT/GDT/TSS and handlers on foreign CR3s with supervisor leaves.
+   IF=0, foreground; never touches kernel tables. */
+enum vm_result vm_clone_low(struct vm_space *dst);
+/* Release dst's private low chain made by vm_clone_low. Requires every
+   user leaf already unmapped (non-replica PD entries must be zero) and
+   the chain to be private (never the kernel's). Clears dst PML4[0].
+   IF=0, foreground. */
+enum vm_result vm_release_low(struct vm_space *dst);
 enum vm_result vm_map(struct vm_space *, cpu_u64 va, cpu_u64 pa, unsigned int permissions);
 enum vm_result vm_map_range(struct vm_space *, cpu_u64 va, cpu_u64 pa, cpu_u64 pages, unsigned int permissions);
 /* Kernel-space-only foreign MMIO in slot 509, IF=0. Reject all usable RAM,
