@@ -48,8 +48,8 @@ static cpu_u64 byte_wsum(const cpu_u8 *b, cpu_u64 n)
     return s;
 }
 
-static cpu_u8 io_area[BLK_MAX_BLOCKS * 512u];
-static cpu_u8 blk_scratch[512u];
+static _Alignas(2) cpu_u8 io_area[BLK_MAX_BLOCKS * 512u];
+static _Alignas(2) cpu_u8 blk_scratch[512u];
 
 static void bounds_tests(cpu_u32 boot_id)
 {
@@ -114,6 +114,9 @@ void blk_self_test(void)
     if (test_id < 0) return; /* normal boot: silent success */
     const struct blk_device *dev = blk_device((cpu_u32)test_id);
     require(dev != 0 && dev->test_device, "test-desc");
+    /* Explicit write authorization for the test device (boot disk stays
+       denied: the bounds matrix above pins that). */
+    require(blk_set_writable((cpu_u32)test_id) == BLK_OK, "test-writable");
     say("[BLK] devices=");
     say_u64(blk_count());
     say(" test=");
@@ -167,8 +170,8 @@ void blk_self_test(void)
     say("\r\n");
     /* Multi-block path: one 4-block call must equal four single reads.
        Silent (no new serial format): byte-compare in guest. */
-    static cpu_u8 multi[4u * 512u];
-    static cpu_u8 single[512u];
+    static _Alignas(2) cpu_u8 multi[4u * 512u];
+    static _Alignas(2) cpu_u8 single[512u];
     require(blk_read((cpu_u32)test_id, 10, 4, multi, sizeof multi) == BLK_OK,
             "multi-read");
     for (cpu_u64 b = 0; b < 4u; ++b) {

@@ -52,9 +52,11 @@ Ownership and rules:
 - Single-sector commands internally (`count` byte = 1); a multi-block call
   completes prior blocks before any error aborts — no cross-block
   atomicity is claimed.
-- Reads accept any present device; **writes in 17a are accepted only on
-  the RLBLK1 test device** (`BLK_DENIED` otherwise), so no code path can
-  corrupt the boot disk. Stage 17c generalizes this with mounts.
+- Reads accept any present device; **writes require an explicitly
+  authorized device** (`blk_set_writable`, `BLK_DENIED` otherwise), so no
+  code path can corrupt the boot disk. The block self-test authorizes the
+  RLBLK1 test device; `fs_mount` authorizes a device only after full
+  filesystem validation (Stage 17c). Nothing else can enable writes.
 - Descriptors point at shared driver state: copy fields out, do not hold
   them across `blk_discover`.
 - No filesystem types cross this API: `id`, `block_size`, `block_count`
@@ -65,7 +67,7 @@ Error set (all negative except `BLK_OK = 0`, names via `blk_error_str`):
 `INVALID` (bad id/count/len/buffer), `RANGE` (outside capacity),
 `UNSUPPORTED` (non-LBA or >512-byte layout), `NODEV` (absent/unknown),
 `INIT_FAIL` (no working device / bad controller), `IOERR` (ERR/DF bits),
-`TIMEOUT` (status wait exhausted), `DENIED` (17a write policy).
+`TIMEOUT` (status wait exhausted), `DENIED` (unauthorized write).
 
 ## 3. Discovery and provenance
 

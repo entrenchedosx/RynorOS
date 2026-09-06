@@ -49,6 +49,7 @@ static const struct ide_slot SLOTS[BLK_MAX_DEVICES] = {
 struct blk_state {
     int present;
     int test_device;
+    int writable;
     cpu_u64 block_count;
 };
 
@@ -205,6 +206,7 @@ int blk_discover(void)
     for (cpu_u32 i = 0; i < BLK_MAX_DEVICES; ++i) {
         devices[i].present = 0;
         devices[i].test_device = 0;
+        devices[i].writable = 0;
         devices[i].block_count = 0;
         cpu_u16 words[256];
         int present = identify(&SLOTS[i], words);
@@ -263,7 +265,14 @@ int blk_find_test(void)
     return BLK_NODEV;
 }
 
-static int transfer(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64 len, int dir, int need_test)
+int blk_set_writable(cpu_u32 id)
+{
+    if (id >= BLK_MAX_DEVICES || !devices[id].present) return BLK_NODEV;
+    devices[id].writable = 1;
+    return BLK_OK;
+}
+
+static int transfer(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64 len, int dir, int need_write)
 {
     if (id >= BLK_MAX_DEVICES || !devices[id].present) return BLK_NODEV;
     if (!buf || ((cpu_u64)buf & 1u)) return BLK_INVALID;
@@ -271,7 +280,7 @@ static int transfer(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64
     int range = valid_range(&snapshot, start, count, len);
     if (range) return range;
     if (snapshot.block_count > BLK_LBA28_MAX) return BLK_RANGE;
-    if (need_test && !snapshot.test_device) return BLK_DENIED;
+    if (need_write && !snapshot.writable) return BLK_DENIED;
     cpu_u8 *bytes = (cpu_u8 *)buf;
     for (cpu_u32 i = 0; i < count; ++i) {
         int rc = one_sector(&SLOTS[id], start + i, (cpu_u16 *)(bytes + (cpu_u64)i * BLK_SECTOR_SIZE), dir);

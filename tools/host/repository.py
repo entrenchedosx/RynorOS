@@ -75,6 +75,11 @@ REQUIRED_FILES = (
     "tools/host/blk_image.py", "tools/host/blk_output.py",
     "tests/repository/test_blk_output.py", "tests/integration/test_storage.py",
     "docs/design/block-storage.md", "docs/reports/stage17a.md",
+    # Stage 17b read-only filesystem: same storage tree, no new directories.
+    "kernel/include/fs.h", "kernel/storage/fs.c", "kernel/storage/fs-test.c",
+    "tools/host/fs_image.py", "tools/host/fs_output.py",
+    "tests/repository/test_fs_output.py", "tests/integration/test_filesystem.py",
+    "docs/design/filesystem.md", "docs/reports/stage17b.md",
     "kernel/include/ksched.h", "kernel/arch/x86_64/switch.asm", "kernel/core/thread.c",
     "kernel/mm/kstack.c", "tools/host/sched_output.py",
     "kernel/core/scheduler-test.c", "kernel/arch/x86_64/scheduler-test.asm",
