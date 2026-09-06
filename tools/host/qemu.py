@@ -158,7 +158,9 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                max_ram_below_4g_mib: int | None = None,
                keys: tuple[str, ...] = KEYS, inject_keys: bool = True,
                shell_interactive: bool = False, shell_keys=None,
-               extra_drives: tuple[str | Path, ...] = ()) -> bytes:
+               extra_drives: tuple = ()) -> bytes:
+    # Entries are paths (snapshot overlay on) or (path, snapshot_on)
+    # tuples for tests that own a private image copy.
     # Invalidate stale evidence before any validation failure can leave
     # prior success bytes behind as false evidence.
     logs.mkdir(parents=True, exist_ok=True)
@@ -189,8 +191,9 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     if not image.is_file():
         raise FileNotFoundError(f"Boot image missing: {image}")
     for extra in extra_drives:
-        if not Path(extra).is_file():
-            raise FileNotFoundError(f"Extra drive image missing: {extra}")
+        path = extra[0] if isinstance(extra, tuple) else extra
+        if not Path(path).is_file():
+            raise FileNotFoundError(f"Extra drive image missing: {path}")
     qemu = find_tool("qemu-system-x86_64", "RYNOR_QEMU")
     qemu_path = Path(qemu).resolve()
     bios = _locate_firmware(qemu_path)
@@ -216,11 +219,18 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
         "-drive", f"file={str(image.resolve()).replace(',', ',,')},format=raw,if=ide,snapshot=on",
     ]
     # Disposable test devices (Stage 17a): additional raw IDE disks behind
-    # snapshot overlays, so guest writes never reach the host files and reruns
-    # stay deterministic. The boot disk stays primary master.
+    # snapshot overlays by default, so guest writes never reach the host
+    # files and reruns stay deterministic. An entry may be a (path, False)
+    # tuple to disable the overlay when the test owns a private copy and
+    # wants host-side corroboration of guest writes. The boot disk stays
+    # primary master.
     for extra in extra_drives:
+        snap = True
+        if isinstance(extra, tuple):
+            extra, snap = extra
         command += ["-drive",
-                    f"file={str(Path(extra).resolve()).replace(',', ',,')},format=raw,if=ide,snapshot=on"]
+                    f"file={str(Path(extra).resolve()).replace(',', ',,')},format=raw,if=ide"
+                    + (",snapshot=on" if snap else "")]
     command += [
         "-serial", f"file:{serial}", "-monitor", "stdio", "-no-reboot",
         "-d", "guest_errors,int", "-D", str(debug),

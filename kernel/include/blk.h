@@ -54,11 +54,16 @@ int blk_find_test(void);
    Single-sector commands internally; prior blocks of a multi-block call
    complete before any error aborts (no cross-block atomicity claimed).
    Writes are block-level readback primitives only: no durability, no
-   crash consistency, no journaling. In 17a, writes are accepted only on
-   the test device (boot-disk protection); reads accept any present
-   device. */
+   crash consistency, no journaling. Writes require an authorized device
+   (see blk_set_writable): the block self-test authorizes the RLBLK1 test
+   device, and fs_mount authorizes validated filesystems. Nothing else
+   can be written, so the boot disk is never at risk. */
 int blk_read(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64 len);
 int blk_write(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64 len);
+/* Authorize writes on a present device (idempotent). Used by test code
+   for the RLBLK1 device and by fs_mount after full validation. Returns
+   BLK_OK or BLK_NODEV. */
+int blk_set_writable(cpu_u32 id);
 /* Static lowercase name for a blk_result code (serial diagnostics). */
 const char *blk_error_str(int code);
 /* Failing discovery stage after a negative blk_discover ("none" on success). */

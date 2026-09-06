@@ -238,13 +238,20 @@ See `docs/design/block-storage.md`.
 
 Plan: bootstrap programs can initially come from a loader-supplied, read-only
 bundle with explicit bounds and format checks; this is not the native filesystem.
-Develop an original, small on-disk filesystem after a tested block interface
-(Stage 17a provides `blk_read/blk_write/capacity/block_size` with no
-controller leakage for exactly this handoff).
+Stage 17b implements the original read-only RYNORFS v1 filesystem on the
+Stage 17a block interface: versioned superblock, validated 64-byte directory
+entries (flat storage, hierarchical resolution), contiguous extents confined
+to the data region, strict paths, generation-counted handles, and cross-block
+reads with EOF semantics — no heap, no userspace. Stage 17c adds
+overwrite-in-extent `fs_write` (explicit `FS_RANGE` beyond EOF, partial
+writes reported with completed-prefix counts, single-sector atomic unit,
+no metadata changes so torn metadata is impossible, armed fault injection
+for failure tests). No journaling, no atomicity, no durability claims.
 Specify versioning, allocation, directories, file lengths, and corruption checks
 before enabling writes. Begin read-only; add writable images with recovery tests
 on disposable disks. Experimental: disk format and recovery mechanism. Do not
 promise crash consistency until its guarantees are specified and tested.
+See `docs/design/filesystem.md`.
 
 ## 8. Process/task model
 
@@ -259,7 +266,7 @@ No multicore execution, binary compatibility, or multi-user security is promised
 
 ## 9. Shell
 
-Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `490` repository and `172` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
+Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `510` repository and `191` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. The eventual `user/shell/` will move into `CPL3` with files once `18a` exists.
 
 ## 10. RynorLang
 

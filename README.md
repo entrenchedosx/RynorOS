@@ -7,7 +7,7 @@ values) filling a PowerShell-like *role* with an original design, not a clone.
 Inspired by the simplicity of TempleOS, not based
 on its implementation, Linux, BSD, or an existing userspace.
 
-## Current state — Stage 17a block storage (verified, QEMU IDE)
+## Current state — Stage 17c filesystem writes (verified, QEMU IDE)
 
 This is a single-CPU kernel development platform plus a **host-side RynorLang toolchain through native programs**, **not a usable or
 production-ready OS**. The independently [audited Stage 7 scheduler](docs/reports/stage7-audit.md)
@@ -18,7 +18,7 @@ services driven from real worker threads; see [docs/reports/stage10-audit.md](do
 and [docs/design/runtime.md](docs/design/runtime.md). Stage 11 adds a verified
 ring-0 kernel monitor (`kernel/shell/`) with real `IRQ1` input; see
 [docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md). **Stage 12 freezes the RynorLang lexical subset** and provides one host-side `tools/rynorlang/lex.py` implementation with precise spans, first-error diagnostics, and deterministic output; see [docs/reports/stage12.md](docs/reports/stage12.md) and [docs/design/rynorlang-lexer.md](docs/design/rynorlang-lexer.md). **Stage 13 parses that token stream** into a documented temporary syntax tree with exact spans, precedence, associativity, dangling-else, and depth-bounded diagnostics; see [docs/reports/stage13.md](docs/reports/stage13.md) and [docs/design/rynorlang-parser.md](docs/design/rynorlang-parser.md). **Stage 14 lowers that tree** into a stable JSON-compatible AST and performs name resolution and type checking with exact `SEM_*` diagnostics; see [docs/reports/stage14.md](docs/reports/stage14.md) and [docs/design/rynorlang-ast.md](docs/design/rynorlang-ast.md). **Stage 15a adds a typed IR, verifier, and native backend** with real dominance and a SysV-subset ABI; see [docs/reports/stage15a.md](docs/reports/stage15a.md). **Stage 15b adds an edition-gated shell surface** (`|>` pipelines, commands); see [docs/reports/stage15b.md](docs/reports/stage15b.md). **Stage 16 turns verified sources into real host-native ELF programs**
-with exact-bytes `print`; see [docs/reports/stage16.md](docs/reports/stage16.md). **Stage 17a adds IDE block storage** (PIO discovery, reads, test-device writes, host-recomputed digests); see [docs/reports/stage17a.md](docs/reports/stage17a.md). The [roadmap](ROADMAP.md) stages 0–17a as implemented milestones (not production readiness); Stage 17b onward remains planned.
+with exact-bytes `print`; see [docs/reports/stage16.md](docs/reports/stage16.md). **Stage 17a adds IDE block storage** (PIO discovery, reads, test-device writes, host-recomputed digests); see [docs/reports/stage17a.md](docs/reports/stage17a.md). **Stage 17b adds a read-only native filesystem** (versioned format, validated metadata, path lookup, cross-block reads, corruption rejection); see [docs/reports/stage17b.md](docs/reports/stage17b.md). **Stage 17c adds overwrite-in-extent writes** (explicit partial-write reporting, torn-data-possible/metadata-always-valid, armed fault injection, remount readback); see [docs/reports/stage17c.md](docs/reports/stage17c.md). The [roadmap](ROADMAP.md) stages 0–17c as implemented milestones (not production readiness); Stage 18a onward remains planned.
 
 Implemented and exercised in QEMU:
 
@@ -114,7 +114,7 @@ comparisons and byte-identical rebuilds. `check` runs build and both suites.
 Artifacts under ignored `build/`: `boot.bin`, `rynorkernel.bin`,
 `rynorkernel.elf`, `rynoros.img`, `rynoros-resources.zip` and
 `build-manifest.json`. Logs include serial transcripts and owned-QEMU cleanup
-records. The reviewed inventory contains 490 repository and 172 integration test
+records. The reviewed inventory contains 510 repository and 191 integration test
 methods. The build command checks exact per-module participation before discovery. Exact commands and evidence are in the
 [forensic stabilization report](docs/reports/forensic-stabilization-final.md), [Stage 16 report](docs/reports/stage16.md), [Stage 15b report](docs/reports/stage15b.md), [Stage 15a report](docs/reports/stage15a.md), [Stage 14 report](docs/reports/stage14.md), [Stage 13 report](docs/reports/stage13.md) and [Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
 Display evidence is retained as `display.pmem` and `display.ppm` beside each

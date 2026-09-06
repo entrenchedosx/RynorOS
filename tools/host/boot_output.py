@@ -12,6 +12,7 @@ from display_output import DISPLAY_START, DISPLAY_END, validate_display_output, 
 from runtime_output import validate_runtime_output, parse_runtime_output
 from shell_output import SHELL_START, SHELL_END, SCRIPT, validate_shell_output
 from blk_output import validate_blk_section
+from fs_output import split_fs_sections, validate_fs_section
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -76,7 +77,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
         return errors
     # Stage 11 shell output is optional and follows POST_IRQ. When present it
     # must be a complete shell section. A Stage 17a block-evidence section
-    # may trail it (test images only); normal boots end at SHELL_END.
+    # may trail it (test images only), optionally followed by a Stage 17b
+    # filesystem section; normal boots end at SHELL_END.
     shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
     if shell_sep != b"":
         shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
@@ -88,9 +90,13 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             else:
                 errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state,
                                                     shell_script))
-            errors.extend(validate_blk_section(tail))
+            blk_part, fs_part = split_fs_sections(tail)
+            errors.extend(validate_blk_section(blk_part))
+            errors.extend(validate_fs_section(fs_part))
     elif require_shell:
         errors.append("Required interactive shell output missing")
     elif post != b"":
-        errors.extend(validate_blk_section(post))
+        blk_part, fs_part = split_fs_sections(post)
+        errors.extend(validate_blk_section(blk_part))
+        errors.extend(validate_fs_section(fs_part))
     return errors
