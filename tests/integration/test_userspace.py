@@ -69,9 +69,11 @@ class UserspaceIntegrationTests(unittest.TestCase):
                           (13, 0), (13, 0x10), (13, 0x40), (13, 0x1C),
                           (13, 0x08), (13, 0x18), (13, 0x20),
                           (0, 0), (6, 0), (13, 0), (14, 7),
+                          (13, 0x08), (13, 0x08),
+                          (13, 0),
                           (128, 0x99)])
-        self.assertEqual(len(evidence.creates), 30)
-        self.assertEqual(len(evidence.destroys), 30)
+        self.assertEqual(len(evidence.creates), 33)
+        self.assertEqual(len(evidence.destroys), 33)
         # v==14 rows in print order: five fixed landmarks, three
         # supervisor-violation reads/writes, the kernel fetch, the stack
         # fetch, then the kernel-stack push fault.
@@ -121,24 +123,39 @@ class UserspaceIntegrationTests(unittest.TestCase):
             return serial, str(err)
 
     def test_mut_printed_vector_detected(self):
-        # Guest logic intact (boots green) but the printed fault vector is
-        # wrong: only the host validator can catch this class.
+        # Guest logic intact (boots to the final marker) but the printed
+        # fault vector is wrong: the boot path itself must reject the
+        # evidence, not a later separate check.
         output, error = self._run_user_mutation([(
             '    field(" vector=", c->fault_vector);',
             '    field(" vector=", c->fault_vector + 1);',
         )], source="kernel/core/user.c")
-        self.assertIsNone(error)
+        self.assertIsNotNone(error)
+        self.assertIn("userspace evidence", error)
         self.assertIn(b"[USER] user verified", output)
-        self.assertTrue(validate(parse_serial(output)))
 
     def test_mut_printed_ticks_detected(self):
         output, error = self._run_user_mutation([(
             '    field(" ticks=", s1.ticks - s0.ticks);',
             '    field(" ticks=", s1.ticks - s0.ticks + 1);',
         )], source="kernel/core/user-test.c")
-        self.assertIsNone(error)
+        self.assertIsNotNone(error)
+        self.assertIn("userspace evidence", error)
         self.assertIn(b"[USER] user verified", output)
-        self.assertTrue(validate(parse_serial(output)))
+
+    def test_mut_tf_flag_halts_fail_closed(self):
+        # A task that sets TF via POPF takes an unmanaged #DB on the next
+        # instruction: no kill path exists, so the kernel must halt
+        # loudly (diagnosed #DB) instead of escaping or continuing.
+        # Availability-only DoS by design; owned by 18d containment.
+        output, error = self._run_user_mutation([(
+            "user_blob_exit:\n    mov eax, 0",
+            "user_blob_exit:\n    pushfq\n    or qword [rsp], 0x100\n    popfq\n    mov eax, 0",
+        )], source="kernel/arch/x86_64/user_entry.asm", timeout=20)
+        self.assertIsNotNone(error)
+        self.assertIn("timed out", error)
+        self.assertIn(b"vector=01", output)
+        self.assertNotIn(b"[USER] user verified", output)
 
     def test_mut_exit_code_assert_fails_guest(self):
         # Guest-side expectation broken: the guest must halt itself loudly
@@ -160,6 +177,7 @@ class UserspaceIntegrationTests(unittest.TestCase):
             "        (cpu_u16)gate, CPU_CODE_SELECTOR, 0, 0x8e,",
         )], source="kernel/arch/x86_64/cpu.c", timeout=20)
         self.assertIsNotNone(error)
+        self.assertIn("timed out", error)
         self.assertNotIn(b"[USER] user verified", output)
 
     def test_mut_gdt_user_dpl_breaks_entry(self):
@@ -170,6 +188,7 @@ class UserspaceIntegrationTests(unittest.TestCase):
             "    kernel_gdt[4] = 0x00af9b000000ffffULL;",
         )], source="kernel/arch/x86_64/cpu.c", timeout=20)
         self.assertIsNotNone(error)
+        self.assertIn("timed out", error)
         self.assertNotIn(b"[USER] user verified", output)
 
     def test_mut_rsp0_desync_breaks_exit(self):
@@ -193,6 +212,7 @@ class UserspaceIntegrationTests(unittest.TestCase):
             "    if (vm_map(&c->space, USER_CODE_BASE, c->code_frame, VM_EXECUTE) != VM_OK ||",
         )], source="kernel/core/user.c", timeout=20)
         self.assertIsNotNone(error)
+        self.assertIn("timed out", error)
         self.assertNotIn(b"[USER] user verified", output)
 
     def test_mut_skipped_transition_detected(self):
@@ -204,6 +224,7 @@ class UserspaceIntegrationTests(unittest.TestCase):
             "    ++c->entries;\n    c->state = USER_EXITED; c->exit_code = 0;\n    return USER_RUN_EXITED;",
         )], source="kernel/core/user.c", timeout=20)
         self.assertIsNotNone(error)
+        self.assertIn("timed out", error)
         self.assertNotIn(b"[USER] user verified", output)
 
     def test_completion_requires_verified_marker(self):

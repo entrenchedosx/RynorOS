@@ -40,9 +40,8 @@
 #define USER_DATA_KTEXT 0x90ULL
 #define USER_DATA_KDATA 0x98ULL
 
-/* Gate reasons in EAX (low 32 bits); EBX carries the exit code. */
-#define USER_CALL_EXIT 0u
-#define USER_CALL_YIELD 1u
+/* Gate reasons live in the stable syscall namespace (syscall.h):
+   SYS_EXIT/SYS_YIELD/SYS_WRITE. Unknown reasons die as invalid_call. */
 
 /* Return codes from user_enter/user_resume in RAX. Details (exit code,
    fault vector/error/CR2, yield count) live in the context record. */
@@ -50,6 +49,7 @@
 #define USER_RUN_YIELDED 2u
 #define USER_RUN_PREEMPTED 3u
 #define USER_RUN_FAULTED 4u
+#define USER_RUN_WRITTEN 5u
 
 enum user_state { USER_FREE, USER_ACTIVE, USER_EXITED, USER_FAULTED };
 
@@ -77,8 +77,13 @@ struct user_context {
     cpu_u64 exit_code;
     cpu_u64 fault_vector, fault_error, fault_cr2;
     int fault_class; /* 0 none, 1 trap, 2 invalid_call */
+    /* Set for loader-created programs: gate evidence prints as [LOAD]
+       rows by the load driver instead of [USER] rows here, so the 18a
+       section grammar stays exact. */
+    int loaded;
     /* Statistics. */
     cpu_u64 entries, resumes, gate_exits, yields, preemptions, faults;
+    cpu_u64 sys_writes, sys_result;
     cpu_u64 code_size;
     struct user_link link;
 };
@@ -97,12 +102,18 @@ enum user_blob {
     USER_BLOB_TIBIT, USER_BLOB_FARJMP_KCS, USER_BLOB_FARJMP_UDATA,
     USER_BLOB_MOVSS, USER_BLOB_DIVZERO, USER_BLOB_SYSCALL,
     USER_BLOB_SS_RSP, USER_BLOB_KERN_RSP,
+    USER_BLOB_IRETQ_KCS, USER_BLOB_RETFQ_KCS, USER_BLOB_RDMSR,
 };
 
 int user_initialize(void); /* probe + static checks, once, foreground */
 int user_check(void);      /* structural invariants, IF=0 */
 int user_fault_managed(cpu_u64 vector); /* CPL3 kill-path whitelist, pure */
 int user_create(struct user_context **out, enum user_blob blob);
+/* Loaded-program sibling: fixed layout filled from file bytes (data tail
+   zeroed, covering BSS), no attack-parameter prefill. Entry is defined
+   as USER_CODE_BASE, so user_enter works unchanged. */
+int user_create_loaded(struct user_context **out, const char *code, cpu_u64 code_len,
+                       const char *data, cpu_u64 data_len);
 /* Destroy an EXITED/FAULTED context, or a pristine ACTIVE one (never
    entered, unbound). Anything live is rejected fail-closed. */
 int user_destroy(struct user_context *context);

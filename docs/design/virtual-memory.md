@@ -8,7 +8,11 @@ translation, permissions, explicit invalidation, and real page-fault tests.
 (A bounded kernel heap is implemented separately in Stage 6; see [heap.md](heap.md).)
 User mode, process address spaces, address-space switching,
 copy-on-write, demand paging, swap, shared-memory policy and file-backed mappings
-are **not implemented**. Creating an empty paging hierarchy is not a process.
+are **not implemented** as general facilities. Creating an empty paging hierarchy
+is not a process. (Stage 18a adds a narrow exception: two static per-context
+address spaces — private low replica plus shared high snapshot — switched with
+a full-TLB-flush `mov %cr3` on user entry/resume; see `userspace.md`. There is
+still no COW, demand paging, swap, or dynamic address-space management.)
 
 The architectural reference is [AMD64 Volume 2, Chapter 5](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2).
 This is an interface reference, not imported OS implementation code.
@@ -56,6 +60,7 @@ not inherited. A huge-page bit in a walked hierarchy is rejected; bit 7 in a
 | PML4 slot 509 | Exclusive Stage 9 foreign-device MMIO; supervisor RW/NX UC, ordinary APIs reject |
 | PML4 slot 511 | Reserved/unmapped future kernel layout |
 | 0x40000000 and nearby pages; 0xffff800000000000 | Temporary self-test mappings, removed on completion |
+| 0x400000 / 0x600000 / 0x7FE000 / 0x7FF000 | Stage 18a per-context user code (U-RX), data (U-RW), guard (unmapped), stack (U-RW); private low replica + shared high snapshot per address space |
 
 No whole-RAM direct map exists. Null, unused low-memory holes, the old bootstrap
 tables at 0x1000..0x4000 and the old boot-sector/boot-stack addresses are **not
@@ -200,7 +205,8 @@ tests. Reproducibility includes the unchanged separate icon package.
 
 Known limitations: single CPU, IF=0, no NMI-safe window use, bootstrap seven-frame
 availability below 2 MiB, existing PMM metadata-placement limit, no general
-address-space activation/destruction of active spaces, no user mode/processes,
+address-space activation/destruction of active spaces, no user mode/processes
+beyond the two static Stage 18a contexts,
 no general cache-policy/PAT programming API, no large pages/PCID/global mappings, no automatic
 data ownership/refcounting, no demand paging, COW or swap. Dynamic kernel
 allocation is provided by the separate Stage 6 kernel-heap subsystem

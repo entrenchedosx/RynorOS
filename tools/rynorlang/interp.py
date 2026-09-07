@@ -56,8 +56,13 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
     Returns {"exit": int|None, "trapped": str|None, "steps": int} where exit
     is the full signed i64 for int returns (0 for unit), and trapped is one
     of "div0" (zero divisor or INT_MIN/-1), "falloff" (unreachable reached),
-    "depth" (call budget), "steps" (step budget). Exactly one of exit/trapped
-    is set. Raises OracleRefused on invalid RIR or a missing/bad entry.
+    "depth" (call budget), "steps" (step budget, shared with consecutive
+    instruction-free edges so empty-block cycles trap instead of hanging).
+    Exactly one of exit/trapped is set. Raises OracleRefused on invalid
+    RIR or a missing/bad entry. Native execution has no equivalent
+    budgets: a natively hanging program hangs (SIGSEGV on stack
+    exhaustion, harness timeout otherwise) where the oracle reports a
+    trap — the documented differential limit.
 
     Stage 16: runtime-helper calls (rt_print_*) render into `out` when it is
     a list (int as signed decimal, bool as true/false, str as raw text);
@@ -77,12 +82,19 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
     # frames: [func, block_id, ip, env] plus pending dest slot appended on call.
     frames = [[entry, "bb0", 0, {}]]
     steps = 0
+    # Terminator-only transitions execute no instruction: an empty-block
+    # cycle would spin here forever without tripping the step budget, so
+    # consecutive instruction-free edges share the same budget. Normal
+    # programs never approach it (finite empty chains are short), and
+    # reported step counts are unchanged (only instructions increment).
+    idle = 0
     while frames:
         if len(frames) > call_limit:
             return {"exit": None, "trapped": "depth", "steps": steps}
         cur, blk_id, ip, env = frames[-1][0], frames[-1][1], frames[-1][2], frames[-1][3]
         blk = next(b for b in cur["blocks"] if b["id"] == blk_id)
         if ip < len(blk["instrs"]):
+            idle = 0
             steps += 1
             if steps > step_limit:
                 return {"exit": None, "trapped": "steps", "steps": steps}
@@ -97,6 +109,9 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
             frames.append([target, "bb0", 0,
                            {f"%{i}": v for i, v in enumerate(argvals)}, dest])
             continue
+        idle += 1
+        if idle > step_limit:
+            return {"exit": None, "trapped": "steps", "steps": steps}
         term = blk["term"]
         op = term["op"]
         if op == "jmp":

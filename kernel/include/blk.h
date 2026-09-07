@@ -64,6 +64,10 @@ int blk_write(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64 len);
    for the RLBLK1 device and by fs_mount after full validation. Returns
    BLK_OK or BLK_NODEV. */
 int blk_set_writable(cpu_u32 id);
+/* Revoke write authorization (idempotent). fs_unmount calls this so a
+   torn-down filesystem leaves no writable device behind. Returns
+   BLK_OK or BLK_NODEV. */
+int blk_clear_writable(cpu_u32 id);
 /* Static lowercase name for a blk_result code (serial diagnostics). */
 const char *blk_error_str(int code);
 /* Failing discovery stage after a negative blk_discover ("none" on success). */

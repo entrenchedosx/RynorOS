@@ -206,9 +206,11 @@ enum vm_result vm_query(struct vm_space *s, cpu_u64 va, struct vm_mapping *out)
     if (r != VM_OK) return r;
     if (!out) return VM_INVALID;
     if (!vm_canonical(va)) return VM_NONCANONICAL;
-    /* The private frame window is internal scratch, not a real mapping; it must
-       not be reported as an owned leaf even while entry 0 holds a stale frame. */
-    if (s == &kernel_space && (va & ~(VM_PAGE_SIZE - 1)) == VM_WINDOW)
+    /* The private frame window is internal scratch, not a real mapping;
+       neither the transient access slot (entry 0, rewritten on every
+       table access) nor the stable window-table self-map (entry 1) may
+       be reported as owned leaves. */
+    if (s == &kernel_space && (va & ~(2u * VM_PAGE_SIZE - 1u)) == VM_WINDOW)
         return VM_NOT_MAPPED;
     cpu_u64 path[VM_LEVELS];
     r = walk(s, va, path);
@@ -518,8 +520,10 @@ enum vm_result vm_release_low(struct vm_space *dst)
         page_entry e = read_entry(pd, j);
         if (!e.value) continue;
         if (!table_form(e)) return VM_CORRUPT;
-        release_table(dst, pte_address(e));
+        /* Unlink before release (same order as prune): no window exists
+           in which the parent still points at a freed table. */
         write_entry(pd, j, (page_entry){0});
+        release_table(dst, pte_address(e));
     }
     write_entry(dst->root, 0, (page_entry){0});
     release_table(dst, pd);

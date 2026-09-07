@@ -34,7 +34,9 @@
 static int fs_is_mounted;
 static cpu_u32 fs_dev;
 static cpu_u64 fs_total, fs_dir_start, fs_dir_blocks, fs_data_start, fs_data_blocks;
-static cpu_u8 fs_dir[FS_MAX_DIR_BLOCKS * 512u];
+/* Directory copy reads straight from word PIO: 2-byte aligned by
+   construction, like fs_scratch (u8 statics are only align-1). */
+static _Alignas(2) cpu_u8 fs_dir[FS_MAX_DIR_BLOCKS * 512u];
 static cpu_u32 fs_dir_slots;
 static struct { int in_use; cpu_u32 entry; cpu_u32 gen; } fs_handles[FS_MAX_OPEN];
 static cpu_u32 fs_generations[FS_MAX_OPEN];
@@ -199,7 +201,7 @@ int fs_mount(cpu_u32 dev)
     const struct blk_device *info = blk_device(dev);
     if (!info) { fs_stage = "bad-device"; return FS_INVALID; }
     cpu_u64 capacity = info->block_count;
-    static cpu_u8 sb[512u];
+    static _Alignas(2) cpu_u8 sb[512u];
     int rc = blk_read(dev, 0, 1, sb, sizeof sb);
     if (rc) { fs_stage = "io-sb"; return FS_IOERR; }
     for (unsigned k = 0; k < FS_MAGIC_LEN; ++k)
@@ -341,6 +343,7 @@ int fs_mount(cpu_u32 dev)
 
 void fs_unmount(void)
 {
+    if (fs_is_mounted) blk_clear_writable(fs_dev);
     fs_is_mounted = 0;
     for (cpu_u32 s = 0; s < FS_MAX_OPEN; ++s) fs_handles[s].in_use = 0;
 }
@@ -406,8 +409,8 @@ int fs_read(cpu_u32 handle, cpu_u64 offset, void *buf, cpu_u64 len, cpu_u64 *nre
     if (offset > size) { fs_stage = "past-end"; return FS_RANGE; }
     cpu_u64 avail = size - offset;
     cpu_u64 n = len < avail ? len : avail;
-    if (nread) *nread = n;
     if (len && (!buf || ((cpu_u64)buf & 1u))) { fs_stage = "bad-buf"; return FS_INVALID; }
+    if (nread) *nread = n;
     if (!n) return FS_OK;
     cpu_u64 first = rd64le(e + FS_D_FIRST);
     cpu_u64 cur = first + offset / 512u;
@@ -415,7 +418,9 @@ int fs_read(cpu_u32 handle, cpu_u64 offset, void *buf, cpu_u64 len, cpu_u64 *nre
     cpu_u8 *out = (cpu_u8 *)buf;
     cpu_u64 done = 0;
     while (done < n) {
-        if (!pos && n - done >= 512u) {
+        /* Full-block transfers need an even buffer for word PIO; an odd
+           cursor (after an odd fragment) goes through scratch instead. */
+        if (!pos && n - done >= 512u && !((cpu_u64)out & 1u)) {
             cpu_u64 full = (n - done) / 512u;
             cpu_u32 chunk = full > 32u ? 32u : (cpu_u32)full;
             int rc = blk_read(fs_dev, cur, chunk, out, (cpu_u64)chunk * 512u);
@@ -487,7 +492,9 @@ int fs_write(cpu_u32 handle, cpu_u64 offset, const void *buf, cpu_u64 len, cpu_u
     const cpu_u8 *in = (const cpu_u8 *)buf;
     cpu_u64 done = 0;
     while (done < len) {
-        if (!pos && len - done >= 512u) {
+        /* Full-block writes need an even source for word PIO; an odd
+           cursor (after an odd fragment) goes through scratch instead. */
+        if (!pos && len - done >= 512u && !((cpu_u64)in & 1u)) {
             cpu_u64 full = (len - done) / 512u;
             cpu_u32 chunk = full > 32u ? 32u : (cpu_u32)full;
             cpu_u64 bytes = (cpu_u64)chunk * 512u;

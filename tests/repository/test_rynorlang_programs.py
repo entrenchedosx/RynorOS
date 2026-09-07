@@ -603,6 +603,9 @@ class ProgramDeterminismTests(ProgramShared):
         self.assertIsNone(error)
         blob = arts["obj"].read_bytes() + arts["exe"].read_bytes()
         self.assertNotIn(work.name.encode("ascii"), blob)
+        # The runtime source lives outside the workdir: only its basename
+        # may appear (NASM STT_FILE), never the source-tree path.
+        self.assertNotIn(str(program.RUNTIME_ASM.parent).encode(), blob)
 
 
 class ProgramCliTests(unittest.TestCase):

@@ -7,7 +7,7 @@ values) filling a PowerShell-like *role* with an original design, not a clone.
 Inspired by the simplicity of TempleOS, not based
 on its implementation, Linux, BSD, or an existing userspace.
 
-## Current state — Stage 18a protected userspace (verified, QEMU TCG)
+## Current state — Stage 18b program loader + syscall boundary (verified, QEMU TCG)
 
 This is a single-CPU kernel development platform plus a **host-side RynorLang toolchain through native programs**, **not a usable or
 production-ready OS**. The independently [audited Stage 7 scheduler](docs/reports/stage7-audit.md)
@@ -18,7 +18,7 @@ services driven from real worker threads; see [docs/reports/stage10-audit.md](do
 and [docs/design/runtime.md](docs/design/runtime.md). Stage 11 adds a verified
 ring-0 kernel monitor (`kernel/shell/`) with real `IRQ1` input; see
 [docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md). **Stage 12 freezes the RynorLang lexical subset** and provides one host-side `tools/rynorlang/lex.py` implementation with precise spans, first-error diagnostics, and deterministic output; see [docs/reports/stage12.md](docs/reports/stage12.md) and [docs/design/rynorlang-lexer.md](docs/design/rynorlang-lexer.md). **Stage 13 parses that token stream** into a documented temporary syntax tree with exact spans, precedence, associativity, dangling-else, and depth-bounded diagnostics; see [docs/reports/stage13.md](docs/reports/stage13.md) and [docs/design/rynorlang-parser.md](docs/design/rynorlang-parser.md). **Stage 14 lowers that tree** into a stable JSON-compatible AST and performs name resolution and type checking with exact `SEM_*` diagnostics; see [docs/reports/stage14.md](docs/reports/stage14.md) and [docs/design/rynorlang-ast.md](docs/design/rynorlang-ast.md). **Stage 15a adds a typed IR, verifier, and native backend** with real dominance and a SysV-subset ABI; see [docs/reports/stage15a.md](docs/reports/stage15a.md). **Stage 15b adds an edition-gated shell surface** (`|>` pipelines, commands); see [docs/reports/stage15b.md](docs/reports/stage15b.md). **Stage 16 turns verified sources into real host-native ELF programs**
-with exact-bytes `print`; see [docs/reports/stage16.md](docs/reports/stage16.md). **Stage 17a adds IDE block storage** (PIO discovery, reads, test-device writes, host-recomputed digests); see [docs/reports/stage17a.md](docs/reports/stage17a.md). **Stage 17b adds a read-only native filesystem** (versioned format, validated metadata, path lookup, cross-block reads, corruption rejection); see [docs/reports/stage17b.md](docs/reports/stage17b.md). **Stage 17c adds overwrite-in-extent writes** (explicit partial-write reporting, torn-data-possible/metadata-always-valid, armed fault injection, remount readback); see [docs/reports/stage17c.md](docs/reports/stage17c.md). **Stage 18a adds a static protected-userspace foundation** (CPL3 entry, isolated address spaces, exit/yield gate, fault kills, timer preemption); see [docs/reports/stage18a.md](docs/reports/stage18a.md) and [docs/design/userspace.md](docs/design/userspace.md). The [roadmap](ROADMAP.md) stages 0–18a as implemented milestones (not production readiness); Stage 18b onward remains planned.
+with exact-bytes `print`; see [docs/reports/stage16.md](docs/reports/stage16.md). **Stage 17a adds IDE block storage** (PIO discovery, reads, test-device writes, host-recomputed digests); see [docs/reports/stage17a.md](docs/reports/stage17a.md). **Stage 17b adds a read-only native filesystem** (versioned format, validated metadata, path lookup, cross-block reads, corruption rejection); see [docs/reports/stage17b.md](docs/reports/stage17b.md). **Stage 17c adds overwrite-in-extent writes** (explicit partial-write reporting, torn-data-possible/metadata-always-valid, armed fault injection, remount readback); see [docs/reports/stage17c.md](docs/reports/stage17c.md). **Stage 18a adds a static protected-userspace foundation** (CPL3 entry, isolated address spaces, exit/yield gate, fault kills, timer preemption); see [docs/reports/stage18a.md](docs/reports/stage18a.md) and [docs/design/userspace.md](docs/design/userspace.md). **Stage 18b adds executable loading and syscalls** (RYNX envelopes from RYNORFS, fixed code/data/stack reuse, `int $0x80` exit/write/yield, validated copyin, real compiled programs in CPL3); see [docs/reports/stage18b.md](docs/reports/stage18b.md), [docs/design/executable-format.md](docs/design/executable-format.md) and [docs/design/syscall-abi.md](docs/design/syscall-abi.md). The [roadmap](ROADMAP.md) stages 0–18b as implemented milestones (not production readiness); Stage 18c onward remains planned.
 
 Implemented and exercised in QEMU:
 
@@ -42,13 +42,15 @@ Implemented and exercised in QEMU:
   Worker results, physical state and QEMU CPU IRQ traces are cross-checked;
   services reject IRQ calls and require valid, caller-owned objects.
  - Host-side RynorLang lexer (`tools/rynorlang/lex.py`): ASCII and 1 MiB bounded; `//` comments; exact `fn`/`let`/`if`/`else`/`while`/`return`/`true`/`false`/`int`/`bool`/`str` keywords; `[A-Za-z_][A-Za-z0-9_]*` identifiers; bounded decimal integers; `\\`, `\"`, `\n`, and `\t` string escapes; maximal-munch operators including standalone `!`; exact spans; and first-error diagnostics. Lexical errors exit 1. The strict suite has 49 lexer tests.
-- Host-side RynorLang parser (`tools/rynorlang/parse.py`): consumes the Stage 12 token stream into a frozen temporary syntax tree with exact spans, colon return types, no trailing list commas, left-associative precedence (`||` < `&&` < `==`/`!=` < `<`/`>`/`<=`/`>=` < `+`/`-` < `*`/`/`/`%` < unary), nearest-`if` else binding, and bounded nesting (depth 256 → `PAR_DEPTH_EXCEEDED`). It rejects malformed input with located `PAR_*` diagnostics. The strict suite has 54 parser tests, including exact call-nesting and wide-flat-tree CLI regressions.
+- Host-side RynorLang parser (`tools/rynorlang/parse.py`): consumes the Stage 12 token stream into a frozen temporary syntax tree with exact spans, colon return types, no trailing list commas, left-associative precedence (`||` < `&&` < `==`/`!=` < `<`/`>`/`<=`/`>=` < `+`/`-` < `*`/`/`/`%` < unary), nearest-`if` else binding, and bounded nesting (depth 256 → `PAR_DEPTH_EXCEEDED`). It rejects malformed input with located `PAR_*` diagnostics. The strict suite has 55 parser tests, including exact call-nesting and wide-flat-tree CLI regressions.
  - Host-side RynorLang semantics (`tools/rynorlang/analyze.py`): lowers the temporary tree into a stable JSON-compatible AST (`Program, Function, Param, Block, Let, If, While, Return, ExprStmt, BinOp, UnOp, IntLit, BoolLit, StrLit, Var, Call`) with exact spans, deterministic symbol indices, and type checking (no implicit conversions, `unit` for missing return, `str` equality vs ordering, `!`/`-` unary, `&&`/`||` bool, call arity, etc.). No shadowing, forward function references allowed, locals block-scoped. The strict suite has 63 semantics tests with 12 valid and 20 invalid fixtures plus an 8-test public-API gauntlet; no interpretation, codegen, or execution is claimed.
 
-There is no loader, processes, demand paging, GUI/desktop, networking, or RynorLang execution beyond the stable semantic AST plus host-native programs.
-The language examples cannot execute in-kernel; `print` is still `SEM_UNKNOWN_FUNCTION`. Protected userspace exists only as the static Stage 18a foundation (fixed layout, two contexts, no files). No SMP, SIMD thread context, COW,
-swap or new large-page support exists. The shell is a
-`Ring 0` trusted monitor; the static CPL3 foundation does not run it yet (`Stage 18b` onward).
+There is no demand paging, GUI/desktop, networking, or SMP/SIMD thread context.
+Host-native programs also run as RynorOS userspace programs through the
+Stage 18b loader (fixed layout, two contexts, files via RYNORFS images).
+No COW, swap or new large-page support exists. The shell is a
+`Ring 0` trusted monitor; CPL3 runs compiled programs, not the shell
+(the native shell is `Stage 18d`).
 
 ## What the image actually does
 
@@ -89,7 +91,9 @@ temporary table branch are reclaimed after join.
 ## Build and verify
 
 Host requirements: Python 3.10+ standard library, NASM, Clang, LLD, and QEMU
-with SeaBIOS. No WSL, host libc, third-party kernel/loader, Make or ISO utility.
+with SeaBIOS. No host libc, third-party kernel/loader, Make or ISO utility for the
+kernel/QEMU path (no WSL needed there); the RynorLang native program pipeline
+additionally needs an ELF runner (POSIX host or WSL archlinux).
 See [dependency setup](docs/design/bootstrap-dependencies.md) for paths and versions.
 
 ```text
@@ -113,7 +117,7 @@ comparisons and byte-identical rebuilds. `check` runs build and both suites.
 Artifacts under ignored `build/`: `boot.bin`, `rynorkernel.bin`,
 `rynorkernel.elf`, `rynoros.img`, `rynoros-resources.zip` and
 `build-manifest.json`. Logs include serial transcripts and owned-QEMU cleanup
-records. The reviewed inventory contains 532 repository and 208 integration test
+records. The reviewed inventory contains 550 repository and 224 integration test
 methods. The build command checks exact per-module participation before discovery. Exact commands and evidence are in the
 [forensic stabilization report](docs/reports/forensic-stabilization-final.md), [Stage 16 report](docs/reports/stage16.md), [Stage 15b report](docs/reports/stage15b.md), [Stage 15a report](docs/reports/stage15a.md), [Stage 14 report](docs/reports/stage14.md), [Stage 13 report](docs/reports/stage13.md) and [Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
 Display evidence is retained as `display.pmem` and `display.ppm` beside each

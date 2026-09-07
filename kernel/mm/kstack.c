@@ -3,7 +3,10 @@
 #include "io.h"
 #include "serial.h"
 
-/* An absent guard needs no backing frame. Private registry owns payload RAM. */
+/* An absent guard needs no backing frame. Private registry owns payload RAM.
+   Guard model: one unmapped page catches LINEAR stack overflow (growth is
+   page-at-a-time). Strided or wild writes can skip any finite guard; that
+   is the arbitrary-corruption class, not a guard-sizing question. */
 struct stack_record {
     struct kstack *owner;
     cpu_u64 generation;

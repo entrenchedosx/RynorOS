@@ -178,11 +178,12 @@ Native artifacts remain byte-identical across independent rebuild directories.
 
 ## Known limitations / unsupported
 
-No privilege changes, TSS/IST/emergency stack, safe stack-overflow recovery,
-process isolation, FPU/SIMD
+No IST/emergency stack, safe stack-overflow recovery, process isolation beyond
+the static Stage 18a two-context foundation, FPU/SIMD
 context handling, SMP, or hardware-platform coverage beyond the tested QEMU PC.
-Faults before IDT loading, invalid stacks, or exceptions during diagnostics can
-still double/triple-fault. Wired non-test vectors and nesting are not execution
+(TSS with `RSP0` and CPL3 transitions exist since Stage 18a; see
+`userspace.md`.) Faults before IDT loading, invalid stacks, or exceptions
+during diagnostics can still double/triple-fault. Wired non-test vectors and nesting are not execution
 coverage claims. Masked NMI is not an NMI-handling guarantee. Stage 3 adds only
 the separate PIC/PIT IRQ path described in `irq-timer.md`; bootstrap dependencies
 are unchanged. Stage 4 adds physical allocation separately in `kernel/mm/`;

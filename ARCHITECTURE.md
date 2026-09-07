@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking), the Stage 15a typed IR plus native backend with real dominance and a SysV-subset ABI, the Stage 15b edition-gated shell surface, and Stage 16 host-native `.rl` programs (exact-bytes `print`, deterministic ELF pipeline), and Stage 17a IDE block storage (PIO discovery, reads, test-device writes, host-recomputed digests). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking), the Stage 15a typed IR plus native backend with real dominance and a SysV-subset ABI, the Stage 15b edition-gated shell surface, and Stage 16 host-native `.rl` programs (exact-bytes `print`, deterministic ELF pipeline), and Stage 17a IDE block storage (PIO discovery, reads, test-device writes, host-recomputed digests), Stage 17b RYNORFS v1 read-only filesystem plus Stage 17c overwrite-in-extent writes, and Stage 18a protected userspace foundation (CPL3 entries with isolated CR3s, TSS/RSP0 exit stacks, `int $0x80` gate, fault kill paths, deterministic timer preemption). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -50,7 +50,9 @@ Stage 2 replaces the temporary boot GDT with null, ring-0 long-code (0x08), and
 ring-0 data/stack (0x10) descriptors. `LGDT`, far return/segment reloads, `SGDT`,
 and selector checks verify the switch. It then builds a 256-slot IDT, installs
 32 exception gates and 16 PIC IRQ gates, performs `LIDT`/`SIDT`, and checks gate
-addresses/attributes. The remaining 208 entries are non-present. No TSS/IST or user descriptors exist.
+addresses/attributes. The remaining 208 entries are non-present. Stage 18a adds
+a 7-entry GDT (user data `0x1B`, user code `0x23`, TSS `0x28` with `RSP0`, no IST)
+and a DPL3 `int $0x80` gate; see `docs/design/userspace.md`.
 
 Implemented tests cover #DE/#DB/#BP/#UD/#GP/#PF; only an armed self-test breakpoint
 can resume through `IRETQ` in the Stage 2 path. Stage 5 also permits exact,
@@ -73,7 +75,9 @@ baseline. Changes to compiler flags and CPU assumptions require boot-test eviden
 Implemented: original freestanding C/assembly boot, serial, kernel descriptors,
 shared exception diagnostics, PIC IRQ dispatch, bounded PIT self-test and physical
 frame allocation, virtual-memory, bounded kernel heap and kernel scheduling APIs.
-It has no privilege transitions or userspace OS service layer.
+Stage 18a adds CPL0↔CPL3 transitions for a static two-context userspace
+foundation; there is still no userspace OS service layer (no loader, no
+syscalls, no runtime services).
 
 Plan: an original, small monolithic Rynorkernel owns CPU state, memory,
 interrupts, scheduling, devices, and filesystem services. Early milestones run
@@ -189,7 +193,8 @@ BIOS temporarily permits interrupts for disk and E820 services before kernel ent
 The PMM self-test runs with IF=0; PIT testing follows it and a final PMM integrity
 check follows the IRQs. Interrupt handlers do not allocate frames.
 Stack failure, faults before IDT loading, or faults during diagnostics may still
-triple-fault: there is no TSS/IST/emergency stack or general fault recovery.
+triple-fault: there is no IST/emergency stack or general fault recovery
+(a TSS with `RSP0` exists since Stage 18a for CPL3 transitions only).
 
 Plan: introduce input interrupts only at their milestone. Handlers must remain
 bounded and non-blocking; deferred work belongs outside interrupt context.
@@ -266,7 +271,7 @@ No multicore execution, binary compatibility, or multi-user security is promised
 
 ## 9. Shell
 
-Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `532` repository and `208` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. Stage 18a provides the static `CPL3` foundation (fixed user layout, two contexts, exit/yield gate); the eventual `user/shell/` move into `CPL3` with files waits for `18b` onward.
+Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `550` repository and `224` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. Stage 18a provides the static `CPL3` foundation (fixed user layout, two contexts, exit/yield gate); Stage 18b loads real compiled programs into it (RYNX envelopes, `int $0x80` exit/write/yield) with files from RYNORFS images. The eventual `user/shell/` move into `CPL3` with files waits for `18c` onward.
 
 ## 10. RynorLang
 
@@ -352,7 +357,13 @@ real E820/PMM initialization/full-pool tests, VM mapping/permission/fault/OOM te
 then heap, timer setup/three real ticks, Stage 7 execution tests, Stage 8
 keyboard `sendkey` handshake, Stage 9 framebuffer pixel evidence, the Stage 10
 runtime worker-fold evidence, and Stage 11 shell evidence, then
-post-IRQ accounting within 30 seconds. Six required exception vectors are
+post-IRQ accounting, Stage 17a/b/c block-storage and filesystem sections
+with host-recomputed digests and image readback, and the Stage 18a
+protected-userspace section (isolated CR3 entries, gate exits, a pinned
+fault matrix, deterministic preemption counts) within their configured
+deadlines. RynorLang stages add host-side lexer/parser/semantics/RIR/
+compiler checks with native differential execution where an ELF runner
+exists. Six required exception vectors are
 actually triggered in separate images; saved RIP is compared with the linked ELF
 symbol and register/error/flag values are checked. Default breakpoint return also
 verifies GPR/RSP/RFLAGS restoration. Blank/wrong-version/unarmed images must fail.
@@ -370,9 +381,11 @@ the appended Stage 2–7 output. VM tests compare fault RIPs to linked symbols,
 test actual RX/RO/NX accesses, and reject broken CR3/TLB/zeroing/fault-arm builds.
 Scheduler probes compare hardware IRQ RIPs with a non-yielding assembly loop,
 test register/flags/stack restoration, and reject broken handoffs and ownership.
-These checks prove neither general hardware support nor language execution
-or user-mode isolation. Current evidence is in `docs/reports/stage10-audit.md`;
-the Stage 7, 8 and 9 audits retain their historical findings.
+These checks prove neither general hardware support nor production language
+or Windows execution environments. Current evidence is in
+`docs/reports/stage11.md`, `stage15a.md`, `stage15b.md`, `stage16.md`,
+`stage17a.md`, `stage17b.md`, `stage17c.md`, and `stage18a.md`;
+the Stage 7, 8, 9, and 10 audits retain their historical findings.
 
 Stage 10 services are allocation-free foreground calls (IF preserved, IRQ
 context rejected), not syscalls. Strings/rings rely on trusted live extents and
@@ -419,7 +432,7 @@ Planned — no implementation claimed. The design hosts a Windows-compatible exe
                            HARDWARE
 ```
 
-**CPU privilege vs. architectural trust.** x86-64 `CPL0` is maximal CPU privilege; there is no `ring above ring 0`. RynorOS today runs only `CPL0` (`GDT 0x08/0x10`, no TSS/IST, no ring 3). The Windows environment is not “above” Rynorkernel in ring terms. The intended boundary is:
+**CPU privilege vs. architectural trust.** x86-64 `CPL0` is maximal CPU privilege; there is no `ring above ring 0`. RynorOS runs `CPL0` kernel code plus static `CPL3` test contexts since Stage 18a (`GDT 0x08/0x10` kernel, `0x1B/0x23` user, TSS `0x28` with `RSP0`, no IST). The Windows environment is not “above” Rynorkernel in ring terms. The intended boundary is:
 
 ```text
 Hardware
@@ -442,7 +455,7 @@ Two honest implementations satisfy this without false ring claims:
 * **Native isolated subsystem** (preferred, matches Stage 18a): Rynorkernel stays sole Ring 0; Windows code is deprivileged to Ring 3 behind a validated syscall gate + `U/S` paging (`vm_create` activation, `TSS.RSP0`, `syscall/sysret`). No VT-x required. This is OS-level isolation, not virtualization.
 * **Type-1 hypervisor** (alternative): Rynorkernel in VMX Root Ring 0; an unmodified Windows kernel runs in VMX Non-Root Ring 0 with EPT/NPT, vAPIC/vPIC, vPCI and IOMMU isolation. Requires `VT-x + EPT + VPID + IOMMU` and a full device model. Both are described as *architectural trust boundary ≠ CPU privilege level*.
 
-**Windows execution environment — what must be reproduced vs. virtualized.** User-mode: PE/COFF loader, `ntdll` syscall thunks, PEB/TEB, handle/object manager, `VirtualAlloc` (reserve/commit/`PAGE_GUARD`), dispatcher objects (`Event`/`Mutex`/`Semaphore`/`WaitableTimer` with blocking `THREAD_WAITING` queues), registry hives (fake or host-backed), TLS/FSBASE/GSBASE, SEH/VEH/`KiUserExceptionDispatcher` with x64 `pdata/xdata` unwind. Kernel/driver: WDM/WDF `DriverEntry`, `IRP`/`MDL`, DMA/scatter-gather via IOMMU, PnP, NDIS, `DxgKrnl`/`VidMm`/`VidSch`. Current RynorOS has none of this — only supervisor `PMM/VM/heap/kstack` and `FNV-1a` ring-0 services; all pointers are trusted.
+**Windows execution environment — what must be reproduced vs. virtualized.** User-mode: PE/COFF loader, `ntdll` syscall thunks, PEB/TEB, handle/object manager, `VirtualAlloc` (reserve/commit/`PAGE_GUARD`), dispatcher objects (`Event`/`Mutex`/`Semaphore`/`WaitableTimer` with blocking `THREAD_WAITING` queues), registry hives (fake or host-backed), TLS/FSBASE/GSBASE, SEH/VEH/`KiUserExceptionDispatcher` with x64 `pdata/xdata` unwind. Kernel/driver: WDM/WDF `DriverEntry`, `IRP`/`MDL`, DMA/scatter-gather via IOMMU, PnP, NDIS, `DxgKrnl`/`VidMm`/`VidSch`. Current RynorOS has none of this — only supervisor `PMM/VM/heap/kstack` and `FNV-1a` ring-0 services plus the static Stage 18a userspace foundation; CPL3-supplied pointers are never trusted (validated before any use).
 
 **Isolation.** `PMM` frames and `VM` tables are per-address-space, never shared writable host↔guest; `IOMMU` isolates DMA; `SMEP/SMAP/PKE` (future) and `W^X` (`NX` already enforced) block `U→K` access; handle tables and `PML4 509/510/511` (MMIO/window) are kernel-private. No `vm_frame_access` to userspace, no `W+X` leaves.
 

@@ -338,6 +338,10 @@ class _Emitter:
         self.out(f"    mov rdx, {nxt_r}")
         self.out("    cmp rcx, rdx")
         self.out(f"    jne {base}_ne")
+        # Direction flag is ambient process state: pin it explicitly so a
+        # caller-set DF can never turn this bounded scan into a backwards
+        # OOB read with a wrong equality result.
+        self.out("    cld")
         self.out("    repe cmpsb")
         self.out(f"    sete al")
         self.out(f"    jmp {base}_done")

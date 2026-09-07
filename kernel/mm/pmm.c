@@ -137,6 +137,10 @@ enum pmm_result pmm_allocate(cpu_u64 *physical)
     if (result != PMM_OK) return result;
     if (!physical) return PMM_INVALID;
     if (!stats.free_bytes) return PMM_OUT_OF_MEMORY;
+    /* frame_count is write-once at init (usable_bytes / PAGE); any drift
+       means corrupted allocator state, and every bitmap index below
+       derives from it. Fail closed instead of reading/writing OOB. */
+    if (frame_count != stats.usable_bytes / PMM_PAGE_SIZE) return PMM_INVALID;
     if (search_cursor > frame_count) search_cursor = frame_count;
     cpu_u64 index = search_cursor;
     while (index < frame_count && bit(index)) ++index;

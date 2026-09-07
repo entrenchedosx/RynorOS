@@ -4,8 +4,11 @@
 
 Audited Stage 7: single-CPU, ring-0 kernel threads in the one active kernel
 address space. The fixed table has eight slots: bootstrap plus seven workers.
-There is no process, alternate CR3, user mode, SMP, priority queue or blocking
-wait facility. The scheduler has no test tick limit; the boot self-test masks
+There is no process, priority queue or blocking
+wait facility. (Stage 18a adds two static per-context address spaces switched
+with a full-TLB-flush `mov %cr3` on user entry/resume, plus a TSS with `RSP0`
+and no IST; the scheduler core itself is unchanged — see `userspace.md`.) The
+scheduler has no test tick limit; the boot self-test masks
 its own PIT source after each measured phase.
 
 ## Public interfaces and lifetime

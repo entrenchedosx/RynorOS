@@ -482,6 +482,17 @@ class CompilerNativeTests(unittest.TestCase):
                 self.assertEqual(self._execute(src, f"nested_tail_{index}"),
                                  ("exit", 2))
 
+    def test_44b_empty_block_cycle_traps_steps(self):
+        # An infinite loop whose blocks hold no instructions executes no
+        # steps, so the step budget alone never trips; consecutive
+        # instruction-free edges share the budget instead. Oracle-only:
+        # native would hang, which is the documented differential limit.
+        src = ("fn loop(c: bool): int { while c { } return 0; } "
+               "fn main(): int { return loop(true); }")
+        module = self._oracle(src, "empty-cycle.rl")
+        oracle = interp.run_rir(module, step_limit=5000)
+        self.assertEqual(oracle["trapped"], "steps")
+
     def test_45_nonlayout_cfg_slot_liveness_matches_oracle(self):
         blocks = [
             {"id": "bb0", "instrs": [

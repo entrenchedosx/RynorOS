@@ -365,4 +365,45 @@ user_blob_kern_rsp:
     ud2
 user_blob_kern_rsp_end:
 
+; Forged return frames to kernel CS. CPL3 cannot return inward: both
+; must fault (#GP on the kernel selector) with no handler, scheduler,
+; or validator ever running. A silent CPL0 entry here would be a full
+; escape, so these rows are the most load-bearing in the matrix.
+
+global user_blob_iretq_kcs
+global user_blob_iretq_kcs_end
+user_blob_iretq_kcs:
+    mov r11, 0x600000
+    mov rax, [r11 + 0x90]
+    push 0x1B
+    push 0x7FF000
+    push 0x202
+    push 0x08
+    push rax
+    iretq
+    ud2
+user_blob_iretq_kcs_end:
+
+global user_blob_retfq_kcs
+global user_blob_retfq_kcs_end
+user_blob_retfq_kcs:
+    mov r11, 0x600000
+    mov rax, [r11 + 0x90]
+    push 0x08
+    push rax
+    retfq
+    ud2
+user_blob_retfq_kcs_end:
+
+; MSR access is CPL0-only; complements the EFER/SYSENTER_CS mediation
+; checks with a live privileged-instruction fault.
+
+global user_blob_rdmsr
+global user_blob_rdmsr_end
+user_blob_rdmsr:
+    mov ecx, 0x10
+    rdmsr
+    ud2
+user_blob_rdmsr_end:
+
 section .note.GNU-stack noalloc noexec nowrite progbits

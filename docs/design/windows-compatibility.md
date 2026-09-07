@@ -75,7 +75,7 @@ Windows-compatible execution environment
 
 Explicit distinction required in all documentation:
 
-* **CPU privilege level** — x86-64 `CPL0` (kernel) vs `CPL3` (user). `CPL0` is maximal; no software runs “above” it. `RynorOS` today is `CPL0`-only (`GDT 0x08/0x10`, `IDT 0x8e` DPL0, no TSS/IST, no user descriptors).
+* **CPU privilege level** — x86-64 `CPL0` (kernel) vs `CPL3` (user). `CPL0` is maximal; no software runs “above” it. `RynorOS` runs a `CPL0` kernel plus static `CPL3` test contexts since Stage 18a (`GDT 0x08/0x10` kernel, `0x1B/0x23` user, `IDT 0x8e` DPL0 except `0x80` DPL3, `TSS` with `RSP0`, no IST, no user descriptors beyond the static pair).
 * **RynorOS architectural trust boundary** — ownership of `CR3`, `IDT`, `GDT`/`TSS`, `PMM` frame allocation, `VM` table lifecycle, interrupt dispatch, device `MMIO`/`I/O` ports, and `IOMMU` programming. Code inside the boundary is the TCB; code outside cannot acquire these capabilities, regardless of ring.
 * **Windows compatibility privilege model** — Windows apps/drivers expect NT semantics: `ntdll` syscall thunks → `ntoskrnl` (`SSDT`, `IRQL`, `DPC`/`APC`, `Object Manager`, `I/O Manager` with `IRP`/`MDL`). On RynorOS this is reproduced **observably**, not by changing rings: user-mode Win32 runs `CPL3` behind a `syscall`/`sysret` or `int 0x80` gate; a driver environment is either (a) a Ring-3 NT-emulation subsystem that validates handles, or (b) a whole Windows kernel in `VMX Non-Root Ring 0` with `EPT`/`NPT`.
 
@@ -117,11 +117,11 @@ Violations halt or return `STATUS_ACCESS_VIOLATION`/`STATUS_INVALID_HANDLE`/`STA
 
 ## Implementation status
 
-**Implemented:** none for Windows. Foundation available: `PMM` (E820 + bitmap, 4 KiB frames, `IF=0`), `VM` (4-level 4K, `vm_create` inactive scaffolding, `VM_USER` leaves rejected for `kernel_space`), `heap` (64 KiB fixed arena), `kstack` (guard page + generation ownership), single-CPU `PIC`/`PIT ~100Hz` + round-robin `thread.c` (no wait queues, no `CR3` switch), polled `COM1`, `i8042` keyboard, `BGA 1024x768x32` LFB at `VM_MMIO_BASE` (slot 509) with `UC` `PCD|PWT` (`PAT3` `EAX[31:24]=UC` verified, not programmed).
+**Implemented:** none for Windows. Foundation available: `PMM` (E820 + bitmap, 4 KiB frames, `IF=0`), `VM` (4-level 4K, `vm_create` inactive scaffolding, `VM_USER` leaves rejected for `kernel_space`), `heap` (64 KiB fixed arena), `kstack` (guard page + generation ownership), single-CPU `PIC`/`PIT ~100Hz` + round-robin `thread.c` (no wait queues; `CR3` switches only across the static Stage 18a user/kernel boundary), polled `COM1`, `i8042` keyboard, `BGA 1024x768x32` LFB at `VM_MMIO_BASE` (slot 509) with `UC` `PCD|PWT` (`PAT3` `EAX[31:24]=UC` verified, not programmed).
 
 **Planned:** Stages 21a–21m (see `ROADMAP.md` and `docs/windows-compatibility-program.md`).
 
-**Experimental:** Exact `syscall` ABI, `GDT` user selectors (`0x1B`/`0x23`), `FSBASE`/`GSBASE` per thread, `API-set` versioning, graphics translation technology (software `llvmpipe`/`WARP` vs `virtio-gpu virgl/venus` vs `DXVK`/`vkd3d-proton` → Vulkan vs VFIO passthrough), `hive` backing.
+**Experimental:** Exact `syscall` ABI (`SYSCALL`/`SYSRET` MSRs unprogrammed; CPL3 `SYSCALL` currently faults — see `userspace.md`), `FSBASE`/`GSBASE` per thread, `API-set` versioning, graphics translation technology (software `llvmpipe`/`WARP` vs `virtio-gpu virgl/venus` vs `DXVK`/`vkd3d-proton` → Vulkan vs VFIO passthrough), `hive` backing. (`GDT` user selectors `0x1B`/`0x23` are implemented since Stage 18a, not experimental.)
 
 ## Dependencies
 
@@ -143,8 +143,8 @@ Never claim “hello.exe launched” as completeness. Never weaken a test to hid
 ## Known limitations / bare-metal horizons
 
 * **Single CPU, PIC/PIT only** — no `APIC`/`HPET`, no `SMP`, no `IOMMU`, no PCIe enumeration beyond hardcoded `00:02.0`, no `DMA` API, no `PCID` shootdown.
-* **No user isolation today** — no `TSS`, no `DPL3`, no `syscall` gate, no `SMEP`/`SMAP`, no `FSBASE`/`GSBASE`, no per-process `CR3` activation.
-* **No filesystem** — only BIOS LBA `0x8000..0x70000`; Stage 17 `ramfs` or host-forwarded `9p` is the earliest file source for `PE` images.
+* **No user isolation beyond the static foundation** — Stage 18a provides two static CPL3 contexts (`TSS`/`RSP0`, `DPL3` gate, per-context address spaces), but no general processes, no `syscall` gate, no `SMEP`/`SMAP`, no `FSBASE`/`GSBASE`, no dynamic per-process `CR3` activation.
+* **No general filesystem** — Stage 17 provides IDE block storage plus read-only RYNORFS v1 with overwrite-in-extent writes; there is still no file creation, enumeration, or directories-as-workspace for `PE` images (an 18b+ concern, not BIOS LBA).
 * **Graphics** — only `UC` LFB; `WC`/`WT` `PAT` reprogramming, `GPU` `VRAM`/`GTT`/`PPGTT`, `KMS` atomic modeset, `virtio-gpu`/`Vulkan`/`VFIO` are all future.
 * **Security** — no `TPM`/`Secure Boot`/`VBS`/`HVCI`/`PatchGuard` — see certification program for `A–E` classification.
 

@@ -72,6 +72,11 @@ _FAULT_ROWS = [
     # Pinned to the emulator-observed value (see user-test.c note).
     (13, 0x0, None, None),
     (14, 0x07, None, "KERNEL"),
+    # Forged returns to kernel CS: inward return must fault.
+    (13, 0x08, None, None),
+    (13, 0x08, None, None),
+    # MSR access is CPL0-only.
+    (13, 0x0, None, None),
     (128, 0x99, None, None),
 ]
 
@@ -239,8 +244,8 @@ def validate(evidence: UserEvidence) -> list:
         errors.append(f"guest failures: {evidence.failures}")
     if evidence.smep is None or evidence.smap is None:
         errors.append("missing smep/smap probe line")
-    if len(evidence.creates) != 30:
-        errors.append(f"want 30 creates, got {len(evidence.creates)}")
+    if len(evidence.creates) != 33:
+        errors.append(f"want 33 creates, got {len(evidence.creates)}")
     else:
         tables = {row[2] for row in evidence.creates}
         if len(tables) != 1:
@@ -251,8 +256,8 @@ def validate(evidence: UserEvidence) -> list:
         if sorted(row[0] for row in evidence.creates) != \
                 sorted(row for row in evidence.destroys):
             errors.append("create/destroy slot multisets differ")
-    if len(evidence.destroys) != 30:
-        errors.append(f"want 30 destroys, got {len(evidence.destroys)}")
+    if len(evidence.destroys) != 33:
+        errors.append(f"want 33 destroys, got {len(evidence.destroys)}")
     want_maps = {(0, "code", CODE_BASE, "rx"), (0, "data", DATA_BASE, "rw"),
                  (0, "stack", STACK_PAGE, "rw")}
     got_maps = {(slot, kind, va, perm) for slot, kind, va, _, perm in evidence.maps}

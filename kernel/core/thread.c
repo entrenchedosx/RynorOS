@@ -278,7 +278,14 @@ struct exception_frame *sched_tick(struct exception_frame *frame)
            runs on the user CR3 and must only hit the current data page. */
         if (!user_origin_ok(link->context, frame)) frame_failure(frame);
         ++ticks;
-        if (user_note_cpl3_tick() && !user_publish_stop(link->context, frame))
+        /* Tick accounting still runs for loaded programs (tickspin delta),
+           but the stop-flag store is 18a-only: offset 0 of the data page
+           is program data for RYNX images, not USER_DATA_STOP. Storing
+           there would corrupt the program; loaded code exits via its own
+           syscalls and needs preemption only, never the flag. */
+        int flag_tick = user_note_cpl3_tick();
+        if (!link->context->loaded && flag_tick &&
+            !user_publish_stop(link->context, frame))
             frame_failure(frame);
         if (!user_save_state(link->context, frame)) frame_failure(frame);
         struct thread *next = pick_next();
@@ -350,7 +357,7 @@ struct exception_frame *user_schedule_next(struct user_link *link, cpu_u64 retco
     check();
     require(link && current->user == link && link->bound && link->context,
             "user_next_link");
-    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_FAULTED, "user_next_code");
+    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_WRITTEN, "user_next_code");
     link->kern_save.rax = retcode;
     current->saved = link->kern_save;
     struct thread *next = pick_next();

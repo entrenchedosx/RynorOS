@@ -130,7 +130,7 @@ class StorageIntegrationTests(unittest.TestCase):
     def test_completion_error_inversion_fails(self):
         # Treating DRQ as error breaks every transfer starting at discovery.
         self._run_storage_failure("discovery", [
-            ("        if (s & IDE_SR_ERR) return -1;",
+            ("        if (s & (IDE_SR_ERR | IDE_SR_DF)) return -1;",
              "        if (s & IDE_SR_DRQ) return -1;"),
         ])
 

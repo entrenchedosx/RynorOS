@@ -548,6 +548,20 @@ class ShellReplGuardTests(unittest.TestCase):
         self.assertEqual(status, "ready")
         res = _analyze(buf)
         self.assertTrue(res.ok, res.diagnostic)
+        # Braces inside strings/comments must not hold the block open.
+        acc2 = shellmod.BlockAccumulator(edition="shell")
+        for chunk, want in (
+            ('fn main(): str {', "continue"),
+            ('    let x: str = "{";', "continue"),
+            ('    // } not a brace', "continue"),
+            ('    return x;', "continue"),
+            ('}', "ready"),
+        ):
+            with self.subTest(chunk=chunk):
+                status, buf = acc2.push(chunk)
+                self.assertEqual(status, want)
+        res = _analyze(buf)
+        self.assertTrue(res.ok, res.diagnostic)
 
     def test_38_no_kernel_repl_or_eval(self):
         self.assertEqual(list((ROOT / "kernel").glob("shell/repl*")), [])

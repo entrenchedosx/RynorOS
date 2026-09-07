@@ -74,9 +74,11 @@ Error set (all negative except `BLK_OK = 0`, names via `blk_error_str`):
 `blk_discover` (requires IF=0, not in IRQ context, like the display
 provenance path):
 
-1. PCI config read at 00:07.1 must be VID/DID `8086:7010`, class/subclass
+1. PCI config read at 00:01.1 must be VID/DID `8086:7010`, class/subclass
    `01/01`, and both channels in compatibility mode. Anything else fails
    closed (`BLK_INIT_FAIL`): fixed ports are used only on this match.
+   (00:01.1 is the PIIX3 IDE function on pc-i440fx; 00:01.0 is the ISA
+   bridge.)
 2. Per slot (primary/secondary master/slave): select, check status
    `0x00`/`0xFF` for absence (instant, no wait), else IDENTIFY with
    bounded BSY/DRQ waits.
@@ -89,6 +91,9 @@ provenance path):
 
 Zero present devices is `BLK_INIT_FAIL` (our QEMU always has the boot
 disk); a present-but-unmarked disk is simply never selected for writes.
+A present device that fails geometry or the sector-0 probe is likewise
+skipped without vetoing the remaining devices (only a wholly bad set
+fails discovery).
 
 ## 4. Limits and arithmetic
 

@@ -11,7 +11,9 @@ import time
 from image import find_tool
 from exception_output import BOOT_PREFIX, VECTOR_NAMES
 from boot_output import validate_boot_output
-from user_output import VERIFIED_LINE as USER_VERIFIED
+from user_output import VERIFIED_LINE as USER_VERIFIED, parse_serial as parse_user_serial, \
+    validate as validate_user_evidence
+from load_output import VERIFIED_LINE as LOAD_VERIFIED, SKIPPED_LINE as LOAD_SKIPPED
 from kbd_output import KEYS, KBD_END, key_sequence, validate_keyboard_trace, validate_irq0_trace
 from display_output import DISPLAY_END, DISPLAY_START, parse_display_output, verify_display_pixels, verify_display_scanout
 from shell_output import SHELL_END, SHELL_KEYS, SCANS as SHELL_SCANS
@@ -44,7 +46,13 @@ def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
                             require_shell=require_shell,
                             shell_script=shell_script):
         return False
-    return test_vector != 3 or USER_VERIFIED in observed
+    if test_vector != 3:
+        return True
+    # Both trailing sections must have terminated: the loader always ends
+    # the transcript (verified after running, skipped when no image), so a
+    # missing load terminator means the guest is still in its load phase.
+    return USER_VERIFIED in observed and \
+        (LOAD_VERIFIED in observed or LOAD_SKIPPED in observed)
 
 
 def _file_provenance(path: Path, *, version_command=None) -> dict:
@@ -385,6 +393,14 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
         failure = failure or "Shell completed without all host inputs"
     if errors:
         failure = failure or "; ".join(errors)
+    if failure is None and test_vector == 3:
+        # Structural validity is not enough: a guest that prints a
+        # well-formed section with wrong numbers (vectors, ticks,
+        # counts) must fail the boot itself, not a later separate
+        # check. Evidence failures join (never replace) earlier ones.
+        user_errors = validate_user_evidence(parse_user_serial(observed))
+        if user_errors:
+            failure = "userspace evidence: " + "; ".join(user_errors)
     if failure:
         summary["failure"] = failure
         (logs / "run.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
