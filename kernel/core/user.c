@@ -582,11 +582,17 @@ int user_initialize(void)
     return user_check();
 }
 
-static void release_frames(struct user_context *c)
+/* Release the three page frames, reporting success. Callers halt on
+   failure (R1 halt-on-rollback-failure): a failed release means PMM
+   corruption, since every nonzero frame here was just allocated for this
+   context. Unreachable while PMM state is consistent. */
+static int release_frames(struct user_context *c)
 {
-    if (c->code_frame) { (void)pmm_release(c->code_frame); c->code_frame = 0; }
-    if (c->data_frame) { (void)pmm_release(c->data_frame); c->data_frame = 0; }
-    if (c->stack_frame) { (void)pmm_release(c->stack_frame); c->stack_frame = 0; }
+    int ok = 1;
+    if (c->code_frame) { if (pmm_release(c->code_frame) != PMM_OK) ok = 0; c->code_frame = 0; }
+    if (c->data_frame) { if (pmm_release(c->data_frame) != PMM_OK) ok = 0; c->data_frame = 0; }
+    if (c->stack_frame) { if (pmm_release(c->stack_frame) != PMM_OK) ok = 0; c->stack_frame = 0; }
+    return ok;
 }
 static int teardown_space(struct user_context *c, int strict);
 
@@ -687,24 +693,35 @@ static int create_with_image(struct user_context **out, const char *code, cpu_u6
     c->code_frame = c->data_frame = c->stack_frame = 0;
     c->space = (struct vm_space){0};
     if (pmm_allocate(&c->code_frame) != PMM_OK) return 0;
-    if (pmm_allocate(&c->data_frame) != PMM_OK) { release_frames(c); return 0; }
-    if (pmm_allocate(&c->stack_frame) != PMM_OK) { release_frames(c); return 0; }
-    if (vm_create(&c->space) != VM_OK) { release_frames(c); return 0; }
+    if (pmm_allocate(&c->data_frame) != PMM_OK) {
+        if (!release_frames(c)) panic("rollback_release");
+        return 0;
+    }
+    if (pmm_allocate(&c->stack_frame) != PMM_OK) {
+        if (!release_frames(c)) panic("rollback_release");
+        return 0;
+    }
+    if (vm_create(&c->space) != VM_OK) {
+        if (!release_frames(c)) panic("rollback_release");
+        return 0;
+    }
     /* Private low chain first (delivery needs IDT/GDT/TSS/handlers on the
        user CR3); a failure here leaves only private tables, so plain
        vm_destroy unwinds soundly. High clone after: shared entries that
-       vm_destroy must never see (teardown_space handles those). */
+       vm_destroy must never see (teardown_space handles those). Every
+       rollback step is checked (R1): a failed step halts with its marker
+       instead of returning a clean OOM. */
     if (vm_clone_low(&c->space) != VM_OK) {
-        (void)vm_destroy(&c->space);
-        release_frames(c);
+        if (vm_destroy(&c->space) != VM_OK) panic("rollback_destroy");
+        if (!release_frames(c)) panic("rollback_release");
         c->space = (struct vm_space){0};
         return 0;
     }
     if (!clone_high(c)) {
         volatile cpu_u64 *uw = vm_frame_access(c->space.root);
         if (uw) for (unsigned int i = 0; i < 253; ++i) uw[256 + i] = 0;
-        (void)vm_destroy(&c->space);
-        release_frames(c);
+        if (vm_destroy(&c->space) != VM_OK) panic("rollback_destroy");
+        if (!release_frames(c)) panic("rollback_release");
         c->space = (struct vm_space){0};
         return 0;
     }
@@ -740,11 +757,22 @@ static int create_with_image(struct user_context **out, const char *code, cpu_u6
     *out = c;
     return 1;
 fail:
-    /* Best effort: insert rolls back its own tables, so lenient teardown
-       drains to the root; any inconsistency is caught by balance checks. */
-    (void)teardown_space(c, 0);
-    release_frames(c);
-    c->space = (struct vm_space){0};
+    /* R1 halt-on-rollback-failure: insert rolls back its own tables, so
+       lenient teardown drains to the root; a failed step means VM/PMM
+       corruption and halts with its marker instead of returning clean.
+       Full slot reset (not just space/frames): the closing user_check runs
+       after state==ACTIVE, so returning with ACTIVE + root==0 would wedge
+       the 2-slot pool and poison global user_check (ACTIVE requires root).
+       Early failures (still FREE) restore identically, harmlessly. */
+    {
+        unsigned int slot = c->slot;
+        cpu_u64 base = c->exit_base, top = c->exit_top;
+        if (!teardown_space(c, 0)) panic("rollback_teardown");
+        if (!release_frames(c)) panic("rollback_release");
+        *c = (struct user_context){0};
+        c->slot = slot; c->exit_base = base; c->exit_top = top;
+        c->link.context = c;
+    }
     return 0;
 }
 
@@ -844,8 +872,9 @@ cpu_u64 user_enter(struct user_link *link)
     for (unsigned int i = 0; i < 15; ++i) c->gprs[i] = 0;
     c->rip = USER_CODE_BASE; c->rsp = USER_STACK_TOP; c->rflags = 0x202;
     if (!sync_high(c)) {
-        /* Unwind the attach: enter must be all-or-nothing. */
-        (void)thread_detach_user();
+        /* Unwind the attach: enter must be all-or-nothing. The detach is
+           checked (R1): failure means scheduler corruption, so halt. */
+        if (!thread_detach_user()) panic("rollback_detach");
         return 0;
     }
     cpu_set_rsp0(c->exit_top);
@@ -974,11 +1003,35 @@ void user_handle_fault(struct exception_frame *f, cpu_u64 cr2)
     if (irq_in_context()) panic("fault_irq");
     if (cpu_get_rsp0() != c->exit_top) panic("fault_rsp0");
     if (!frame_within_exit(c, f)) panic("fault_stack");
-    if (!origin_valid_fault(f)) panic("fault_origin");
-    if (!user_fault_managed(f->vector)) panic("fault_vector");
-    if (has_hw_error(f->vector)) {
-        if (!vm_canonical(cr2) && f->vector == 14) panic("fault_bad_cr2");
-    } else if (f->error != 0) panic("fault_bad_error");
+    /* Guest-steerable checks (RFLAGS via POPF, vector via faulting
+       instruction, CR2 via fault address, error slot): a LOADED program
+       records a kill (trap class) instead of halting, mirroring the gate
+       path. Link/state/IRQ/RSP0/stack above stay panic-always: a failure
+       there means kernel desync or an unaddressable frame, never just a
+       hostile program. Trusted 18a blobs still panic fail-closed. */
+    {
+        int ok = origin_valid_fault(f) && user_fault_managed(f->vector);
+        if (ok) {
+            if (has_hw_error(f->vector)) {
+                if (!vm_canonical(cr2) && f->vector == 14) ok = 0;
+            } else if (f->error != 0) ok = 0;
+        }
+        if (!ok) {
+            if (!c->loaded) {
+                if (!origin_valid_fault(f)) panic("fault_origin");
+                if (!user_fault_managed(f->vector)) panic("fault_vector");
+                if (has_hw_error(f->vector)) panic("fault_bad_cr2");
+                panic("fault_bad_error");
+            }
+            user_to_kernel();
+            record_state(c, f);
+            c->state = USER_FAULTED; c->fault_class = 1;
+            c->fault_vector = f->vector; c->fault_error = f->error;
+            c->fault_cr2 = cr2;
+            ++c->faults;
+            sched_resume(user_schedule_next(link, USER_RUN_FAULTED));
+        }
+    }
     user_to_kernel();
     record_state(c, f);
     c->state = USER_FAULTED; c->fault_class = 1;

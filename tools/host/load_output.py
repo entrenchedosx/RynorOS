@@ -230,8 +230,16 @@ def validate(evidence: LoadEvidence, files: dict) -> list:
             errors.append("create/destroy slot multisets differ")
     # Programs referenced must exist with matching envelope geometry.
     # Seven programs: exit42/writehello/fib27 ×2 isolation/bsszero/sysprobe.
+    # The set is pinned (not guest-defined): a canned 7×exit42 run with
+    # matching exits must not validate.
     if len(evidence.programs) != 7:
         errors.append(f"want 7 programs, got {len(evidence.programs)}")
+    want_programs = sorted(["/rnyx/exit42.rnx", "/rnyx/writehello.rnx",
+                            "/rnyx/fib27.rnx", "/rnyx/exit42.rnx",
+                            "/rnyx/exit42.rnx", "/rnyx/bsszero.rnx",
+                            "/rnyx/sysprobe.rnx"])
+    if sorted(path for path, _, _, _, _ in evidence.programs) != want_programs:
+        errors.append(f"program set differs: {[p for p, _, _, _, _ in evidence.programs]}")
     seen_programs = []
     for path, entry, code, fsz, msz in evidence.programs:
         if path not in files:

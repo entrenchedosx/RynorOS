@@ -62,7 +62,10 @@ int blk_read(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64 len);
 int blk_write(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64 len);
 /* Authorize writes on a present device (idempotent). Used by test code
    for the RLBLK1 device and by fs_mount after full validation. Returns
-   BLK_OK or BLK_NODEV. */
+   BLK_OK or BLK_NODEV. Authority note (no semantic change): the sole
+   non-FS caller is the block self-test's test_writability entry, which
+   asserts single-outstanding, test-device-only grants; every other
+   grant path goes through fs_mount/fs_unmount. */
 int blk_set_writable(cpu_u32 id);
 /* Revoke write authorization (idempotent). fs_unmount calls this so a
    torn-down filesystem leaves no writable device behind. Returns

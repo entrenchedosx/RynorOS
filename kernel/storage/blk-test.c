@@ -80,6 +80,36 @@ static void bounds_tests(cpu_u32 boot_id)
     require(blk_device(BLK_MAX_DEVICES) == 0, "desc-range");
 }
 
+/* R2 writability authority: the SOLE non-FS path to blk_set_writable.
+   The FS path (fs_mount/fs_unmount) owns validated filesystems; every
+   other grant or revoke in the tree must go through this one entry.
+   It asserts authorization state: single outstanding grant, test device
+   only (never the boot disk, never an absent slot). grant!=0 authorizes,
+   grant==0 revokes. test_writability_state() is a read-only query for
+   call-site asserts (it changes nothing). Silent on success so exact
+   transcripts are unaffected; every refusal is a negative test at the
+   call site. Revocation is fail-safe (it can only remove writability)
+   and is proved by post-revoke DENIED probes. */
+static int test_writable_id = -1;
+static int test_writability(cpu_u32 id, int grant)
+{
+    if (grant) {
+        if (test_writable_id != -1) return BLK_INVALID;
+        const struct blk_device *dev = blk_device(id);
+        if (!dev || !dev->test_device) return BLK_DENIED;
+        int rc = blk_set_writable(id);
+        if (rc != BLK_OK) return rc;
+        test_writable_id = (int)id;
+        return BLK_OK;
+    }
+    if (test_writable_id != (int)id) return BLK_INVALID;
+    int rc = blk_clear_writable(id);
+    if (rc != BLK_OK) return rc;
+    test_writable_id = -1;
+    return BLK_OK;
+}
+static int test_writability_state(void) { return test_writable_id; }
+
 static void read_evidence(cpu_u32 id, cpu_u64 blk)
 {
     require(blk_read(id, blk, 1, blk_scratch, sizeof blk_scratch) == BLK_OK, "evict-read");
@@ -110,13 +140,30 @@ void blk_self_test(void)
     for (cpu_u32 i = 0; i < BLK_MAX_DEVICES; ++i)
         if (blk_device(i)) { boot_id = i; break; }
     bounds_tests(boot_id);
+    /* Authority negatives run every boot (no test device needed): absent
+       slots and non-test devices are refused, and nothing is outstanding.
+       The boot disk doubles as the non-test probe unless this topology
+       made it a test device (never true in our QEMU matrix). */
+    require(test_writability(BLK_MAX_DEVICES, 1) != BLK_OK, "auth-absent-refused");
+    require(test_writability(BLK_MAX_DEVICES, 0) != BLK_OK, "auth-revoke-none");
+    require(test_writability_state() == -1, "auth-clean");
+    {
+        const struct blk_device *bd = blk_device(boot_id);
+        require(bd != 0, "auth-boot-desc");
+        if (!bd->test_device)
+            require(test_writability(boot_id, 1) != BLK_OK, "auth-boot-refused");
+    }
+    require(test_writability_state() == -1, "auth-still-clean");
     int test_id = blk_find_test();
     if (test_id < 0) return; /* normal boot: silent success */
     const struct blk_device *dev = blk_device((cpu_u32)test_id);
     require(dev != 0 && dev->test_device, "test-desc");
-    /* Explicit write authorization for the test device (boot disk stays
-       denied: the bounds matrix above pins that). */
-    require(blk_set_writable((cpu_u32)test_id) == BLK_OK, "test-writable");
+    /* Explicit write authorization for the test device through the sole
+       non-FS entry (boot disk stays denied: the bounds matrix above pins
+       that, and the negatives above pin the entry itself). */
+    require(test_writability((cpu_u32)test_id, 1) == BLK_OK, "test-writable");
+    /* Double authorization is refused (single outstanding grant). */
+    require(test_writability((cpu_u32)test_id, 1) != BLK_OK, "auth-double-refused");
     say("[BLK] devices=");
     say_u64(blk_count());
     say(" test=");
@@ -180,5 +227,14 @@ void blk_self_test(void)
         for (cpu_u64 i = 0; i < sizeof single; ++i)
             require(multi[b * 512u + i] == single[i], "multi-match");
     }
+    /* Teardown revocation through the same entry: the test device must
+       not stay writable into later phases (filesystem mounts, CPL3
+       execution). Post-revoke writes are denied before any I/O, and a
+       second revoke is refused. Silent on success. */
+    require(test_writability((cpu_u32)test_id, 0) == BLK_OK, "auth-revoke");
+    require(test_writability_state() == -1, "auth-revoked");
+    require(blk_write((cpu_u32)test_id, wblk, 1, blk_scratch, sizeof blk_scratch) == BLK_DENIED,
+            "auth-revoked-denied");
+    require(test_writability((cpu_u32)test_id, 0) != BLK_OK, "auth-revoke-again-refused");
     say("[BLK] storage verified\r\n");
 }
