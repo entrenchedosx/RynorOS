@@ -13,6 +13,13 @@ one has either a fail-closed behavior, a pinning test, or both.
   (`[FS] failure=rollback_*` via rollback_fail, `[USER]` via panic).
   A repository pin (`test_rollback_discards`) fails on any new `(void)`
   rollback discard, bare-statement rollback call, or removed checked form.
+  Detection leg, stated explicitly: for provably-unreachable halts the
+  guarantee is form-level, not behavioral — e.g. the entry-revoke R-B
+  mutant boots green with a full image (completed, `fs verified`) because
+  the halt cannot fire on static devices, and it trips exactly 1 void-hit
+  in the pin test (executed). An earlier stripped-image QEMU failure
+  (missing files tripping `evict-stat`) was artifact, not mutant
+  detection; no claim is made that R-B is detected by guest behavior.
 - R2 blk authority confinement: the sole non-FS path to blk_set_writable
   is blk-test.c's test_writability entry (single outstanding grant,
   test-device only, with negatives); fs_mount/fs_unmount own the FS path.
@@ -30,9 +37,11 @@ one has either a fail-closed behavior, a pinning test, or both.
 2. SMEP/SMAP — BOUNDED RESIDUAL, hook: hardening milestone.
    Both features are probed but required OFF; the kernel half stays mapped
    on user CR3 and user_publish_stop relies on SMAP-off stores. Containment:
-   no kernel RIP-hijack primitive is reachable from CPL3 (all returns are
-   validated IRETQ/frame paths), and high-half leaves are audited
-   supervisor-only by high_ok. Enforcement belongs to 18d-era hardening.
+   under single-delivery conditions no kernel RIP-hijack primitive is
+   reachable from CPL3 (all returns are validated IRETQ/frame paths), and
+   high-half leaves are audited supervisor-only by high_ok. Nested
+   delivery is item 1's residual, not this item's claim. Enforcement
+   belongs to 18d-era hardening.
 3. vm_protect USER posture — BOUNDED RESIDUAL, hook: hardening milestone.
    vm_protect enforces the USER bit on the old mapping only, so the API
    would accept a USER→supervisor flip if ever called that way. Containment:
