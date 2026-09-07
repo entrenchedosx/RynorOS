@@ -328,18 +328,47 @@ void fs_self_test(void)
     /* Every other present device must fail mounting with a classified
        code (the boot disk is not a filesystem; corrupt images fail by
        kind). A surprise success here is itself the failure. */
+    int saw_bad_mount = 0;
     for (cpu_u32 id = 0; id < 4u; ++id) {
         if ((int)id == mounted_dev) continue;
         if (!blk_device(id)) continue;
         int rc = fs_mount(id);
         require(rc != FS_OK, "corrupt-mounted");
+        saw_bad_mount = 1;
         say("[FS] corrupt slot=");
         say_u64(id);
         say(" code=");
         say(fs_error_str(rc));
         say("\r\n");
     }
+    /* Write-authorization revocation: the failed (re)mounts above must
+       have left the previous good device non-writable. Raw blk_write is
+       the sole barrier probe (fsbuf is PIO-aligned). Unconditional:
+       when no bad device exists the good device is still mounted here,
+       so remount it through a failed mount first to force the revoke
+       path (mounting the boot disk always fails). */
+    if (!saw_bad_mount) {
+        /* No bad device present (single-device topology): the boot disk
+           (id 0) is never a filesystem, so mounting it fails and forces
+           the revoke path. mounted_dev cannot be 0 here (it mounted OK
+           above, and id 0 never does). */
+        require((int)mounted_dev != 0, "good-is-boot");
+        int bro = fs_mount(0u);
+        require(bro != FS_OK, "boot-mount-fails");
+        saw_bad_mount = 1;
+        say("[FS] corrupt slot=0 code=");
+        say(fs_error_str(bro));
+        say("\r\n");
+    }
+    if (saw_bad_mount)
+        require(blk_write((cpu_u32)mounted_dev, 0, 1, fsbuf, 512) == BLK_DENIED,
+                "revoke-after-fail");
     fs_unmount();
+    /* Teardown revocation: after unmount nothing may stay writable, and
+       the boot disk is never writable at rest. */
+    require(blk_write((cpu_u32)mounted_dev, 0, 1, fsbuf, 512) == BLK_DENIED,
+            "revoke-after-unmount");
+    require(blk_write(0u, 0, 1, fsbuf, 512) == BLK_DENIED, "boot-readonly");
     /* Leave unmounted: nothing persists past the self-test. */
     say("[FS] fs verified\r\n");
 }

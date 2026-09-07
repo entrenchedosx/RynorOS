@@ -7,6 +7,7 @@
 #include "fs.h"
 #include "blk.h"
 #include "cpu.h"
+#include "serial.h"
 
 /* On-disk superblock (block 0), all little-endian, explicit offsets. */
 #define FS_MAGIC "RYNORFS\0"
@@ -33,6 +34,26 @@
 
 static int fs_is_mounted;
 static cpu_u32 fs_dev;
+/* R1 halt-on-rollback-failure: a failed rollback step means block-layer
+   corruption, so halt with the exact subsystem marker instead of
+   discarding the error. Unreachable while device slots are static (no
+   hot-removal exists); if one ever fires the transcript names the step. */
+static void rollback_fail(const char *step) __attribute__((noreturn));
+static void rollback_fail(const char *step)
+{
+    __asm__ volatile ("cli" ::: "memory");
+    (void)serial_write("[FS] failure=rollback_");
+    (void)serial_write(step);
+    (void)serial_write("\r\n");
+    (void)serial_flush();
+    cpu_halt();
+}
+/* Write-authorization lifetime: blk writable is granted on validated mount
+   and must die on every remount attempt and every teardown, not just on
+   successful unmount. Without this, a remount (success to another device
+   or failure on a corrupt image) orphans a writable unmounted device and
+   defeats the sole BLK_DENIED barrier. Idempotent clears make this safe. */
+static int fs_writable_authorized;
 static cpu_u64 fs_total, fs_dir_start, fs_dir_blocks, fs_data_start, fs_data_blocks;
 /* Directory copy reads straight from word PIO: 2-byte aligned by
    construction, like fs_scratch (u8 statics are only align-1). */
@@ -195,7 +216,14 @@ int fs_mount(cpu_u32 dev)
 {
     fs_stage = "none";
     /* Fail-closed entry: a failed (re)mount never leaves the previous
-       directory copy live behind new geometry, nor old handles valid. */
+       directory copy live behind new geometry, nor old handles valid,
+       nor the previous device writable. Revoke first: success below
+       re-authorizes the new device; every error return then leaves
+        nothing writable behind. */
+    if (fs_writable_authorized) {
+        if (blk_clear_writable(fs_dev) != BLK_OK) rollback_fail("revoke");
+        fs_writable_authorized = 0;
+    }
     fs_is_mounted = 0;
     for (cpu_u32 s = 0; s < FS_MAX_OPEN; ++s) fs_handles[s].in_use = 0;
     const struct blk_device *info = blk_device(dev);
@@ -331,8 +359,11 @@ int fs_mount(cpu_u32 dev)
     (void)fs_data_blocks;
     fs_dev = dev;
     /* Authorize device writes now that the image is fully validated:
-       from here on blk_write serves this filesystem only. */
+       from here on blk_write serves this filesystem only. Entry already
+       revoked any previous authorization, so at most one device is
+       writable at a time. */
     if (blk_set_writable(dev)) { fs_stage = "writable"; return FS_IOERR; }
+    fs_writable_authorized = 1;
     for (cpu_u32 s = 0; s < FS_MAX_OPEN; ++s) {
         fs_handles[s].in_use = 0;
         if (++fs_generations[s] == 0) ++fs_generations[s];
@@ -343,7 +374,10 @@ int fs_mount(cpu_u32 dev)
 
 void fs_unmount(void)
 {
-    if (fs_is_mounted) blk_clear_writable(fs_dev);
+    if (fs_writable_authorized) {
+        if (blk_clear_writable(fs_dev) != BLK_OK) rollback_fail("unmount");
+        fs_writable_authorized = 0;
+    }
     fs_is_mounted = 0;
     for (cpu_u32 s = 0; s < FS_MAX_OPEN; ++s) fs_handles[s].in_use = 0;
 }
