@@ -140,6 +140,32 @@ for i in range(COUNT):
         self.assertIn("integration test inventory mismatch", result.stderr)
         self.assertIn("test_vm: expected 8, observed 0", result.stderr)
 
+    def test_broken_import_fails_instead_of_silently_dropping(self):
+        self.assertTrue(self._loader_errors_with("test_broken_tmp.py",
+                                                 "import unittest\ndef broken(:\n"))
+
+    def test_import_time_exit_fails_instead_of_silently_dropping(self):
+        self.assertTrue(self._loader_errors_with("test_evil_tmp.py",
+                                                 "raise SystemExit(0)\n"))
+
+    def _loader_errors_with(self, name, content):
+        # Exercise loader_errors() directly against an isolated tree:
+        # full-fixture CLI runs would execute the whole copied suite.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "inventory_build", ROOT / "tools/build/build.py")
+        build_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build_module)
+        with tempfile.TemporaryDirectory(prefix="rynoros-loader-") as tmp:
+            target = Path(tmp) / "tests" / "repository"
+            target.mkdir(parents=True)
+            (target / name).write_text(content, encoding="utf-8")
+            previous, build_module.ROOT = build_module.ROOT, Path(tmp)
+            try:
+                return build_module.loader_errors()
+            finally:
+                build_module.ROOT = previous
+
 
 if __name__ == "__main__":
     unittest.main()

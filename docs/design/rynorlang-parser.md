@@ -89,11 +89,12 @@ an unexpected interpreter recursion failure into `PAR_DEPTH_EXCEEDED`.
 - Nesting counters are balanced through `finally` blocks.
 - CLI output is deterministic sorted JSON; a diagnostic exits nonzero.
 
-The Stage 13 repository module contains 52 strict tests with 14 valid and 21
+The Stage 13 repository module contains 55 strict tests with 14 valid and 21
 invalid fixtures. It covers the grammar, all precedence levels, associativity,
-spans, API validation, depth, `!`, deterministic CLI output, and five live
+spans, API validation, depth, `!`, deterministic CLI output, exact call-nesting
+and wide-flat-tree CLI regressions, and seven live
 mutations: parameter trailing comma, return-type token, depth guard, precedence,
-and trailing top-level input.
+AND/OR and EQ/relational level swaps, and trailing top-level input.
 
 ## Limitations
 

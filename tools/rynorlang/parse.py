@@ -485,6 +485,10 @@ def _input_error(tokens: object, message: str) -> ParseResult:
 
 
 def parse_tokens(tokens: tuple[Token, ...], edition: str = "v1") -> ParseResult:
+    """Parse a pre-lexed token tuple. Spans are checked for internal
+    consistency only (ordered, non-overlapping, line/column agreeing
+    with offsets); truth against source bytes needs the source-carrying
+    entry points, which re-lex and compare token-for-token."""
     if not isinstance(tokens, tuple) or not tokens:
         return _input_error(tokens, "tokens must be a non-empty tuple")
     if any(not isinstance(token, Token) for token in tokens):

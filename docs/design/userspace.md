@@ -6,7 +6,8 @@ kernel objects beyond two self-test slots.
 
 ## Non-goals (18b and later)
 
-No ELF loader (18b), no file-backed or demand paging (18c), no process
+No ELF parsing in the kernel (18b loads RYNX envelopes instead — see
+`executable-format.md`), no file-backed or demand paging (18c), no process
 table, signals, or virtual memory areas (18c), no SMEP/SMAP enforcement
 (18d), no PCID/KPTI/meltdown posture change (18d/`§30`), no `syscall`
 MSRs, no IST stacks, no FPU/SSE user state, no `RFLAGS.AC` support.

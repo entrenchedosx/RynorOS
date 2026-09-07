@@ -236,6 +236,9 @@ static void fault_tests(void)
         /* The fault address is the push target (RSP already decremented),
            one word below the loaded stack pointer. */
         {USER_BLOB_KERN_RSP, 14, 0x07, (cpu_u64)&user_kernel_cr3 - 8, 0, 1, "kern_rsp"},
+        {USER_BLOB_IRETQ_KCS, 13, 0x08, 0, 0, 0, "iretq_kcs"},
+        {USER_BLOB_RETFQ_KCS, 13, 0x08, 0, 0, 0, "retfq_kcs"},
+        {USER_BLOB_RDMSR, 13, 0, 0, 0, 0, "rdmsr"},
     };
     struct accounting before = account();
     for (unsigned int i = 0; i < sizeof(rows) / sizeof(rows[0]); ++i) {

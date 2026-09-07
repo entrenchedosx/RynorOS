@@ -35,8 +35,14 @@ C_DUPLICATE = "SEM_DUPLICATE"
 C_TYPE_MISMATCH = "SEM_TYPE_MISMATCH"
 C_ARITY_MISMATCH = "SEM_ARITY_MISMATCH"
 C_UNKNOWN_FUNCTION = "SEM_UNKNOWN_FUNCTION"
+# Statically known capacity overflow (string literals past MAX_STR_LEN).
+C_LIMIT_EXCEEDED = "SEM_LIMIT_EXCEEDED"
+# Backend string cap, mirrored here (rir.py must stay standalone-importable,
+# so the constant is duplicated, not imported): statically known overlong
+# literals fail here, never in the backend.
+MAX_STR_LEN = 4096
 
-# Stage 15b shell-edition codes (additive-only; the five SEM_* above are frozen).
+# Stage 15b shell-edition codes (additive-only; the six SEM_* above are frozen).
 S_UNKNOWN_COMMAND = "SHELL_UNKNOWN_COMMAND"
 S_AMBIGUOUS_COMMAND = "SHELL_AMBIGUOUS_COMMAND"
 S_PIPELINE_TYPE = "SHELL_PIPELINE_TYPE_MISMATCH"
@@ -577,7 +583,14 @@ class Analyzer:
                 return ({"kind": "IntLit", "span": self._node_span(node), "value": node.text, "type": "int"}, "int")
             elif node.kind == "StringLiteral":
                 # node.value is unescaped, node.text is lexeme
-                return ({"kind": "StrLit", "span": self._node_span(node), "value": node.value if node.value is not None else node.text[1:-1], "lexeme": node.text, "type": "str"}, "str")
+                str_value = node.value if node.value is not None else node.text[1:-1]
+                if len(str_value) > MAX_STR_LEN:
+                    self._error(C_LIMIT_EXCEEDED,
+                                f"string literal of {len(str_value)} bytes exceeds {MAX_STR_LEN}",
+                                self._node_span(node),
+                                expected=f"at most {MAX_STR_LEN} bytes",
+                                got=f"{len(str_value)} bytes")
+                return ({"kind": "StrLit", "span": self._node_span(node), "value": str_value, "lexeme": node.text, "type": "str"}, "str")
             elif node.kind == "BooleanLiteral":
                 val = node.text == "true"
                 return ({"kind": "BoolLit", "span": self._node_span(node), "value": val, "type": "bool"}, "bool")

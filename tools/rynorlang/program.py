@@ -33,6 +33,8 @@ from tools.rynorlang import rir as _rir
 from tools.rynorlang import compile as _compile
 
 RUNTIME_ASM = Path(__file__).resolve().parent / "runtime" / "rt_linux.asm"
+RYNOR_RUNTIME_ASM = Path(__file__).resolve().parent / "runtime" / "rt_rynor.asm"
+RYNOR_LINK_SCRIPT = Path(__file__).resolve().parent / "runtime" / "rynoros.ld"
 
 COMP_TOOLCHAIN_MISSING = "COMP_TOOLCHAIN_MISSING"
 COMP_ASSEMBLE_FAILED = "COMP_ASSEMBLE_FAILED"
@@ -66,9 +68,10 @@ def find_toolchain():
             return None, {"code": COMP_TOOLCHAIN_MISSING,
                           "message": "ld.lld not found (set RYNOR_LLD or extend PATH)"}
 
-        def link_posix(output, inputs, workdir):
+        def link_posix(output, inputs, workdir, flags=()):
             return subprocess.run([linker_bin, "-o", Path(output).name,
-                                   *(Path(p).name for p in inputs), "--build-id=none"],
+                                   *(Path(p).name for p in inputs), "--build-id=none",
+                                   *flags],
                                   capture_output=True, text=True, timeout=120,
                                   cwd=str(workdir))
 
@@ -103,12 +106,13 @@ def find_toolchain():
             text = "/mnt/" + text[0].lower() + text[2:]
         return text
 
-    def link_wsl(output, inputs, workdir, _wsl=wsl, _linker=wsl_linker):
+    def link_wsl(output, inputs, workdir, flags=(), _wsl=wsl, _linker=wsl_linker):
         # --cd plus basenames keeps the workdir path out of the linked
         # image (NASM records its input name in the object symbol table).
         return subprocess.run([_wsl, "-d", "archlinux", "--cd", to_wsl(workdir),
                                _linker, "-o", Path(output).name,
-                               *(Path(p).name for p in inputs), "--build-id=none"],
+                               *(Path(p).name for p in inputs), "--build-id=none",
+                               *flags],
                               capture_output=True, text=True, timeout=120)
 
     def run_wsl(path, timeout, _wsl=wsl):
@@ -176,7 +180,9 @@ def build_program(source: str, filename: str, workdir: str | Path, prog: str = "
     # RIR text for inspection/determinism (rebuilt deterministically).
     from tools.rynorlang import analyze as _analyze
     result = _analyze.analyze(source, filename)
-    module, _ = _rir.build_rir(result.ast, filename)
+    module, rir_error = _rir.build_rir(result.ast, filename)
+    if rir_error is not None:
+        return None, rir_error
     asm_path = workdir / f"{prog}.asm"
     obj_path = workdir / f"{prog}.o"
     rt_obj_path = workdir / "rt_linux.o"
@@ -194,13 +200,93 @@ def build_program(source: str, filename: str, workdir: str | Path, prog: str = "
         if asm_proc.returncode != 0:
             return None, {"code": COMP_ASSEMBLE_FAILED,
                           "message": (asm_proc.stderr or asm_proc.stdout).strip()[-2000:] or "nasm failed"}
-        rt_proc = subprocess.run([nasm, "-f", "elf64", str(RUNTIME_ASM), "-o", rt_obj_path.name],
+        # Assemble the runtime by basename too: NASM records its input
+        # file name in the object, so the absolute source-tree path
+        # would otherwise leak into every linked executable.
+        rt_src_path = workdir / RUNTIME_ASM.name
+        try:
+            rt_src_path.write_bytes(RUNTIME_ASM.read_bytes())
+        except OSError as error:
+            return None, {"code": COMP_LINK_FAILED, "message": f"cannot stage runtime: {error}"}
+        rt_proc = subprocess.run([nasm, "-f", "elf64", rt_src_path.name, "-o", rt_obj_path.name],
                                  capture_output=True, text=True, timeout=120,
                                  cwd=str(workdir))
         if rt_proc.returncode != 0:
             return None, {"code": COMP_ASSEMBLE_FAILED,
                           "message": (rt_proc.stderr or rt_proc.stdout).strip()[-2000:] or "nasm runtime failed"}
         link_proc = linker(exe_path, [obj_path, rt_obj_path], workdir)
+        if link_proc.returncode != 0:
+            return None, {"code": COMP_LINK_FAILED,
+                          "message": (link_proc.stderr or link_proc.stdout).strip()[-2000:] or "link failed"}
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, {"code": COMP_LINK_FAILED, "message": f"tool execution failed: {error}"}
+    return ({"asm": asm_path, "obj": obj_path, "rt_obj": rt_obj_path, "exe": exe_path,
+             "rir": _rir.dumps(module)}, None)
+
+
+def build_rynor_program(source: str, filename: str, workdir: str | Path, prog: str = "prog"):
+    """Compile .rl source to a RynorOS userspace executable (ELF, RynorOS ABI).
+
+    Same frontend as build_program, but links rt_rynor.asm (int $0x80
+    gate calls, never Linux syscalls) with the fixed-VA rynoros.ld
+    script (.text at USER_CODE_BASE, rodata/data/bss in the data
+    window). Writes prog.asm, prog.o, rt_rynor.o, rynoros.ld, prog.elf
+    into workdir (created). The ELF is an intermediate for the RYNX
+    converter (tools/host/rnyx.py), never executed on the host.
+    On success returns ({"asm","obj","rt_obj","elf","rir"}, None);
+    on any expected failure returns (None, {"code","message"}).
+    """
+    workdir = Path(workdir)
+    try:
+        workdir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return None, {"code": "PAR_INVALID_INPUT", "message": f"cannot create {workdir}: {error}"}
+    tools, error = find_toolchain()
+    if error is not None:
+        return None, error
+    if not RYNOR_RUNTIME_ASM.is_file() or not RYNOR_LINK_SCRIPT.is_file():
+        return None, {"code": COMP_NO_RUNTIME, "message": "RynorOS runtime/script missing"}
+    nasm, linker, _runner = tools
+    asm_text, error = _compile.compile_source(source, filename)
+    if error is not None:
+        return None, error
+    from tools.rynorlang import analyze as _analyze
+    result = _analyze.analyze(source, filename)
+    module, rir_error = _rir.build_rir(result.ast, filename)
+    if rir_error is not None:
+        return None, rir_error
+    asm_path = workdir / f"{prog}.asm"
+    obj_path = workdir / f"{prog}.o"
+    rt_obj_path = workdir / "rt_rynor.o"
+    ld_path = workdir / RYNOR_LINK_SCRIPT.name
+    exe_path = workdir / f"{prog}.elf"
+    try:
+        asm_path.write_text(asm_text, encoding="utf-8")
+    except OSError as error:
+        return None, {"code": "PAR_INVALID_INPUT", "message": f"cannot write {asm_path}: {error}"}
+    try:
+        asm_proc = subprocess.run([nasm, "-f", "elf64", asm_path.name, "-o", obj_path.name],
+                                  capture_output=True, text=True, timeout=120,
+                                  cwd=str(workdir))
+        if asm_proc.returncode != 0:
+            return None, {"code": COMP_ASSEMBLE_FAILED,
+                          "message": (asm_proc.stderr or asm_proc.stdout).strip()[-2000:] or "nasm failed"}
+        # Stage runtime and link script by basename (same path-hygiene
+        # rule as the Linux flow: no workdir or source-tree leak).
+        rt_src_path = workdir / RYNOR_RUNTIME_ASM.name
+        try:
+            rt_src_path.write_bytes(RYNOR_RUNTIME_ASM.read_bytes())
+            ld_path.write_bytes(RYNOR_LINK_SCRIPT.read_bytes())
+        except OSError as error:
+            return None, {"code": COMP_LINK_FAILED, "message": f"cannot stage rynoros inputs: {error}"}
+        rt_proc = subprocess.run([nasm, "-f", "elf64", rt_src_path.name, "-o", rt_obj_path.name],
+                                 capture_output=True, text=True, timeout=120,
+                                 cwd=str(workdir))
+        if rt_proc.returncode != 0:
+            return None, {"code": COMP_ASSEMBLE_FAILED,
+                          "message": (rt_proc.stderr or rt_proc.stdout).strip()[-2000:] or "nasm runtime failed"}
+        link_proc = linker(exe_path, [obj_path, rt_obj_path], workdir,
+                           ["-T", ld_path.name, "-e", "_start"])
         if link_proc.returncode != 0:
             return None, {"code": COMP_LINK_FAILED,
                           "message": (link_proc.stderr or link_proc.stdout).strip()[-2000:] or "link failed"}

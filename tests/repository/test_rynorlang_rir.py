@@ -361,6 +361,52 @@ class RirNegativeTests(unittest.TestCase):
                 self.assertEqual([(c["type"], c["value"]) for c in consts],
                                  [("int", str(int(text, 10)))])
 
+    def test_38e_unit_value_misuse_rejected_without_raise(self):
+        # A unit-typed call result used as a value must fail closed with
+        # COMP_BAD_AST, never escape as KeyError (never-raise contract).
+        import copy
+        base = {"kind": "Program", "functions": [
+            {"kind": "Function", "name": "f", "params": [],
+             "ret_type": None, "symbol": 0,
+             "body": {"kind": "Block", "stmts": []}},
+            {"kind": "Function", "name": "main", "params": [],
+             "ret_type": "int", "symbol": 1,
+             "body": {"kind": "Block", "stmts": []}}]}
+        unit_call = {"kind": "Call", "callee": "f", "args": [],
+                     "type": "unit"}
+        variants = {
+            "binop": {"kind": "Return", "value": {
+                "kind": "BinOp", "op": "+", "type": "int",
+                "left": copy.deepcopy(unit_call),
+                "right": {"kind": "IntLit", "value": "1",
+                          "type": "int"}}},
+            "let": {"kind": "Block", "stmts": [
+                {"kind": "Let", "name": "x", "type": "int",
+                 "symbol": 10, "init": copy.deepcopy(unit_call)},
+                {"kind": "Return",
+                 "value": {"kind": "IntLit", "value": "0",
+                           "type": "int"}}]},
+            "return": {"kind": "Return",
+                       "value": copy.deepcopy(unit_call)},
+            "unop": {"kind": "Return", "value": {
+                "kind": "UnOp", "op": "-", "type": "int",
+                "operand": copy.deepcopy(unit_call)}},
+            "call-arg": {"kind": "Return", "value": {
+                "kind": "Call", "callee": "f", "args": [
+                    copy.deepcopy(unit_call)], "type": "unit"}},
+        }
+        for name, stmt in variants.items():
+            with self.subTest(position=name):
+                tree = copy.deepcopy(base)
+                body = tree["functions"][1]["body"]
+                if name == "let":
+                    body["stmts"] = stmt["stmts"]
+                else:
+                    body["stmts"] = [stmt]
+                module, error = rir.build_rir(tree, "unit-misuse.rl")
+                self.assertIsNone(module)
+                self.assertEqual(error["code"], "COMP_BAD_AST")
+
 
 class RirVerifierTests(unittest.TestCase):
     def _valid(self):

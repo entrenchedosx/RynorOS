@@ -78,7 +78,7 @@ static int poll_set_drq(cpu_u16 status)
     for (cpu_u32 i = 0; i < BLK_POLL_LIMIT; ++i) {
         cpu_u8 s = io_in8(status);
         if (s & IDE_SR_BSY) continue;
-        if (s & IDE_SR_ERR) return -1;
+        if (s & (IDE_SR_ERR | IDE_SR_DF)) return -1;
         if (s & IDE_SR_DRQ) return 1;
     }
     return 0;
@@ -118,6 +118,12 @@ static int identify(const struct ide_slot *slot, cpu_u16 *words)
     io_out8(slot->cmd + IDE_REG_LBA2, 0);
     io_out8(slot->cmd + IDE_REG_STATUS, IDE_CMD_IDENTIFY);
     if (!poll_clear_bsy(slot->cmd + IDE_REG_STATUS)) return 0;
+    /* ATAPI devices share this path: reject the 0x14/0xEB LBA1/LBA2
+       signature explicitly instead of trusting abort behavior alone,
+       so a phantom IDENTIFY can never fabricate geometry. */
+    if (io_in8(slot->cmd + IDE_REG_LBA1) == 0x14u &&
+        io_in8(slot->cmd + IDE_REG_LBA2) == 0xebu)
+        return 0;
     status = io_in8(slot->cmd + IDE_REG_STATUS);
     /* Any abort (including ATAPI signatures, which share this path) means
        no usable ATA disk here. */
@@ -214,12 +220,15 @@ int blk_discover(void)
         cpu_u64 count = 0;
         int ok = check_geometry(words, &count);
         if (ok == BLK_NODEV) continue;
-        if (ok) { blk_stage = "geometry"; return ok; }
+        /* A present-but-unusable secondary must not veto the boot disk:
+           leave it unmarked and keep probing (a wholly bad set still
+           fails below with found == 0). */
+        if (ok) { blk_stage = "geometry"; continue; }
         /* Sector-0 probe: both IDENTIFY and a readable first sector are
            required before any address on this device is trusted. */
         static cpu_u16 sector0[256];
         int rd = one_sector(&SLOTS[i], 0, sector0, 0);
-        if (rd) { blk_stage = "sector0"; return rd; }
+        if (rd) { blk_stage = "sector0"; continue; }
         devices[i].present = 1;
         devices[i].block_count = count;
         ++found;
@@ -269,6 +278,15 @@ int blk_set_writable(cpu_u32 id)
 {
     if (id >= BLK_MAX_DEVICES || !devices[id].present) return BLK_NODEV;
     devices[id].writable = 1;
+    return BLK_OK;
+}
+
+/* Revoke write authorization (fs_unmount calls this so a torn-down
+   filesystem leaves no writable device behind). Idempotent. */
+int blk_clear_writable(cpu_u32 id)
+{
+    if (id >= BLK_MAX_DEVICES || !devices[id].present) return BLK_NODEV;
+    devices[id].writable = 0;
     return BLK_OK;
 }
 

@@ -146,10 +146,20 @@ REQUIRED_FILES = (
     # lifecycle, scheduler integration, host validator, tests, and docs.
     "kernel/include/user.h", "kernel/arch/x86_64/user_entry.asm",
     "kernel/core/user.c", "kernel/core/user-test.c",
+    "kernel/include/load.h", "kernel/include/syscall.h",
+    "kernel/core/load.c", "kernel/core/load-test.c",
+    "tools/rynorlang/runtime/rt_rynor.asm",
+    "tools/rynorlang/runtime/rynoros.ld",
+    "tools/host/rnyx.py",
+    "tests/repository/test_rnyx.py",
+    "tests/integration/test_load.py",
+    "tools/host/load_output.py",
     "tools/host/user_output.py",
     "tests/repository/test_user_output.py",
     "tests/integration/test_userspace.py",
     "docs/design/userspace.md", "docs/reports/stage18a.md",
+    "docs/design/executable-format.md", "docs/design/syscall-abi.md",
+    "docs/reports/stage18b.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.
@@ -164,8 +174,8 @@ EXPECTED_METADATA = {
         "status": "semantic-subset-frozen",
     },
     "license": "Apache-2.0",
-    "stage": 14,
-    "status": "rynorlang-semantics",
+    "stage": 18,
+    "status": "program-loader",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -201,6 +211,11 @@ EXPECTED_METADATA = {
         "rynorlang-lexer", "lexer-tokenization", "lexer-spans", "lexer-diagnostics",
         "rynorlang-parser", "parser-temporary-tree", "parser-spans", "parser-diagnostics",
         "rynorlang-semantics", "semantics-stable-ast", "semantics-name-resolution", "semantics-type-checking",
+        "rir-cfg-abi-backend", "edition-gated-shell-surface", "native-rl-programs", "ide-block-storage",
+        "rynorfs-read", "rynorfs-overwrite", "protected-userspace", "userspace-gdt-tss",
+        "userspace-address-spaces", "userspace-gate", "userspace-preemption", "userspace-self-test",
+        "rynx-executable-format", "program-loader", "int80-syscall-boundary", "syscall-copyin",
+        "loader-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }

@@ -115,8 +115,12 @@ exactly as today.
 
 * Default `analyze()`/`parse()`/`lex()` behavior is **byte-identical v1**:
   `|>`/`|`/`.` still `LEX_INVALID_CHAR`; `Pipeline`/`Cmd`/`Member` never
-  emitted; the 16 kinds, 5 `SEM_*` codes, depth-256 accounting, and 1 MiB bound
+  emitted; the 16 kinds, 6 `SEM_*` codes, depth-256 accounting, and 1 MiB bound
   unchanged. All existing fixtures pass byte-identical.
+* The byte-identical promise has exactly one documented exception: a
+  span-adjacent `MINUS`+`IDENTIFIER` (`a -b`) parses as subtraction in v1
+  but as a command with a flag in the shell edition (see above). Every
+  other valid v1 program keeps an identical AST across editions.
 * Shell surface lives behind an explicit edition flag
   (`analyze(..., edition="shell")`, CLI `--edition`; `"shell-preview"` is an
   accepted alias; the flag defaults to `v1`). New kinds/codes/fields are
@@ -149,6 +153,11 @@ It runs in CPL3 with the session model below:
 * **No history/cursor** until the 18d shell milestone itself lands.
 
 ## 7. Scripts (before any filesystem)
+
+[Superseded path — retained for history of the design, not implemented:
+the read-only boot bundle described below was never built (Stage 17
+delivered block/filesystem instead), and 18d targets the filesystem.
+Do not implement this section.]
 
 Before Stage 17 block/filesystem work, scripts reach the runtime **only** via
 the read-only boot bundle (magic+version+count manifest, per-entry

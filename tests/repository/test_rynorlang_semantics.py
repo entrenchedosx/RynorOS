@@ -47,9 +47,9 @@ GOOD_NAMES = {p.name for p in GOOD.iterdir() if p.is_file()} if GOOD.exists() el
 BAD_NAMES = {p.name for p in BAD.iterdir() if p.is_file()} if BAD.exists() else set()
 
 EXPECTED_GOOD = 12
-EXPECTED_BAD = 20
+EXPECTED_BAD = 21
 
-FROZEN_CODES = {"SEM_UNDECLARED","SEM_DUPLICATE","SEM_TYPE_MISMATCH","SEM_ARITY_MISMATCH","SEM_UNKNOWN_FUNCTION"}
+FROZEN_CODES = {"SEM_UNDECLARED","SEM_DUPLICATE","SEM_TYPE_MISMATCH","SEM_ARITY_MISMATCH","SEM_UNKNOWN_FUNCTION","SEM_LIMIT_EXCEEDED"}
 EXPECTED_BAD_CODES = {
     "arity_0_mismatch.rl": "SEM_ARITY_MISMATCH",
     "arity_1_mismatch.rl": "SEM_ARITY_MISMATCH",
@@ -71,6 +71,7 @@ EXPECTED_BAD_CODES = {
     "undeclared_use_before_declare.rl": "SEM_UNDECLARED",
     "unit_as_value.rl": "SEM_TYPE_MISMATCH",
     "unknown_fn.rl": "SEM_UNKNOWN_FUNCTION",
+    "limit_string_too_long.rl": "SEM_LIMIT_EXCEEDED",
 }
 
 def _do_analyze(src, filename="<input>"):
@@ -160,7 +161,7 @@ class SemanticsLayoutTests(unittest.TestCase):
         self.assertGreaterEqual(len(actual_good), 10)
         self.assertLessEqual(len(actual_good), 14)
         self.assertGreaterEqual(len(actual_bad), 16)
-        self.assertLessEqual(len(actual_bad), 20)
+        self.assertLessEqual(len(actual_bad), 21)
 
     def test_02_analyzer_exists(self):
         if ANALYZER_PATH is None or not ANALYZER_PATH.exists():

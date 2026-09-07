@@ -245,10 +245,11 @@ class FilesystemIntegrationTests(unittest.TestCase):
 
     def test_write_readback_evidence(self):
         evidence = parse_serial(self.output)
-        self.assertEqual(len(evidence.writes), 7)
+        self.assertEqual(len(evidence.writes), 8)
         paths = [w[0] for w in evidence.writes]
         self.assertEqual(paths, ["/hello", "/b512", "/b513", "/b1500",
-                                 "/nested/deep/file", "/bigfile", "/bigfile"])
+                                 "/nested/deep/file", "/bigfile", "/bigfile",
+                                 "/bigfile"])
         for path, off, length, hexdata in evidence.writes:
             with self.subTest(path=path):
                 self.assertEqual(len(hexdata), 2 * length)

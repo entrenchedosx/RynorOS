@@ -374,6 +374,28 @@ class Stage13ParserTests(unittest.TestCase):
         finally:
             directory.cleanup()
 
+    def test_51b_mutation_level_swap_is_detected(self):
+        # Inverting any lattice rung (not just +/- vs *) must change the
+        # forest: AND below OR, and == above </>/<=/>=, both flip nesting.
+        directory, mutant = mutated('"AND_AND": (2, "AndExpr"),', '"AND_AND": (0, "AndExpr"),', "and-or-swap")
+        try:
+            self.assertEqual("OrExpr", expression("true || false && true").kind)
+            swapped = mutant.parse("fn f(){ true || false && true; }")
+            if swapped.ok:
+                shape = next(node for node in walk(swapped.root) if node.kind == "ExprStmt").children[0]
+                self.assertNotEqual("OrExpr", shape.kind)
+        finally:
+            directory.cleanup()
+        directory, mutant = mutated('"EQ_EQ": (3, "EqualityExpr"),', '"EQ_EQ": (4, "EqualityExpr"),', "eq-rel-swap")
+        try:
+            self.assertEqual("EqualityExpr", expression("true == 1 < 2").kind)
+            swapped = mutant.parse("fn f(){ true == 1 < 2; }")
+            self.assertTrue(swapped.ok)
+            shape = next(node for node in walk(swapped.root) if node.kind == "ExprStmt").children[0]
+            self.assertEqual("RelationalExpr", shape.kind)
+        finally:
+            directory.cleanup()
+
     def test_52_mutation_trailing_program_token_is_detected(self):
         directory, mutant = mutated('if not self.at("EOF"):\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function definitions are allowed at top level", ("FN", "EOF"))', 'if False:\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function definitions are allowed at top level", ("FN", "EOF"))', "program_trailing")
         try:

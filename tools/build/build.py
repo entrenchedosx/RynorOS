@@ -26,15 +26,16 @@ from qemu import boot_image  # noqa: E402
 # while unrelated tests keep the command green. Changes to the suite must update
 # this reviewed inventory alongside the new or removed tests.
 REPOSITORY_TEST_INVENTORY = {
-    "test_commands": 11, "test_exception_output": 6, "test_fb_output": 12,
+    "test_commands": 13, "test_exception_output": 6, "test_fb_output": 12,
     "test_forensic_repairs": 9, "test_heap_output": 6, "test_image": 5,
     "test_kbd_output": 12, "test_kernel_hardening": 5, "test_pmm_output": 6,
     "test_repository": 12, "test_resources": 3, "test_runtime_output": 14,
-    "test_rynorlang_lexer": 49, "test_rynorlang_parser": 54,
-    "test_rynorlang_semantics": 63, "test_rynorlang_rir": 48,
-    "test_rynorlang_compiler": 39, "test_rynorlang_shell": 47,
+    "test_rynorlang_lexer": 49,     "test_rynorlang_parser": 55,
+    "test_rynorlang_semantics": 63, "test_rynorlang_rir": 49,
+    "test_rynorlang_compiler": 40, "test_rynorlang_shell": 47,
     "test_rynorlang_programs": 44, "test_sched_output": 8,
     "test_blk_output": 13, "test_fs_output": 20, "test_user_output": 22,
+    "test_rnyx": 13,
     "test_semantic_api_gauntlet": 8,
     "test_shell_output": 7, "test_timer_output": 4, "test_vm_output": 5,
 }
@@ -42,7 +43,8 @@ INTEGRATION_TEST_INVENTORY = {
     "test_audit": 4, "test_boot": 14, "test_display": 31, "test_heap": 5,
     "test_keyboard": 26, "test_pmm": 7, "test_runtime": 35,
     "test_scheduler": 23, "test_shell": 9, "test_vm": 8,
-    "test_storage": 10, "test_filesystem": 19, "test_userspace": 17,
+    "test_storage": 10, "test_filesystem": 19, "test_userspace": 18,
+    "test_load": 15,
 }
 
 
@@ -98,7 +100,18 @@ def test() -> bool:
         return False
     if loader_errors():
         return False
-    return unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful()
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    # wasSuccessful() ignores skips and expected-failures: a suite that
+    # ran zero assertions must never report success.
+    if result.skipped:
+        print(f"ERROR: {len(result.skipped)} repository tests skipped: " +
+              ", ".join(test.id() for test, _ in result.skipped), file=sys.stderr)
+        return False
+    if result.expectedFailures:
+        print(f"ERROR: {len(result.expectedFailures)} repository expected-failures present.",
+              file=sys.stderr)
+        return False
+    return result.wasSuccessful()
 
 
 def loader_errors() -> bool:
@@ -128,7 +141,11 @@ def loader_errors() -> bool:
         module = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(module)
-        except Exception as error:  # noqa: BLE001 - report every import failure
+        except KeyboardInterrupt:
+            raise
+        except BaseException as error:
+            # SystemExit/SkipTest at import time must fail loudly like
+            # any other import failure, never silently drop the module.
             failed.append(f"{path.relative_to(ROOT)}: {type(error).__name__}: {error}")
     if failed:
         print("ERROR: Test modules failed to import:", file=sys.stderr)
@@ -178,7 +195,16 @@ def integration_test() -> bool:
         return False
     if loader_errors():
         return False
-    return unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful()
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if result.skipped:
+        print(f"ERROR: {len(result.skipped)} integration tests skipped: " +
+              ", ".join(test.id() for test, _ in result.skipped), file=sys.stderr)
+        return False
+    if result.expectedFailures:
+        print(f"ERROR: {len(result.expectedFailures)} integration expected-failures present.",
+              file=sys.stderr)
+        return False
+    return result.wasSuccessful()
 
 
 def main() -> int:

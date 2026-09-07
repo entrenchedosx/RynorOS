@@ -156,7 +156,9 @@ def _run_cmd(node: dict, env: dict, impls: dict, stage: int, piped: str | None) 
         if target.get("kind") == "StrLit":
             _check_cap(target["value"], stage)
         elif target.get("kind") == "Var":
-            _arg_value(target, env)
+            # Same cap as literal targets: a variable-held filename is
+            # the same risk as a literal one.
+            _check_cap(_arg_value(target, env), stage)
         else:
             raise ShellExecError("SHELL_REDIRECT_ERROR", "redirect target must be str", stage)
     # Host evaluator does not model files: redirect targets are validated
@@ -209,6 +211,35 @@ def run_pipeline(node: dict, env: dict | None = None, impls: dict | None = None)
     return value
 
 
+def _brace_delta(line: str) -> int:
+    """Net braces on one source line, ignoring string literals (which
+    never span lines: unescaped newlines are invalid) and `//` comments,
+    so a `{` inside `"..."` never holds the REPL open."""
+    opens = closes = 0
+    in_string = False
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if in_string:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "/" and i + 1 < n and line[i + 1] == "/":
+            break
+        elif ch == "{":
+            opens += 1
+        elif ch == "}":
+            closes += 1
+        i += 1
+    return opens - closes
+
+
 class BlockAccumulator:
     """Group REPL input lines into brace-balanced blocks (host helper).
 
@@ -217,7 +248,6 @@ class BlockAccumulator:
     Failed submissions never mutate anything beyond the text buffer; semantic
     session state arrives with the userspace REPL (Stage 18d), not here.
     """
-
     def __init__(self, edition: str = "v1") -> None:
         self.edition = edition
         self.lines: list[str] = []
@@ -225,7 +255,7 @@ class BlockAccumulator:
     def push(self, text: str) -> tuple[str, str | None]:
         self.lines.append(text)
         buffer = "\n".join(self.lines)
-        if buffer.count("{") > buffer.count("}"):
+        if sum(_brace_delta(line) for line in self.lines) > 0:
             return ("continue", None)
         from tools.rynorlang.parse import parse
         result = parse(buffer, "<repl>", self.edition)

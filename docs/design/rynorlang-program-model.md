@@ -64,6 +64,8 @@ exists, so non-print modules assemble byte-identically to Stage 15a.
 
 Semantics (exact bytes, no implicit newline):
 - int: signed decimal (`-9223372036854775808` prints in full).
+  The most-negative value has no direct literal (magnitude-only lexing
+  rejects `9223372036854775808`): spell it `0-9223372036854775807-1`.
 - bool: `true` / `false`.
 - str: raw `(ptr, len)` bytes, `0 <= len <= 4096`; empty prints nothing.
 - Writes are single syscalls of at most 4096 bytes, hence atomic on pipes
@@ -116,20 +118,24 @@ frames. No heap, no allocator, no GC; the runtime source contains no
 ## 9. Boundary to the future
 
 ```
-Stage 16 host-native (this document: Linux ELF test programs)
-  -> future RynorOS ABI (syscalls, loader, bundle validation)
-  -> 18a userspace foundation, 18b loader+syscalls, 18c runtime,
-     18d shell+REPL, 19a values, 19b-19d language, 19e self-hosting
-     compiler, 20a-20b tools/self-host
+Stage 16 host-native (Linux ELF test programs)
+  -> Stage 18b RynorOS ABI (int $0x80 gate, RYNX envelopes, fixed VAs)
+  -> 18a userspace foundation, 18b loader+syscalls (implemented),
+     18c runtime, 18d shell+REPL, 19a values, 19b-19d language,
+     19e self-hosting compiler, 20a-20b tools/self-host
   -> 20c graphics, 20d networking, 20e devices/audio
   -> 21 Windows compatibility
 ```
 
-The kernel trusted-batch loader from the earlier Stage 16 sketch (boot
-bundle manifest, opcode-scanning loader, serial-bound `print`, UNPROTECTED
-guest execution) is **explicitly deferred**, not deleted: its requirements
-(bundle `< 64 KiB` manifest validation, direct-call/static-jump-only scans,
-known-slot memory checks, IRQ0-preemptible guest contract) are preserved in
-`ROADMAP.md` as the follow-on native-execution milestone. Stage 16 proves
-the language-to-executable chain on the host first, so that later loader
-work inherits a verified compiler instead of co-designing one.
+Host-to-RynorOS transformation (same source semantics, different ABI):
+the `.rl` source compiles identically through RIR; then the RynorOS
+target links `rt_rynor.asm` (gate calls, never Linux `syscall`) with
+`rynoros.ld` (`.text` at `0x400000`, rodata/data/bss in the data
+window, `_start` first), and `tools/host/rnyx.py` converts the ELF to
+a RYNX envelope (fixed code/data blobs, BSS size, entry offset zero).
+Linux ELF binaries are never directly loadable and are never claimed
+to be: same source, same semantics, different artifact. The kernel
+trusted-batch loader from the earlier Stage 16 sketch (boot bundle
+manifest, opcode-scanning loader, serial-bound `print`, UNPROTECTED
+guest execution) is **superseded** by the validated RYNX path, not
+deleted: its requirements live on in `executable-format.md`.

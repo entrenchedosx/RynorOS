@@ -109,8 +109,13 @@ Partial writes are reported, not hidden: `*nwritten` counts completed
 bytes and the error code names the failure. The atomic unit is one
 512-byte sector (single PIO command); a multi-block overwrite that fails
 mid-way leaves earlier sectors new and later sectors old. Metadata is
-never modified, so the filesystem is always mountable: torn data bytes
-are possible, torn metadata is impossible by construction.
+never modified through `fs_write`, so the filesystem is always
+mountable after filesystem-level writes: torn data bytes are possible,
+torn metadata is impossible through this path. (Scope note: raw
+`blk_write` to a mounted device is a separate, kernel-only path outside
+the filesystem contract — all in-tree callers are reviewed, and
+`fs_unmount` revokes device writability. A future multi-client design
+must scope authorization per call.)
 
 Failure injection for tests lives behind `RYNOR_TEST_ARMED` only
 (`fs_inject_fault_at` fails the Nth block transfer once); unarmed

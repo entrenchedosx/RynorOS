@@ -102,6 +102,15 @@ def _fail(code: str, message: str) -> None:
     raise _RirError(code, message)
 
 
+def _vtype(low, temp, fname, what):
+    """Look up a lowered temp's type, failing closed (COMP_BAD_AST) on a
+    unit temp ("") or any unknown temp instead of raising KeyError."""
+    try:
+        return low.vreg_types[temp]
+    except KeyError:
+        _fail(COMP_BAD_AST, f"function '{fname}' {what} uses a unit or unknown value")
+
+
 def build_rir(ast: dict, source_name: str = "<input>"):
     """Lower an analyzed stable-AST dict to an RIR module dict.
 
@@ -204,7 +213,9 @@ class _FunctionLowering:
     lists, one per open lexical block. Params live in the base scope, which
     is never popped during the function. A use that cannot see its symbol in
     any open scope fails closed instead of resolving through a stale binding
-    left behind by an exited block.
+    left behind by an exited block. Names are tracked alongside symbols so
+    shadowing (rejected by the analyzer) also fails here: a `Let` or param
+    whose name is already bound in any open scope is COMP_BAD_AST.
     """
 
     def __init__(self, strtab: list, str_ids: dict, sigs: dict):
@@ -215,6 +226,7 @@ class _FunctionLowering:
         self.next_vreg = 0
         self.blocks: list[dict] = []
         self.symbols: dict[int, str] = {}
+        self.names: dict[str, int] = {}
         self.scopes: list[list] = []
 
     def new_vreg(self, typ: str) -> str:
@@ -449,11 +461,14 @@ def _lower_function(fn: dict, sigs: dict, strtab: list, str_ids: dict) -> dict:
             _fail(COMP_BAD_AST, f"param '{pname}' symbol must be an int")
         if psym in low.symbols:
             _fail(COMP_BAD_AST, f"param '{pname}' redefines an existing symbol")
+        if not isinstance(pname, str) or not pname or pname in low.names:
+            _fail(COMP_BAD_AST, f"param '{pname}' shadows an existing binding")
         if pregs[index] != f"%{index}":
             _fail(COMP_BAD_AST, "internal error: param vreg numbering drifted")
         vreg = low.new_vreg(ptype)
         low.symbols[psym] = vreg
-        base_scope.append(psym)
+        low.names[pname] = psym
+        base_scope.append((psym, pname))
         rir_params.append({"name": pname, "symbol": psym, "type": ptype})
     low.scopes.append(base_scope)
     entry = low.new_block()
@@ -496,8 +511,10 @@ def _lower_block_contents(low: _FunctionLowering, stmts: object, cur: int,
             cur = _lower_stmt(low, stmt, cur, fname, ret)
         return cur
     finally:
-        for sym in low.scopes.pop():
+        for sym, name in low.scopes.pop():
             low.symbols.pop(sym, None)
+            if name is not None:
+                low.names.pop(name, None)
 
 
 def _lower_stmt(low: _FunctionLowering, stmt: object, cur: int,
@@ -509,15 +526,20 @@ def _lower_stmt(low: _FunctionLowering, stmt: object, cur: int,
         temp = _lower_expr(low, stmt.get("init"), cur, fname)
         sym = stmt.get("symbol")
         want = stmt.get("type")
+        lname = stmt.get("name")
         if not isinstance(sym, int):
             _fail(COMP_BAD_AST, "Let symbol must be an int")
         if sym in low.symbols:
             _fail(COMP_BAD_AST, "Let redefines an existing symbol")
-        if low.vreg_types[temp] != want:
+        if not isinstance(lname, str) or not lname or lname in low.names:
+            _fail(COMP_BAD_AST, f"Let '{lname}' shadows an existing binding")
+        init_type = _vtype(low, temp, fname, "let initializer")
+        if init_type != want:
             _fail(COMP_BAD_AST,
-                    f"Let initializer type {low.vreg_types[temp]} != declared {want!r}")
+                    f"Let initializer type {init_type} != declared {want!r}")
         low.symbols[sym] = temp
-        low.scopes[-1].append(sym)
+        low.names[lname] = sym
+        low.scopes[-1].append((sym, lname))
         return cur
     if kind == "Return":
         value = stmt.get("value")
@@ -527,9 +549,10 @@ def _lower_stmt(low: _FunctionLowering, stmt: object, cur: int,
             low.terminate(cur, {"op": "ret"})
         else:
             temp = _lower_expr(low, value, cur, fname)
-            if low.vreg_types[temp] != ret:
+            ret_type = _vtype(low, temp, fname, "return value")
+            if ret_type != ret:
                 _fail(COMP_BAD_AST,
-                        f"return type {low.vreg_types[temp]} != signature {ret!r}")
+                        f"return type {ret_type} != signature {ret!r}")
             low.terminate(cur, {"op": "ret", "v": temp})
         return cur
     if kind == "If":
@@ -543,7 +566,7 @@ def _lower_stmt(low: _FunctionLowering, stmt: object, cur: int,
         # computation (and a spurious call, once calls can have effects).
         low.terminate(cur, {"op": "jmp", "tgt": f"bb{header_b}"})
         hcond = _lower_expr(low, stmt.get("cond"), header_b, fname)
-        if low.vreg_types[hcond] != "bool":
+        if _vtype(low, hcond, fname, "while condition") != "bool":
             _fail(COMP_BAD_AST, "while condition must be bool")
         low.terminate(header_b, {"op": "br", "cond": hcond,
                                  "then": f"bb{body_b}", "else": f"bb{exit_b}"})
@@ -572,7 +595,7 @@ def _need_block_stmts(low: _FunctionLowering, node: object, fname: str) -> objec
 
 def _lower_if(low: _FunctionLowering, stmt: dict, cur: int, fname: str, ret: object) -> int:
     cond = _lower_expr(low, stmt.get("cond"), cur, fname)
-    if low.vreg_types[cond] != "bool":
+    if _vtype(low, cond, fname, "if condition") != "bool":
         _fail(COMP_BAD_AST, "if condition must be bool")
     then_b = low.new_block()
     else_b = low.new_block()
@@ -759,8 +782,8 @@ def _lower_binop(low: _FunctionLowering, node: dict, left: str, right: str,
     rule = _BINOP_RULES.get(op) if isinstance(op, str) else None
     if rule is None:
         _fail(COMP_V2_UNSUPPORTED, f"unknown binary operator {op!r}")
-    ltype = low.vreg_types[left]
-    rtype = low.vreg_types[right]
+    ltype = _vtype(low, left, fname, "binary operand")
+    rtype = _vtype(low, right, fname, "binary operand")
     req_l, req_r, result = rule
     if req_l == "any-eq":
         if ltype != rtype or ltype not in VALUE_TYPES:
@@ -778,7 +801,7 @@ def _lower_binop(low: _FunctionLowering, node: dict, left: str, right: str,
 def _lower_unop(low: _FunctionLowering, node: dict, operand: str, cur: int, fname: str) -> str:
     op = node.get("op")
     want = node.get("type")
-    otype = low.vreg_types[operand]
+    otype = _vtype(low, operand, fname, "unary operand")
     if op == "-":
         if otype != "int" or want != "int":
             _fail(COMP_BAD_AST, "unary '-' needs int operand and int result")
@@ -804,13 +827,13 @@ def _lower_call(low: _FunctionLowering, node: dict, callee: object, arg_temps: l
             _fail(COMP_V2_UNSUPPORTED, f"call uses reserved type '{want}'")
         _fail(COMP_BAD_AST, f"call result type must be int/bool/str/unit, got {want!r}")
     for temp in arg_temps:
-        if low.vreg_types[temp] not in VALUE_TYPES:
+        if _vtype(low, temp, fname, "call argument") not in VALUE_TYPES:
             _fail(COMP_BAD_AST, "call arguments must be int/bool/str values")
     sig = low.sigs.get(callee)
     if sig is None:
         _fail(COMP_BAD_AST, f"call references unknown function '{callee}'")
     param_types, ret_type = sig
-    arg_types = [low.vreg_types[temp] for temp in arg_temps]
+    arg_types = [_vtype(low, temp, fname, "call argument") for temp in arg_temps]
     if arg_types != param_types:
         _fail(COMP_BAD_AST,
               f"call to '{callee}' arguments {arg_types} != {param_types}")

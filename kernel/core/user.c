@@ -4,6 +4,8 @@
 #include "io.h"
 #include "serial.h"
 #include "paging.h"
+#include "syscall.h"
+#include "load.h"
 
 /* Stage 18a protected userspace. Static model: fixed layout, two
    contexts, shared-half address spaces, int $0x80 exit/yield gate.
@@ -44,6 +46,9 @@ extern const char user_blob_divzero[], user_blob_divzero_end[];
 extern const char user_blob_syscall[], user_blob_syscall_end[];
 extern const char user_blob_ss_rsp[], user_blob_ss_rsp_end[];
 extern const char user_blob_kern_rsp[], user_blob_kern_rsp_end[];
+extern const char user_blob_iretq_kcs[], user_blob_iretq_kcs_end[];
+extern const char user_blob_retfq_kcs[], user_blob_retfq_kcs_end[];
+extern const char user_blob_rdmsr[], user_blob_rdmsr_end[];
 extern cpu_u64 user_enter_asm(struct exception_frame *, struct exception_frame *, cpu_u64);
 
 static void panic(const char *why) __attribute__((noreturn));
@@ -159,6 +164,9 @@ static const struct { const char *start, *end; } blobs[] = {
     {user_blob_syscall, user_blob_syscall_end},
     {user_blob_ss_rsp, user_blob_ss_rsp_end},
     {user_blob_kern_rsp, user_blob_kern_rsp_end},
+    {user_blob_iretq_kcs, user_blob_iretq_kcs_end},
+    {user_blob_retfq_kcs, user_blob_retfq_kcs_end},
+    {user_blob_rdmsr, user_blob_rdmsr_end},
 };
 #define USER_BLOB_COUNT ((unsigned int)(sizeof(blobs) / sizeof(blobs[0])))
 
@@ -253,6 +261,10 @@ int user_save_state(struct user_context *c, struct exception_frame *f)
    a user page is legal with SMAP off. */
 int user_publish_stop(struct user_context *c, struct exception_frame *f)
 {
+    /* Loaded programs own their data page: offset 0 is program data,
+       never USER_DATA_STOP. Refuse fail-closed so a missed caller gate
+       halts loudly instead of corrupting the image. */
+    if (c && c->loaded) return 0;
     if (!user_origin_ok(c, f)) return 0;
     /* The fixed-VA store is only valid on this context's user address
        space. The sole caller runs pre-switch, but never trust call order:
@@ -632,9 +644,41 @@ static int clone_high(struct user_context *c)
     return 1;
 }
 
+static int create_with_image(struct user_context **out, const char *code, cpu_u64 code_len,
+                             const char *data, cpu_u64 data_len, int prefill);
+
 int user_create(struct user_context **out, enum user_blob blob)
 {
-    if (!foreground() || !initialized || !out || (unsigned int)blob >= USER_BLOB_COUNT)
+    if ((unsigned int)blob >= USER_BLOB_COUNT) return 0;
+    cpu_u64 size = (cpu_u64)(blobs[blob].end - blobs[blob].start);
+    /* Blobs carry no data segment: NULL with zero length (explicitly
+       allowed; copy_page never dereferences it). */
+    return create_with_image(out, blobs[blob].start, size, 0, 0, 1);
+}
+
+/* Loaded programs share the exact fixed layout (entry is defined as the
+   code base, so no enter-path change exists): same three mappings, same
+   table count, BSS tail zeroed by the page copy. Attack parameters are
+   NOT prefilled for loaded programs (they would disclose kernel
+   addresses to untrusted code). */
+int user_create_loaded(struct user_context **out, const char *code, cpu_u64 code_len,
+                       const char *data, cpu_u64 data_len)
+{
+    if (!code || !code_len || code_len > VM_PAGE_SIZE || data_len > VM_PAGE_SIZE)
+        return 0;
+    if (data_len && !data) return 0;
+    if (!create_with_image(out, code, code_len, data ? data : "", data_len, 0))
+        return 0;
+    (*out)->loaded = 1;
+    return 1;
+}
+
+static int create_with_image(struct user_context **out, const char *code, cpu_u64 code_len,
+                             const char *data, cpu_u64 data_len, int prefill)
+{
+    if (!foreground() || !initialized || !out || !code || !code_len ||
+        code_len > VM_PAGE_SIZE || data_len > VM_PAGE_SIZE ||
+        (data_len && !data))
         return 0;
     struct user_context *c = 0;
     for (unsigned int i = 0; i < USER_MAX_CONTEXTS; ++i)
@@ -668,17 +712,19 @@ int user_create(struct user_context **out, enum user_blob blob)
         vm_map(&c->space, USER_DATA_BASE, c->data_frame, VM_USER | VM_WRITE) != VM_OK ||
         vm_map(&c->space, USER_STACK_PAGE, c->stack_frame, VM_USER | VM_WRITE) != VM_OK)
         goto fail;
-    cpu_u64 size = (cpu_u64)(blobs[blob].end - blobs[blob].start);
-    if (!copy_page(c->code_frame, blobs[blob].start, size) ||
-        !copy_page(c->data_frame, 0, 0) || !copy_page(c->stack_frame, 0, 0))
+    cpu_u64 size = code_len;
+    if (!copy_page(c->code_frame, code, size) ||
+        !copy_page(c->data_frame, data, data_len) || !copy_page(c->stack_frame, 0, 0))
         goto fail;
-    /* Attack-blob parameters: kernel text/data addresses the fault
-       blobs dereference. Fixed user-layout offsets past the GPR spill
-       area; ignored by all other blobs. */
-    volatile cpu_u64 *dw = vm_frame_access(c->data_frame);
-    if (!dw) goto fail;
-    dw[USER_DATA_KTEXT / 8] = (cpu_u64)&user_enter;
-    dw[USER_DATA_KDATA / 8] = (cpu_u64)&user_kernel_cr3;
+    if (prefill) {
+        /* Attack-blob parameters: kernel text/data addresses the fault
+           blobs dereference. Fixed user-layout offsets past the GPR
+           spill area; never prefilled for loaded programs. */
+        volatile cpu_u64 *dw = vm_frame_access(c->data_frame);
+        if (!dw) goto fail;
+        dw[USER_DATA_KTEXT / 8] = (cpu_u64)&user_enter;
+        dw[USER_DATA_KDATA / 8] = (cpu_u64)&user_kernel_cr3;
+    }
     /* Fixed layout, fixed table count: root, PDPT, PD, kernel-replica
        PT, code PT, data/stack PT. Anything else trips fail-closed here
        for an explicit revisit, never silently. */
@@ -688,8 +734,11 @@ int user_create(struct user_context **out, enum user_blob blob)
     c->rip = USER_CODE_BASE; c->rsp = USER_STACK_TOP; c->rflags = 0x202;
     for (unsigned int i = 0; i < 15; ++i) c->gprs[i] = 0;
     c->state = USER_ACTIVE;
+    /* Closing check must unwind on failure: returning 0 with *out set
+       and mappings live would leak a half-created ACTIVE context. */
+    if (!user_check()) goto fail;
     *out = c;
-    return user_check();
+    return 1;
 fail:
     /* Best effort: insert rolls back its own tables, so lenient teardown
        drains to the root; any inconsistency is caught by balance checks. */
@@ -850,39 +899,67 @@ void user_handle_exit(struct exception_frame *f)
     if (c->state != USER_ACTIVE) panic("exit_state");
     if (irq_in_context()) panic("exit_irq");
     if (cpu_get_rsp0() != c->exit_top) panic("exit_rsp0");
-    if (!frame_within_exit(c, f) || !origin_valid(f) || f->vector != 128 || f->error != 0)
-        panic("exit_bad_frame");
+    if (!frame_within_exit(c, f)) panic("exit_bad_frame");
     /* Switch only after validation: recording and scheduling need the
        kernel half, and the entry stack has proven addressable. */
     user_to_kernel();
     record_state(c, f);
+    /* A malformed gate frame from a LOADED program records a kill
+       (invalid_call class) instead of halting: hostile executables are
+       the 18b threat model, while 18a blobs are trusted vectors whose
+       malformed frames still panic fail-closed. A frame off the exit
+       stack can never reach here (unsafe to touch post-switch). The
+       stub always pushes vector 128/error 0, so those checks are
+       defense-in-depth; the guest-steerable parts are origin + RAX. */
     cpu_u32 reason = (cpu_u32)f->rax, code = (cpu_u32)f->rbx;
-    /* Terminal transitions quiesce the timer drive: by the time any exit
-       runs, every needed tick has been counted (exits are flag-gated),
-       and no post-exit user window should take further ticks. Yields keep
-       the drive (idempotent here anyway: the drive is masked in phases
-       that yield). */
-    if (reason != USER_CALL_YIELD && !irq_set_enabled(0, 0)) panic("exit_mask");
-    if (reason == USER_CALL_EXIT) {
-        c->state = USER_EXITED; c->exit_code = code; ++c->gate_exits;
-        text("[USER] exit slot=");
-        number(c->slot);
-        field(" code=", code);
-        text("\r\n");
-        sched_resume(user_schedule_next(link, USER_RUN_EXITED));
-    }
-    if (reason == USER_CALL_YIELD) {
-        ++c->yields;
-        text("[USER] yield slot=");
-        number(c->slot);
-        field(" count=", c->yields);
-        text("\r\n");
-        sched_resume(user_schedule_next(link, USER_RUN_YIELDED));
+    int frame_ok = origin_valid(f) && f->vector == 128 && f->error == 0 &&
+                   !(f->rax >> 32);
+    if (!frame_ok) {
+        if (!c->loaded) panic("exit_bad_frame");
+    } else {
+        /* Terminal transitions quiesce the timer drive: by the time any exit
+           runs, every needed tick has been counted (exits are flag-gated),
+           and no post-exit user window should take further ticks. Yields and
+           writes keep the drive (write resumes the process like yield). */
+        if (reason != SYS_YIELD && reason != SYS_WRITE && !irq_set_enabled(0, 0))
+            panic("exit_mask");
+        if (reason == SYS_EXIT) {
+            c->state = USER_EXITED; c->exit_code = code; ++c->gate_exits;
+            if (!c->loaded) {
+                text("[USER] exit slot=");
+                number(c->slot);
+                field(" code=", code);
+                text("\r\n");
+            }
+            sched_resume(user_schedule_next(link, USER_RUN_EXITED));
+        }
+        if (reason == SYS_YIELD) {
+            ++c->yields;
+            if (!c->loaded) {
+                text("[USER] yield slot=");
+                number(c->slot);
+                field(" count=", c->yields);
+                text("\r\n");
+            }
+            sched_resume(user_schedule_next(link, USER_RUN_YIELDED));
+        }
+        if (reason == SYS_WRITE) {
+            /* Terminal-for-the-call (not for the process): copy the user
+               bytes, record the count for the resume frame, and schedule
+               on. The hardware frame already points past the 2-byte gate,
+               so no RIP adjustment exists anywhere here. */
+            cpu_u64 out = sys_write(c, f->rbx, f->rcx, f->rdx);
+            c->sys_result = out;
+            ++c->sys_writes;
+            c->gprs[0] = out;
+            sys_write_evidence(c, f->rbx, f->rdx, out == (cpu_u64)-1 ? 0 : out);
+            sched_resume(user_schedule_next(link, USER_RUN_WRITTEN));
+        }
     }
     c->state = USER_FAULTED; c->fault_class = 2;
     c->fault_vector = 128; c->fault_error = reason; c->fault_cr2 = 0;
     ++c->faults;
-    fault_evidence(c);
+    if (!c->loaded) fault_evidence(c);
     sched_resume(user_schedule_next(link, USER_RUN_FAULTED));
 }
 
@@ -907,6 +984,6 @@ void user_handle_fault(struct exception_frame *f, cpu_u64 cr2)
     c->state = USER_FAULTED; c->fault_class = 1;
     c->fault_vector = f->vector; c->fault_error = f->error; c->fault_cr2 = cr2;
     ++c->faults;
-    fault_evidence(c);
+    if (!c->loaded) fault_evidence(c);
     sched_resume(user_schedule_next(link, USER_RUN_FAULTED));
 }

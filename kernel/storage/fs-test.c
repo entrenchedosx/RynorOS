@@ -274,6 +274,16 @@ void fs_self_test(void)
     write_evidence("/nested/deep/file", 0, 18);
     write_evidence("/bigfile", 0, 1024);
     write_evidence("/bigfile", 20000, 16384);
+    /* Odd-offset cross-block I/O: the first fragment (511 bytes) leaves
+       an odd cursor, which must route through scratch, never straight
+       into word PIO (regression: used to fail as io-data). Disjoint
+       from the other /bigfile writes so host readback stays exact. */
+    write_evidence("/bigfile", 1025, 1024);
+    require(fs_open("/bigfile", &h1) == FS_OK, "w-odd-open");
+    require(fs_read(h1, 1025, fsbuf, 1024, &n) == FS_OK && n == 1024, "w-odd-read");
+    for (cpu_u64 i = 0; i < 1024; ++i)
+        require(fsbuf[i] == (cpu_u8)((1025u + i * 13u + 0x41u) & 0xffu), "w-odd-data");
+    require(fs_close(h1) == FS_OK, "w-odd-close");
     require(fs_open("/one", &h1) == FS_OK, "w-handle");
     require(fs_write(h1, 0, 0, 0, &n) == FS_OK && n == 0, "w-empty-null");
     require(fs_open("/one", &h1) == FS_OK, "w-handle");
