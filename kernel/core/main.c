@@ -13,6 +13,7 @@
 #include "fs.h"
 #include "user.h"
 #include "load.h"
+#include "rttest.h"
 
 /* RYNOR_VERSION is supplied from project.json, without timestamps or host paths. */
 void kernel_main(void)
@@ -56,6 +57,10 @@ void kernel_main(void)
     serial_flush();
     /* Loader terminates the transcript (verified or skipped marker). */
     load_self_test();
+    serial_flush();
+    /* Runtime conformance trails the loader the same way (verified or
+       skipped marker); it is now the transcript terminator. */
+    rt_self_test();
     serial_flush();
     serial_flush();
     /* Returning reaches the entry stub's CLI/HLT loop, never BIOS or host code. */

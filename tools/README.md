@@ -64,7 +64,7 @@ guaranteed to do so. `run.json` records PID, command, exit, and cleanup.
 
 ## Implementation status and tests
 
-Implemented through Stage 10. `host/repository.py` owns the schema; `host/image.py` the
+Implemented through Stage 18c (the status below is historical to Stage 10 unless noted). `host/repository.py` owns the schema; `host/image.py` the
 fixed-layout image build; `host/qemu.py` the execution harness and
 `host/exception_output.py`, `host/timer_output.py`, `host/pmm_output.py`,
 `host/vm_output.py`, `host/heap_output.py`, `host/sched_output.py` and `host/boot_output.py` the captured-output validators. The PMM parser independently

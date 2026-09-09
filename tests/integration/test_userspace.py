@@ -206,25 +206,37 @@ class UserspaceIntegrationTests(unittest.TestCase):
 
     def test_mut_supervisor_code_breaks_entry(self):
         # A user code page mapped supervisor-only faults on CPL3 fetch:
-        # containment, never silent entry.
+        # containment, never silent entry. Either fail-closed mode
+        # proves it: a fast guest fails its own create record check,
+        # a slow one still has not completed when the deadline hits
+        # (gauntlet: strict "timed out" raced guest self-check arrival
+        # against the 20 s deadline, failing fast hosts deterministically;
+        # sibling suites accept both modes).
         output, error = self._run_user_mutation([(
             "    if (vm_map(&c->space, USER_CODE_BASE, c->code_frame, VM_USER | VM_EXECUTE) != VM_OK ||",
             "    if (vm_map(&c->space, USER_CODE_BASE, c->code_frame, VM_EXECUTE) != VM_OK ||",
         )], source="kernel/core/user.c", timeout=20)
         self.assertIsNotNone(error)
-        self.assertIn("timed out", error)
+        self.assertTrue("timed out" in error or b"[USER] failure=create_a" in output,
+                        error)
         self.assertNotIn(b"[USER] user verified", output)
 
     def test_mut_skipped_transition_detected(self):
         # The transition itself stubbed to a fake success: exact exit
         # codes, fault rows, tick and preemption counts all disagree, so
-        # the guest must fail itself before the final marker.
+        # the guest must fail itself before the final marker. Either
+        # fail-closed mode proves it: a fast guest fails its own exit
+        # record check, a slow one still has not completed when the
+        # deadline hits (gauntlet: strict "timed out" raced guest
+        # self-check arrival against the 20 s deadline, failing fast
+        # hosts deterministically; sibling suites accept both modes).
         output, error = self._run_user_mutation([(
             "    ++c->entries;\n    return user_enter_asm(build_frame(c), &link->kern_save, c->space.root);",
             "    ++c->entries;\n    c->state = USER_EXITED; c->exit_code = 0;\n    return USER_RUN_EXITED;",
         )], source="kernel/core/user.c", timeout=20)
         self.assertIsNotNone(error)
-        self.assertIn("timed out", error)
+        self.assertTrue("timed out" in error or b"[USER] failure=exit_record" in output,
+                        error)
         self.assertNotIn(b"[USER] user verified", output)
 
     def test_completion_requires_verified_marker(self):

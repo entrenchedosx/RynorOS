@@ -74,6 +74,22 @@ class BlkImageTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 1)
             self.assertNotIn("Traceback", proc.stderr)
 
+    def test_06b_cli_zero(self):
+        # Regression for the zero-subcommand NameError (create_zero vs
+        # create_zeroed): the CLI must behave like the library call.
+        with tempfile.TemporaryDirectory(prefix="blkimg-") as work:
+            maker = Path(work) / "z.img"
+            proc = subprocess.run([sys.executable, str(ROOT / "tools/host/blk_image.py"),
+                                   "zero", str(maker), "1"],
+                                  capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(read_block(maker, 0), b"\x00" * BLOCK)
+            proc = subprocess.run([sys.executable, str(ROOT / "tools/host/blk_image.py"),
+                                   "zero", str(maker), "0"],
+                                  capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 1)
+            self.assertNotIn("Traceback", proc.stderr)
+
     def test_07_writeback_pattern_differs(self):
         self.assertNotEqual(writeback_pattern(9), pattern(9))
         self.assertEqual(len(writeback_pattern(9)), BLOCK)

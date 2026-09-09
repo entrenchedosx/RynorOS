@@ -163,6 +163,44 @@ class ProgramBuildTests(ProgramShared):
         self.assertIsNone(module)
         self.assertEqual((_error or {}).get("code"), "COMP_BAD_AST")
 
+    def test_05c_stale_outputs_discarded_on_failure(self):
+        # Regression (gauntlet R9-15): reusing a workdir for a failing
+        # build must not leave a prior success behind. Planted stale
+        # outputs must be gone after the failed build returns its
+        # diagnostic (failure is at compile_source, so no toolchain
+        # beyond the class gate is exercised by the failing call).
+        import tempfile as _tf
+        with _tf.TemporaryDirectory(prefix="rlstale-") as work:
+            wd = Path(work)
+            (wd / "prog").write_bytes(b"stale-exe")
+            (wd / "prog.o").write_bytes(b"stale-obj")
+            arts, error = program.build_program(
+                "fn main(): int { return ; }", "bad.rl", wd)
+            self.assertIsNone(arts)
+            self.assertIsNotNone(error)
+            self.assertFalse((wd / "prog").exists())
+            self.assertFalse((wd / "prog.o").exists())
+
+    def test_05d_reserved_names_rejected(self):
+        # Regression (gauntlet R2-03): caller sources and program names
+        # colliding with toolchain-owned basenames (or escaping the
+        # workdir) must fail closed instead of last-writer-wins.
+        import tempfile as _tf
+        with _tf.TemporaryDirectory(prefix="rlreserved-") as work:
+            wd = Path(work)
+            arts, error = program.build_rynor_c_program(
+                {"rt.c": "int rt_main(void){return 0;}"}, wd, prog="t")
+            self.assertIsNone(arts)
+            self.assertEqual((error or {}).get("code"), "PAR_INVALID_INPUT")
+            arts, error = program.build_rynor_program(
+                "fn main(): int { return 0; }", "p.rl", wd, prog="rt_rynor")
+            self.assertIsNone(arts)
+            self.assertEqual((error or {}).get("code"), "PAR_INVALID_INPUT")
+            arts, error = program.build_program(
+                "fn main(): int { return 0; }", "p.rl", wd, prog="../evil")
+            self.assertIsNone(arts)
+            self.assertEqual((error or {}).get("code"), "PAR_INVALID_INPUT")
+
     def test_05b_runtime_namespace_and_print_gates(self):
         # Verifier refuses rt_-prefixed definitions even hand-written.
         src = "fn main(): int { return 0; }"

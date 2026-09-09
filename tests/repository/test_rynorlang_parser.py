@@ -420,21 +420,32 @@ class Stage13ParserTests(unittest.TestCase):
         # within the grammar depth budget but produce unbounded tree width.
         # The CLI must serialize them (or report PAR_DEPTH_EXCEEDED), never
         # leak a RecursionError traceback.
-        with tempfile.TemporaryDirectory(prefix="parser-wide-") as directory:
-            for label, source in (
-                ("chained", "fn f(){ g" + "()" * 600 + "; }"),
-                ("chain", "fn f(){ let x: int = " + " && ".join(["true"] * 600) + "; }"),
-            ):
-                path = Path(directory) / f"{label}.rl"
-                path.write_text(source, encoding="utf-8")
-                for optimized in (False, True):
-                    argv = [sys.executable, *(["-O"] if optimized else []),
-                            str(PARSER_PATH), str(path), "--json"]
-                    run = subprocess.run(argv, capture_output=True, text=True,
-                                          check=False, timeout=60)
-                    self.assertEqual("", run.stderr, f"{label} o={optimized}: {run.stderr[:300]}")
-                    self.assertEqual(0, run.returncode, f"{label} o={optimized}")
-                    self.assertEqual("Program", json.loads(run.stdout)["kind"])
+        # Decode headroom: 600 chained levels expand to ~1300+ JSON
+        # container nestings, which stock CPython decoders below 3.14
+        # cannot consume at the default limit of 1000 (verified: 3.11.1
+        # raises, 3.14.7 decodes at 1000). The limit is raised locally
+        # and restored, mirroring the product's own 4096 serialization
+        # headroom; shapes, counts, modes and asserts are unchanged.
+        previous_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(max(previous_limit, 10000))
+        try:
+            with tempfile.TemporaryDirectory(prefix="parser-wide-") as directory:
+                for label, source in (
+                    ("chained", "fn f(){ g" + "()" * 600 + "; }"),
+                    ("chain", "fn f(){ let x: int = " + " && ".join(["true"] * 600) + "; }"),
+                ):
+                    path = Path(directory) / f"{label}.rl"
+                    path.write_text(source, encoding="utf-8")
+                    for optimized in (False, True):
+                        argv = [sys.executable, *(["-O"] if optimized else []),
+                                str(PARSER_PATH), str(path), "--json"]
+                        run = subprocess.run(argv, capture_output=True, text=True,
+                                              check=False, timeout=60)
+                        self.assertEqual("", run.stderr, f"{label} o={optimized}: {run.stderr[:300]}")
+                        self.assertEqual(0, run.returncode, f"{label} o={optimized}")
+                        self.assertEqual("Program", json.loads(run.stdout)["kind"])
+        finally:
+            sys.setrecursionlimit(previous_limit)
 
 
 if __name__ == "__main__":

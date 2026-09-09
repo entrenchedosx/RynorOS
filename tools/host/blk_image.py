@@ -84,7 +84,7 @@ def main(argv=None) -> int:
         if args.command == "create":
             create(args.path, args.mib)
         else:
-            create_zero(args.path, args.mib)
+            create_zeroed(args.path, args.mib)
     except (OSError, ValueError) as error:
         print(f"blk_image: {error}", file=sys.stderr)
         return 1

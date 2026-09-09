@@ -114,7 +114,7 @@ class VirtualMemoryTests(unittest.TestCase):
 
     def test_missing_permission_tlb_invalidation_cannot_pass(self):
         self.broken("stale-tlb", "kernel/mm/vm.c",
-                    "write_entry(path[0], page_index(va, 0), e);\n    if (s == &kernel_space) page_invalidate(va);",
+                    "write_entry(path[0], page_index(va, 0), e);\n    page_invalidate(va);",
                     "write_entry(path[0], page_index(va, 0), e); /* Intentionally stale permissions. */",
                     "[VM] failure=expected_hardware_page_fault_missing")
 

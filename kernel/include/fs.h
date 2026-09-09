@@ -60,7 +60,9 @@ int fs_open(const char *path, cpu_u32 *handle);
 /* Metadata for any existing path (files and directories). */
 int fs_stat(const char *path, struct fs_stat *st);
 /* Read up to len bytes at offset into buf (2-byte aligned, like blk).
-   Sets *nread (short at EOF, 0 exactly at EOF, never past file_size).
+   Sets *nread (short at EOF, 0 exactly at EOF, never past file_size;
+   on FS_IOERR *nread reports the completed prefix, mirroring fs_write;
+   other errors leave *nread untouched, so callers must check rc first).
    offset past end is FS_RANGE; len beyond FS_MAX_READ_BYTES is FS_INVALID. */
 int fs_read(cpu_u32 handle, cpu_u64 offset, void *buf, cpu_u64 len, cpu_u64 *nread);
 /* Overwrite len bytes at offset from buf (2-byte aligned, like blk) into

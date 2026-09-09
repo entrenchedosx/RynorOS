@@ -11,6 +11,7 @@ REQUIRED_DIRECTORIES = (
     "kernel/drivers", "kernel/runtime", "kernel/shell", "kernel/storage", "kernel/include", "boot", "rynorlang", "rynorlang/lexer",
     "rynorlang/parser", "rynorlang/ast", "rynorlang/compiler", "rynorlang/runtime",
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
+    "user/lib/rt", "user/lib/rt/tests",
     "user/apps", "tools", "tools/build", "tools/host", "tools/rynorlang",
     "tools/rynorlang/runtime",
     "tests", "tests/repository", "tests/fixtures/rynorlang/lexer/good",
@@ -160,6 +161,20 @@ REQUIRED_FILES = (
     "docs/design/userspace.md", "docs/reports/stage18a.md",
     "docs/design/executable-format.md", "docs/design/syscall-abi.md",
     "docs/reports/stage18b.md",
+    # Stage 18c native runtime library: CPL3 library, toolchain rebind,
+    # conformance driver/validator/tests, and design docs.
+    "kernel/include/rttest.h", "kernel/core/rt-test.c",
+    "user/lib/rt/rt.h", "user/lib/rt/rt.c", "user/lib/rt/rt_rl.c",
+    "user/lib/rt/rt_gate.asm",
+    "user/lib/rt/tests/t_fmt.c", "user/lib/rt/tests/t_alloc.c",
+    "user/lib/rt/tests/t_write.c", "user/lib/rt/tests/t_nap.c",
+    "user/lib/rt/tests/t_wait.c", "user/lib/rt/tests/t_nosys.c",
+    "tools/rynorlang/runtime/rynoros_rt.ld",
+    "tools/host/rt_output.py",
+    "tests/repository/test_rtlib.py",
+    "tests/integration/test_rt.py",
+    "docs/design/native-runtime.md",
+    "docs/reports/stage18c.md",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.
@@ -175,7 +190,7 @@ EXPECTED_METADATA = {
     },
     "license": "Apache-2.0",
     "stage": 18,
-    "status": "program-loader",
+    "status": "native-runtime",
     "assets": {"official_icon": "assets/branding/icon.png", "status": "packaged-not-rendered",
                "package": "rynoros-resources.zip"},
     "target": {"architecture": "x86_64", "status": "implemented-qemu",
@@ -215,7 +230,8 @@ EXPECTED_METADATA = {
         "rynorfs-read", "rynorfs-overwrite", "protected-userspace", "userspace-gdt-tss",
         "userspace-address-spaces", "userspace-gate", "userspace-preemption", "userspace-self-test",
         "rynx-executable-format", "program-loader", "int80-syscall-boundary", "syscall-copyin",
-        "loader-self-test",
+        "loader-self-test", "native-runtime-library", "rt-syscall-wrappers", "rt-bounded-arena",
+        "rt-print-rebind", "rt-conformance-self-test",
     ],
     "os_build_targets": ["rynorkernel", "rynoros.img", "rynoros-resources.zip"],
 }

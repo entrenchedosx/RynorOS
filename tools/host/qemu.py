@@ -14,6 +14,7 @@ from boot_output import validate_boot_output
 from user_output import VERIFIED_LINE as USER_VERIFIED, parse_serial as parse_user_serial, \
     validate as validate_user_evidence
 from load_output import VERIFIED_LINE as LOAD_VERIFIED, SKIPPED_LINE as LOAD_SKIPPED
+from rt_output import VERIFIED_LINE as RT_VERIFIED, SKIPPED_LINE as RT_SKIPPED
 from kbd_output import KEYS, KBD_END, key_sequence, validate_keyboard_trace, validate_irq0_trace
 from display_output import DISPLAY_END, DISPLAY_START, parse_display_output, verify_display_pixels, verify_display_scanout
 from shell_output import SHELL_END, SHELL_KEYS, SCANS as SHELL_SCANS
@@ -48,11 +49,13 @@ def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
         return False
     if test_vector != 3:
         return True
-    # Both trailing sections must have terminated: the loader always ends
-    # the transcript (verified after running, skipped when no image), so a
-    # missing load terminator means the guest is still in its load phase.
+    # All trailing sections must have terminated: the loader always ends
+    # its section (verified after running, skipped when no image), and
+    # the runtime driver always ends the transcript the same way, so a
+    # missing terminator means the guest is still in that phase.
     return USER_VERIFIED in observed and \
-        (LOAD_VERIFIED in observed or LOAD_SKIPPED in observed)
+        (LOAD_VERIFIED in observed or LOAD_SKIPPED in observed) and \
+        (RT_VERIFIED in observed or RT_SKIPPED in observed)
 
 
 def _file_provenance(path: Path, *, version_command=None) -> dict:
@@ -298,7 +301,11 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                                           b"[RUNTIME] failure=", b"[SHELL] failure=",
                                                           b"[GATE] failure=", b"[TIMER] failure=",
                                                           b"[SCHED] failure=", b"[HEAP] failure=",
-                                                          b"[VM] failure="))), None)
+                                                           b"[VM] failure=", b"[RT] failure=",
+                                                           b"[LOAD] failure=", b"[USER] failure=",
+                                                           b"[FS] failure=", b"[BLK] failure=",
+                                                           b"[MM] failure=",
+                                                           b"[KSTACK] failure="))), None)
                 if driver_failure is not None:
                     failure = driver_failure.decode('ascii', errors='replace')
                     break

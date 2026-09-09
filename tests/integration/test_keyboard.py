@@ -22,7 +22,7 @@ class KeyboardTests(unittest.TestCase):
     def test_real_keyboard_host_challenges_and_repeat(self):
         destination=ROOT/"build/kbd-tests/normal"
         build_image(ROOT,destination)
-        shuffled=list(KEYS); random.SystemRandom().shuffle(shuffled)
+        shuffled=list(KEYS); random.Random(0x2B1A).shuffle(shuffled)
         for i,keys in enumerate((KEYS,tuple(shuffled),("d","x","shift","shift_r","a","a","ret","b"))):
             logs=destination/f"logs-{i}"
             try: output=boot_image(destination/"rynoros.img",logs,keys=keys)

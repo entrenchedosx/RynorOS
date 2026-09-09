@@ -238,7 +238,7 @@ class FilesystemIntegrationTests(unittest.TestCase):
     def test_mut_blk_bypass_detected(self):
         output, _error = self._run_fs_mutation([(
             "            int rc = blk_read(fs_dev, cur, chunk, out, (cpu_u64)chunk * 512u);\n"
-            "            if (rc) { fs_stage = \"io-data\"; return FS_IOERR; }",
+            "            if (rc) { if (nread) *nread = done; fs_stage = \"io-data\"; return FS_IOERR; }",
             "            { (void)cur; (void)chunk; (void)out; }",
         )])
         self.assertTrue(validate(parse_serial(output), self.good_bytes))

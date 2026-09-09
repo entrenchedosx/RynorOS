@@ -7,8 +7,9 @@ kernel objects beyond two self-test slots.
 ## Non-goals (18b and later)
 
 No ELF parsing in the kernel (18b loads RYNX envelopes instead — see
-`executable-format.md`), no file-backed or demand paging (18c), no process
-table, signals, or virtual memory areas (18c), no SMEP/SMAP enforcement
+`executable-format.md`), no file-backed or demand paging (deferred beyond
+18c), no process table, signals, or virtual memory areas (deferred beyond
+18c; still two static contexts in 18c), no SMEP/SMAP enforcement
 (18d), no PCID/KPTI/meltdown posture change (18d/`§30`), no `syscall`
 MSRs, no IST stacks, no FPU/SSE user state, no `RFLAGS.AC` support.
 
@@ -296,14 +297,18 @@ turning into a hang: tripping it fails the exact counts loudly.
   into identity-mapped kernel memory.
 * TLB discipline: `PGE`/`PCIDE`/`LA57` are forbidden at `VM` init, so
   every `CR3` reload fully flushes; user-space tables are only ever
-  mutated on the kernel `CR3` while dead, never live. No `invlpg`
-  path exists for user VAs (documented 18b debt alongside SMP shootdown).
+  mutated on the kernel `CR3` while dead, never live. `vm_protect`
+  additionally issues `invlpg` synchronously on every path (without
+  PCID it hits the VA on any CR3) and refuses to grant new `W`/`X`
+  or flip `U` on user leaves, so stale executable mappings cannot
+  linger even if a future caller reprotects a live space.
 
 ## Static limits (admission control, tested)
 
 * `USER_MAX_CONTEXTS = 2`: two static 4 KiB exit stacks in `.bss`.
-  Creation beyond that fails cleanly with evidence; 18c lifts this with
-  a process table.
+  Creation beyond that fails cleanly with evidence; still two static
+  contexts in 18c (sequential reuse) — a process table is deferred
+  beyond 18c.
 * One code, one data, one stack frame per context (PMM-owned, released
   on destroy). Guard page stays unmapped.
 * No FPU/SSE in userspace (blobs use GPRs only); no user `AC`.

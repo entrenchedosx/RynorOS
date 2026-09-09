@@ -1,6 +1,6 @@
 # Intended architecture
 
-**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking), the Stage 15a typed IR plus native backend with real dominance and a SysV-subset ABI, the Stage 15b edition-gated shell surface, and Stage 16 host-native `.rl` programs (exact-bytes `print`, deterministic ELF pipeline), and Stage 17a IDE block storage (PIO discovery, reads, test-device writes, host-recomputed digests), Stage 17b RYNORFS v1 read-only filesystem plus Stage 17c overwrite-in-extent writes, and Stage 18a protected userspace foundation (CPL3 entries with isolated CR3s, TSS/RSP0 exit stacks, `int $0x80` gate, fault kill paths, deterministic timer preemption). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
+**Implemented:** foundation, boot/serial, CPU exceptions, PIC/PIT IRQs, physical frames, Stage 5 virtual memory, Stage 6 kernel heap, Stage 7 kernel execution infrastructure (per-thread stacks, context switching, timer-preemptive round-robin scheduler), Stage 8 PS/2 keyboard input (i8042/IRQ1, bounded drop-newest event queue), Stage 9 Bochs VBE linear frame buffer (1024x768x32 BGRX from PCI BAR0, mapped at VM_MMIO_BASE, host pmemsave pixel evidence), Stage 10 basic kernel runtime (bounded strings, bounded byte rings, and ring-0 runtime services — FNV-1a digest, uppercase, digit count — driven from worker threads, host-recomputed evidence), Stage 11 ring-0 shell monitor, the Stage 12–14 host-side RynorLang lexer/parser/semantics (stable AST, name resolution, type checking), the Stage 15a typed IR plus native backend with real dominance and a SysV-subset ABI, the Stage 15b edition-gated shell surface, and Stage 16 host-native `.rl` programs (exact-bytes `print`, deterministic ELF pipeline), and Stage 17a IDE block storage (PIO discovery, reads, test-device writes, host-recomputed digests), Stage 17b RYNORFS v1 read-only filesystem plus Stage 17c overwrite-in-extent writes, Stage 18a protected userspace foundation (CPL3 entries with isolated CR3s, TSS/RSP0 exit stacks, `int $0x80` gate, fault kill paths, deterministic timer preemption), Stage 18b RYNX loader plus frozen exit/write/yield syscalls, and Stage 18c CPL3 native runtime library (`user/lib/rt/`, print rebind for `runtime="rtlib"` targets). Kernel behavior is verified under QEMU; the language tools are separate Python bootstrap tooling and are not guest code.
 Implemented details are explicitly labeled below; **planned** sections are future
 work and **experimental** items are unresolved proposals.
 
@@ -76,8 +76,9 @@ Implemented: original freestanding C/assembly boot, serial, kernel descriptors,
 shared exception diagnostics, PIC IRQ dispatch, bounded PIT self-test and physical
 frame allocation, virtual-memory, bounded kernel heap and kernel scheduling APIs.
 Stage 18a adds CPL0↔CPL3 transitions for a static two-context userspace
-foundation; there is still no userspace OS service layer (no loader, no
-syscalls, no runtime services).
+foundation; Stage 18b adds the RYNX loader and frozen exit/write/yield
+syscalls over it; Stage 18c adds the CPL3 native runtime library
+(`user/lib/rt/`) over those syscalls.
 
 Plan: an original, small monolithic Rynorkernel owns CPU state, memory,
 interrupts, scheduling, devices, and filesystem services. Early milestones run
@@ -261,17 +262,19 @@ See `docs/design/filesystem.md`.
 ## 8. Process/task model
 
 Implemented: bounded cooperative and preemptive kernel threads in one shared
-address space. Planned: user processes with separate address spaces and validated
-system-call boundaries.
+address space, plus static protected user contexts with separate address
+spaces and a validated system-call boundary (18a), RYNX loading (18b), and
+the CPL3 native runtime library (18c).
 An initial in-kernel monitor and trusted test programs are not protected userspace.
 Task lifecycle, stacks, resource ownership, and cancellation/exit behavior must
 be explicit. Preemptive scheduling follows tested save/restore and synchronization.
-Experimental: syscall ABI, executable format, scheduling policy, and handle model.
+Experimental: scheduling policy and handle model (syscall ABI and executable
+format are frozen since 18b).
 No multicore execution, binary compatibility, or multi-user security is promised.
 
 ## 9. Shell
 
-Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `554` repository and `224` integration test methods, plus a 9-configuration QEMU matrix and deterministic raw-artifact and manifest comparison. Stage 18a provides the static `CPL3` foundation (fixed user layout, two contexts, exit/yield gate); Stage 18b loads real compiled programs into it (RYNX envelopes, `int $0x80` exit/write/yield) with files from RYNORFS images. The eventual `user/shell/` move into `CPL3` with files waits for `18c` onward.
+Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `561` repository and `236` integration test methods, plus deterministic raw-artifact and manifest comparison. The 9-configuration QEMU matrix covers the Stage 11-era shell sessions and the default-image skip paths; per-stage VERIFIED runs (including 18c) use a single pinned QEMU config with exact-byte validators. Stage 18a provides the static `CPL3` foundation (fixed user layout, two contexts, exit/yield gate); Stage 18b loads real compiled programs into it (RYNX envelopes, `int $0x80` exit/write/yield) with files from RYNORFS images. The eventual `user/shell/` move into `CPL3` with files waits for `18d` onward.
 
 ## 10. RynorLang
 
@@ -320,11 +323,13 @@ Plan, in four independently testable steps (see `ROADMAP.md` stages
 address-space isolation, fault containment, clean exit; (b) native
 executable loader plus a small explicit syscall boundary, turning Stage 16
 host-native programs into loadable RynorOS userspace programs; (c) a native
-runtime library over those syscalls; (d) the native RynorLang shell and REPL
+runtime library over those syscalls (implemented: `user/lib/rt/`, see
+`docs/design/native-runtime.md`); (d) the native RynorLang shell and REPL
 in CPL3. Initial trusted programs may execute in
 kernel mode as an explicit intermediate milestone. Protected userspace requires
 user-mode entry, validated memory access, syscalls, process exit, and loading.
-Runtime I/O such as `print` will bind to real OS services only when available.
+Runtime I/O such as `print` binds to real OS services (`rt_write`) for in-OS
+targets since 18c; host-native targets keep host bindings.
 The API and ownership/error conventions are experimental. The native shell is a
 RynorLang program (REPL + scripts, structured `|>` pipelines over typed values
 per `docs/design/rynorlang-shell-language.md`), running only in CPL3; the
@@ -384,7 +389,8 @@ test register/flags/stack restoration, and reject broken handoffs and ownership.
 These checks prove neither general hardware support nor production language
 or Windows execution environments. Current evidence is in
 `docs/reports/stage11.md`, `stage15a.md`, `stage15b.md`, `stage16.md`,
-`stage17a.md`, `stage17b.md`, `stage17c.md`, and `stage18a.md`;
+`stage17a.md`, `stage17b.md`, `stage17c.md`, `stage18a.md`, `stage18b.md`,
+and `stage18c.md` (plus `docs/design/native-runtime.md`);
 the Stage 7, 8, 9, and 10 audits retain their historical findings.
 
 Stage 10 services are allocation-free foreground calls (IF preserved, IRQ

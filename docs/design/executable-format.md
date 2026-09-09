@@ -39,7 +39,10 @@ total file size must equal `28 + code_size + data_filesz` exactly.
   converter and unimaginable to the kernel (fixed mapping).
 * Data loads at `USER_DATA_BASE` (`0x600000`) with `U-RW`. File-backed
   bytes tile contiguously from the base; the tail to `data_memsz` is
-  zero-filled (BSS). String immutability inside the RW page is a
+  zero-filled (BSS). The mapping is the whole fixed 4 KiB page, so
+  bytes past `data_memsz` to the page end are zeroed but remain
+  addressable (over-mapping by fixed-window design, not per-byte
+  enforcement). String immutability inside the RW page is a
   language property (no mutation syntax), not a paging property.
 * Stack is the fixed 18a stack (top `0x800000`, guard below, initial
   `RSP` at top). No argv/env yet: an empty stack reads as `argc=0`;
