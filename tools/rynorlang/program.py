@@ -38,6 +38,9 @@ RUNTIME_ASM = Path(__file__).resolve().parent / "runtime" / "rt_linux.asm"
 RYNOR_RUNTIME_ASM = Path(__file__).resolve().parent / "runtime" / "rt_rynor.asm"
 RYNOR_LINK_SCRIPT = Path(__file__).resolve().parent / "runtime" / "rynoros.ld"
 RYNOR_RT_LINK_SCRIPT = Path(__file__).resolve().parent / "runtime" / "rynoros_rt.ld"
+# Stage 18d Slice C: bounded v2 windows (same bases, larger tiling maxima;
+# caps enforced by rnyx.elf_to_rnyx version=2, never by the script).
+RYNOR_V2_LINK_SCRIPT = Path(__file__).resolve().parent / "runtime" / "rynoros_v2.ld"
 # Stage 18c library runtime: freestanding user/lib/rt sources, compiled for
 # the fixed-VA target and linked instead of rt_rynor.asm when requested.
 RTLIB_DIR = _ROOT / "user" / "lib" / "rt"
@@ -371,14 +374,17 @@ def _build_rtlib_objects(workdir: Path, nasm: str, with_rl: bool,
 
 
 def build_rynor_c_program(sources: dict, workdir: str | Path, prog: str = "prog",
-                          rtlib_dir=None):
+                          rtlib_dir=None, link_script: str | None = None):
     """Compile freestanding C sources to a RynorOS userspace ELF.
 
     sources maps basename -> text (staged verbatim; basenames only, no
     directories). Exactly one program entry is expected: the library
     gate stub calls rt_main, so one source must define it. Links the
     18c library (rt.c, no RIR helpers) with rynoros.ld. rtlib_dir
-    overrides the library source directory (mutation testing). Returns
+    overrides the library source directory (mutation testing).
+    link_script names an alternate script from the runtime directory
+    (Stage 18d v2: "rynoros_v2.ld" for bounded multi-page windows;
+    default keeps the v1 script byte-identical). Returns
     ({"objs","exe"}, None) or (None, {"code","message"}).
     """
     workdir = Path(workdir)
@@ -397,7 +403,7 @@ def build_rynor_c_program(sources: dict, workdir: str | Path, prog: str = "prog"
                           "message": f"reserved source name: {name!r}"}
     _discard(workdir, [f"{prog}.elf", "rt.o", "rt_rl.o", "rt_gate.o",
                        RTLIB_HEADER, "rt.c", "rt_rl.c", RTLIB_GATE_ASM,
-                       RYNOR_RT_LINK_SCRIPT.name] +
+                       RYNOR_RT_LINK_SCRIPT.name, RYNOR_V2_LINK_SCRIPT.name] +
                       [Path(name).stem + ".o" for name in sources])
     tools, error = find_toolchain()
     if error is not None:
@@ -434,9 +440,16 @@ def build_rynor_c_program(sources: dict, workdir: str | Path, prog: str = "prog"
                               "message": (proc.stderr or proc.stdout).strip()[-2000:]
                               or f"clang {name} failed"}
             objs.append(out)
-        ld_path = workdir / RYNOR_RT_LINK_SCRIPT.name
+        if link_script is None:
+            script_src = RYNOR_RT_LINK_SCRIPT
+        elif link_script == RYNOR_V2_LINK_SCRIPT.name and RYNOR_V2_LINK_SCRIPT.is_file():
+            script_src = RYNOR_V2_LINK_SCRIPT
+        else:
+            return None, {"code": "PAR_INVALID_INPUT",
+                          "message": f"unknown link script: {link_script!r}"}
+        ld_path = workdir / script_src.name
         try:
-            ld_path.write_bytes(RYNOR_RT_LINK_SCRIPT.read_bytes())
+            ld_path.write_bytes(script_src.read_bytes())
         except OSError as error:
             return None, {"code": COMP_LINK_FAILED, "message": f"cannot stage link script: {error}"}
         link_proc = linker(exe_path, [*objs, lib_objs["rt_obj"], lib_objs["rt_gate_obj"]],

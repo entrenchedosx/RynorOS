@@ -14,6 +14,7 @@ from shell_output import SHELL_START, SHELL_END, SCRIPT, validate_shell_output
 from blk_output import validate_blk_section
 from fs_output import split_fs_sections, validate_fs_section
 from input_output import split_input_tail, validate_input_section
+from proc_output import split_proc_tail, validate_proc_section
 from user_output import split_user_sections, validate_user_section
 from load_output import split_load_sections, validate_load_section
 from rt_output import split_rt_sections, validate_rt_section
@@ -103,6 +104,10 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             # images only; absent everywhere else (split returns head).
             # It must split before the rt/user/load chain: split_rt_sections
             # would otherwise swallow input lines into the rt section.
+            # The Slice C proc section (with embedded child [LOAD] write
+            # rows) trails input the same way when present.
+            tail, proc_part = split_proc_tail(tail)
+            errors.extend(validate_proc_section(proc_part))
             tail, input_part = split_input_tail(tail)
             errors.extend(validate_input_section(input_part))
             no_rt_tail, rt_part = split_rt_sections(tail)
@@ -117,6 +122,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
     elif require_shell:
         errors.append("Required interactive shell output missing")
     elif post != b"":
+        post, proc_part = split_proc_tail(post)
+        errors.extend(validate_proc_section(proc_part))
         post, input_part = split_input_tail(post)
         errors.extend(validate_input_section(input_part))
         no_rt_tail, rt_part = split_rt_sections(post)

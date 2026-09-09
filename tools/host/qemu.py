@@ -18,6 +18,7 @@ from load_output import VERIFIED_LINE as LOAD_VERIFIED, SKIPPED_LINE as LOAD_SKI
 from rt_output import VERIFIED_LINE as RT_VERIFIED, SKIPPED_LINE as RT_SKIPPED
 from kbd_output import KEYS, KBD_END, key_sequence, validate_keyboard_trace, validate_irq0_trace
 from input_output import INPUT_VERIFIED, INPUT_SCANS, input_key_sequence
+from proc_output import PROC_VERIFIED
 from display_output import DISPLAY_END, DISPLAY_START, parse_display_output, verify_display_pixels, verify_display_scanout
 from shell_output import SHELL_END, SHELL_KEYS, SCANS as SHELL_SCANS
 from kernel_elf import read_symbols
@@ -36,7 +37,7 @@ _PROVENANCE = {}
 
 def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
                    require_shell: bool = False, shell_script=(),
-                   require_input: bool = False) -> bool:
+                   require_input: bool = False, require_proc: bool = False) -> bool:
     """Pure completion predicate for the boot loop (unit-testable).
 
     Defaults mirror boot_image's non-interactive path. A normal
@@ -62,6 +63,8 @@ def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
         return False
     if require_input:
         return INPUT_VERIFIED in observed
+    if require_proc:
+        return PROC_VERIFIED in observed
     return True
 
 
@@ -239,6 +242,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                keys: tuple[str, ...] = KEYS, inject_keys: bool = True,
                shell_interactive: bool = False, shell_keys=None,
                input_keys=None, require_input: bool = False,
+               require_proc: bool = False,
                extra_drives: tuple = ()) -> bytes:
     # Entries are paths (snapshot overlay on) or (path, snapshot_on)
     # tuples for tests that own a private image copy.
@@ -356,7 +360,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                                            b"[FS] failure=", b"[BLK] failure=",
                                                            b"[MM] failure=",
                                                            b"[KSTACK] failure=",
-                                                           b"[INPUT] failure="))), None)
+                                                           b"[INPUT] failure=",
+                                                           b"[PROC] failure="))), None)
                 if driver_failure is not None:
                     failure = driver_failure.decode('ascii', errors='replace')
                     break
@@ -380,7 +385,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                 if boot_complete(observed, test_vector, keys,
                                  require_shell=shell_interactive,
                                  shell_script=shell_keys,
-                                 require_input=require_input):
+                                 require_input=require_input,
+                                 require_proc=require_proc):
                     # The input stream is sized for worst-case retries; only
                     # consumed keys are asserted (by the input validator from
                     # transcript markers), so leftover tuple entries are fine.

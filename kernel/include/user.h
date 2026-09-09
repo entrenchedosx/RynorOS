@@ -9,7 +9,10 @@
    destroy, enter and resume additionally require foreground (never IRQ)
    context. */
 
-#define USER_MAX_CONTEXTS 2u
+/* Stage 18d Slice C: three static contexts (shell + two pipeline
+   children); exit stacks scale with the same macro. A process table is
+   still deferred beyond 18c in shape, but capacity is exactly three. */
+#define USER_MAX_CONTEXTS 3u
 #define USER_CODE_BASE 0x400000ULL
 #define USER_DATA_BASE 0x600000ULL
 #define USER_STACK_TOP 0x800000ULL
@@ -53,8 +56,23 @@
 /* Stage 18d Slice A: read() resumes the process like write (terminal for
  * the call, not for the process). Kernel-internal run code, not UAPI. */
 #define USER_RUN_READ 6u
+/* Stage 18d Slice C: spawn/wait/terminate resume codes (terminal for the
+ * call, not for the process). Kernel-internal, not UAPI. */
+#define USER_RUN_SPAWNED 7u
+#define USER_RUN_WAITED 8u
+#define USER_RUN_TERMINATED 9u
 
-enum user_state { USER_FREE, USER_ACTIVE, USER_EXITED, USER_FAULTED };
+/* USER_ABORTED (Slice C): worker-observed kill flag converted to a
+ * terminal state on the owning thread only. Never resumed, never
+ * re-entered; destroyed like EXITED/FAULTED. */
+enum user_state { USER_FREE, USER_ACTIVE, USER_EXITED, USER_FAULTED, USER_ABORTED };
+
+/* Stage 18d Slice C (RYNX v2): bounded multi-page code/data windows.
+ * v1 images use exactly 1 code + 1 data page (behavior identical). */
+#define USER_MAX_CODE_PAGES 8u
+#define USER_MAX_DATA_PAGES 4u
+#define USER_V2_CODE_MAX (8u * 4096u)
+#define USER_V2_DATA_MAX (4u * 4096u)
 
 /* Scheduler-visible link. kern_save is frame_valid-compatible by
    construction (resume label RIP, entry RSP in own stack, kernel
@@ -70,7 +88,12 @@ struct user_context {
     enum user_state state;
     unsigned int slot;
     struct vm_space space;
-    cpu_u64 code_frame, data_frame, stack_frame;
+    /* Physical frames backing the fixed windows. v1 uses index 0 only;
+       v2 code/data tile pages 0..count-1 contiguously in VA. */
+    cpu_u64 code_frame[USER_MAX_CODE_PAGES];
+    cpu_u64 data_frame[USER_MAX_DATA_PAGES];
+    cpu_u64 stack_frame;
+    unsigned int code_pages, data_pages;
     cpu_u64 exit_base, exit_top;
     cpu_u64 table_pages_at_create;
     /* Recorded user state (full GPRs for faithful preemption resume). */
@@ -114,14 +137,34 @@ int user_fault_managed(cpu_u64 vector); /* CPL3 kill-path whitelist, pure */
 int user_create(struct user_context **out, enum user_blob blob);
 /* Loaded-program sibling: fixed layout filled from file bytes (data tail
    zeroed, covering BSS), no attack-parameter prefill. Entry is defined
-   as USER_CODE_BASE, so user_enter works unchanged. */
+   as USER_CODE_BASE. v1 sizes (code<=4K, data<=4K) map one page each;
+   v2 tiles up to USER_MAX_CODE_PAGES/USER_MAX_DATA_PAGES. */
 int user_create_loaded(struct user_context **out, const char *code, cpu_u64 code_len,
-                       const char *data, cpu_u64 data_len);
-/* Destroy an EXITED/FAULTED context, or a pristine ACTIVE one (never
-   entered, unbound). Anything live is rejected fail-closed. */
+                       const char *data, cpu_u64 data_len, cpu_u64 data_memsz);
+/* Destroy an EXITED/FAULTED/ABORTED context, or a pristine ACTIVE one
+   (never entered, unbound). Anything live is rejected fail-closed. */
 int user_destroy(struct user_context *context);
+/* ABORTED transition for the owning worker thread only: the context must
+   be ACTIVE and bound to the calling thread (which is therefore not
+   executing inside it). After this call the context is terminal and never resumed. */
+int user_mark_aborted(struct user_context *context);
+/* Refresh kernel-half snapshots of all live spaces after high-half
+   table changes (thread create/join). See user.c. */
+int user_sync_spaces(void);
 cpu_u64 user_enter(struct user_link *link);  /* initial entry, returns run code */
+/* Image entry for spawned programs: like user_enter but preserves the
+   recorded RSP (argv startup block built pre-entry) instead of resetting
+   it to the stack top. Entry RIP/RFLAGS are still established here. */
+cpu_u64 user_enter_image(struct user_link *link);
 cpu_u64 user_resume(struct user_link *link); /* re-entry from recorded state */
+/* Build the argv startup block on a pristine (never entered) context's
+   stack page: [argc][argv[]][NULL][NUL-terminated strings], RSP set to
+   the 16-aligned block base (TOP-16 minimum even for argc==0, so
+   _start's [RSP] load always lands mapped). args/lens live in kernel
+   memory (already staged + validated by the caller). Requires kernel
+   CR3 (asserted). */
+int user_prepare_argv(struct user_context *context, cpu_u64 nargs,
+                      const cpu_u64 *ptrs, const cpu_u64 *lens);
 /* Record + validate a CPL3 frame on the IRQ path. All pure checks run
    pre-switch (still on the entry CR3); the switch happens only on
    success, so failure returns with the entry stack still addressable

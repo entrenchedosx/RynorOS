@@ -69,7 +69,7 @@ static _Alignas(2) cpu_u8 file_buf[16384u];
    masked, so preemptions cannot occur; any other return fails. */
 static cpu_u64 run_rt(struct user_link *link)
 {
-    cpu_u64 rc = user_enter(link);
+    cpu_u64 rc = user_enter_image(link);
     while (rc == USER_RUN_YIELDED || rc == USER_RUN_WRITTEN)
         rc = user_resume(link);
     return rc;

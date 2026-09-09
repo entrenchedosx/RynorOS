@@ -25,7 +25,7 @@ _START_RE = re.compile(rb"^\[USER\] self-test started$")
 _CREATE_RE = re.compile(rb"^\[USER\] create slot=(\d+) code_size=(\d+) tables=(\d+)$")
 _MAP_RE = re.compile(rb"^\[USER\] map slot=(\d+) kind=(code|data|stack) "
                      rb"va=(0x[0-9a-f]{16}) pa=(0x[0-9a-f]{16}) perm=(rx|rw)$")
-_ADMIT_RE = re.compile(rb"^\[USER\] admission rejected slots=2$")
+_ADMIT_RE = re.compile(rb"^\[USER\] admission rejected slots=3$")
 _DESTROY_RE = re.compile(rb"^\[USER\] destroy slot=(\d+)$")
 _EXIT_RE = re.compile(rb"^\[USER\] exit slot=(\d+) code=(\d+)$")
 _YIELD_RE = re.compile(rb"^\[USER\] yield slot=(\d+) count=(\d+)$")
@@ -244,8 +244,10 @@ def validate(evidence: UserEvidence) -> list:
         errors.append(f"guest failures: {evidence.failures}")
     if evidence.smep is None or evidence.smap is None:
         errors.append("missing smep/smap probe line")
-    if len(evidence.creates) != 33:
-        errors.append(f"want 33 creates, got {len(evidence.creates)}")
+    # Stage 18d Slice C: three static contexts (was two); lifecycle now
+    # creates/destroys one extra slot-2 pair.
+    if len(evidence.creates) != 34:
+        errors.append(f"want 34 creates, got {len(evidence.creates)}")
     else:
         tables = {row[2] for row in evidence.creates}
         if tables != {6}:
@@ -256,8 +258,8 @@ def validate(evidence: UserEvidence) -> list:
         if sorted(row[0] for row in evidence.creates) != \
                 sorted(row for row in evidence.destroys):
             errors.append("create/destroy slot multisets differ")
-    if len(evidence.destroys) != 33:
-        errors.append(f"want 33 destroys, got {len(evidence.destroys)}")
+    if len(evidence.destroys) != 34:
+        errors.append(f"want 34 destroys, got {len(evidence.destroys)}")
     want_maps = {(0, "code", CODE_BASE, "rx"), (0, "data", DATA_BASE, "rw"),
                  (0, "stack", STACK_PAGE, "rw")}
     got_maps = {(slot, kind, va, perm) for slot, kind, va, _, perm in evidence.maps}

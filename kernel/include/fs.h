@@ -43,6 +43,10 @@ struct fs_stat {
     cpu_u64 blocks;        /* extent blocks (0 for directories) */
 };
 
+/* Validate strict path rules without touching storage (Slice C spawn
+   reuses the audited rule; Slice D adds discovery on top). Returns
+   nonzero for a well-formed absolute path. */
+int fs_path_ok(const char *path);
 /* Validate and mount the filesystem on a discovered block device. Reads
    block 0 + the directory extent through blk_read only. Re-mounting
    resets state and invalidates all open handles. Returns FS_OK or a

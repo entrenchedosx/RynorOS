@@ -68,7 +68,7 @@ static _Alignas(2) cpu_u8 file_buf[16384u];
 /* Run to a terminal code, resuming yields/writes/preemptions. */
 static cpu_u64 run_loaded(struct user_link *link)
 {
-    cpu_u64 rc = user_enter(link);
+    cpu_u64 rc = user_enter_image(link);
     while (rc == USER_RUN_PREEMPTED || rc == USER_RUN_YIELDED || rc == USER_RUN_WRITTEN)
         rc = user_resume(link);
     return rc;
@@ -271,11 +271,11 @@ static void phase_isolation(void)
     struct user_context *b = load_staged(file_buf, len, "load-b");
     program_evidence("/rnyx/exit42.rnx", isolay.code_len, isolay.data_filesz, isolay.data_memsz);
     require(a != b && a->slot != b->slot, "slots");
-    require(a->code_frame != b->code_frame && a->data_frame != b->data_frame &&
+    require(a->code_frame[0] != b->code_frame[0] && a->data_frame[0] != b->data_frame[0] &&
             a->stack_frame != b->stack_frame, "frames-disjoint");
-    require(a->code_frame != b->data_frame && a->code_frame != b->stack_frame &&
-            a->data_frame != b->code_frame && a->data_frame != b->stack_frame &&
-            a->stack_frame != b->code_frame && a->stack_frame != b->data_frame,
+    require(a->code_frame[0] != b->data_frame[0] && a->code_frame[0] != b->stack_frame &&
+            a->data_frame[0] != b->code_frame[0] && a->data_frame[0] != b->stack_frame &&
+            a->stack_frame != b->code_frame[0] && a->stack_frame != b->data_frame[0],
             "frames-cross-disjoint");
     map_evidence(a);
     map_evidence(b);
@@ -312,7 +312,7 @@ static void phase_bsszero(void)
     program_evidence("/rnyx/bsszero.rnx", lay.code_len, lay.data_filesz, lay.data_memsz);
     struct user_context *c = load_staged(file_buf, len, "load");
     /* BSS tail must read as zeros before first entry (no stale bytes). */
-    volatile cpu_u8 *d = vm_frame_access(c->data_frame);
+    volatile cpu_u8 *d = vm_frame_access(c->data_frame[0]);
     require(d != 0, "bss-access");
     for (cpu_u64 i = 0; i < lay.data_memsz; ++i)
         require(d[i] == 0, "bss-zero");

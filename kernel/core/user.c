@@ -6,6 +6,7 @@
 #include "paging.h"
 #include "syscall.h"
 #include "load.h"
+#include "proc.h"
 
 /* Stage 18a protected userspace. Static model: fixed layout, two
    contexts, shared-half address spaces, int $0x80 exit/yield gate.
@@ -179,12 +180,18 @@ static int frame_within_exit(const struct user_context *c, const struct exceptio
 /* Hardware-built origin checks shared by all CPL3 paths. Vector/error
    expectations differ per path (gate/fault/IRQ). RFLAGS allows RF: fault
    delivery preserves it (observed set on #UD), and it is harmless with
-   no debug active. TF/AC/ID/IOPL/NT/VM/VIF/VIP stay forbidden. */
-static int origin_valid(const struct exception_frame *f)
+   no debug active. TF/AC/ID/IOPL/NT/VM/VIF/VIP stay forbidden. The code
+   bound is the context's mapped extent (one page for v1 images and
+   blobs, more for RYNX v2). */
+static int origin_valid(const struct user_context *c, const struct exception_frame *f)
 {
+    cpu_u64 code_end;
+    if (!c || c->code_pages < 1 || c->code_pages > USER_MAX_CODE_PAGES) return 0;
+    code_end = USER_CODE_BASE + (cpu_u64)c->code_pages * VM_PAGE_SIZE;
+    if (code_end < USER_CODE_BASE) return 0;
     return f->cs == CPU_USER_CODE_SELECTOR && f->ss == CPU_USER_DATA_SELECTOR &&
            vm_canonical(f->rip) && vm_canonical(f->rsp) &&
-           f->rip >= USER_CODE_BASE && f->rip < USER_CODE_BASE + VM_PAGE_SIZE &&
+           f->rip >= USER_CODE_BASE && f->rip < code_end &&
            f->rsp > USER_STACK_PAGE && f->rsp <= USER_STACK_TOP && !(f->rsp & 7) &&
            (f->rflags & 0x202) == 0x202 && !(f->rflags & ~0x10ED7ULL);
 }
@@ -232,7 +239,7 @@ int user_origin_ok(struct user_context *c, struct exception_frame *f)
 {
     if (!c || c->state != USER_ACTIVE || !c->space.identity ||
         c->space.identity != &c->space || !c->space.root) return 0;
-    return frame_within_exit(c, f) && origin_valid(f);
+    return frame_within_exit(c, f) && origin_valid(c, f);
 }
 
 int user_save_state(struct user_context *c, struct exception_frame *f)
@@ -403,10 +410,16 @@ static int replica_ok(const struct user_context *c)
             cpu_u64 va = ((cpu_u64)j << 21) | ((cpu_u64)i << 12);
             cpu_u64 frame = 0;
             unsigned int uperm = 0;
-            if (va == USER_CODE_BASE) {
-                frame = c->code_frame; uperm = VM_USER | VM_EXECUTE;
-            } else if (va == USER_DATA_BASE) {
-                frame = c->data_frame; uperm = VM_USER | VM_WRITE;
+            if (va >= USER_CODE_BASE &&
+                va < USER_CODE_BASE + (cpu_u64)c->code_pages * VM_PAGE_SIZE) {
+                unsigned int page = (unsigned int)((va - USER_CODE_BASE) / VM_PAGE_SIZE);
+                if (page >= USER_MAX_CODE_PAGES) return 0;
+                frame = c->code_frame[page]; uperm = VM_USER | VM_EXECUTE;
+            } else if (va >= USER_DATA_BASE &&
+                       va < USER_DATA_BASE + (cpu_u64)c->data_pages * VM_PAGE_SIZE) {
+                unsigned int page = (unsigned int)((va - USER_DATA_BASE) / VM_PAGE_SIZE);
+                if (page >= USER_MAX_DATA_PAGES) return 0;
+                frame = c->data_frame[page]; uperm = VM_USER | VM_WRITE;
             } else if (va == USER_STACK_PAGE) {
                 frame = c->stack_frame; uperm = VM_USER | VM_WRITE;
             }
@@ -517,21 +530,47 @@ int user_check(void)
         if (c->link.context != c || (c->link.bound != 0 && c->link.bound != 1)) return 0;
         if (c->state == USER_FREE) {
             if (c->space.root || c->space.identity || c->space.table_pages ||
-                c->code_frame || c->data_frame || c->stack_frame) return 0;
+                c->stack_frame) return 0;
+            for (unsigned int p = 0; p < USER_MAX_CODE_PAGES; ++p)
+                if (c->code_frame[p]) return 0;
+            for (unsigned int p = 0; p < USER_MAX_DATA_PAGES; ++p)
+                if (c->data_frame[p]) return 0;
             continue;
         }
-        if (c->state != USER_ACTIVE && c->state != USER_EXITED && c->state != USER_FAULTED)
+        if (c->state != USER_ACTIVE && c->state != USER_EXITED &&
+            c->state != USER_FAULTED && c->state != USER_ABORTED)
             return 0;
         if (!c->space.root || c->space.identity != &c->space || !c->table_pages_at_create)
             return 0;
         if (c->space.table_pages != c->table_pages_at_create) return 0;
-        if ((c->code_frame % VM_PAGE_SIZE != 0) || !c->code_frame ||
-            (c->data_frame % VM_PAGE_SIZE != 0) || !c->data_frame ||
-            (c->stack_frame % VM_PAGE_SIZE != 0) || !c->stack_frame)
+        if (c->code_pages < 1 || c->code_pages > USER_MAX_CODE_PAGES ||
+            c->data_pages < 1 || c->data_pages > USER_MAX_DATA_PAGES)
             return 0;
-        if (!query_exact((struct user_context *)c, USER_CODE_BASE, VM_USER | VM_EXECUTE) ||
-            !query_exact((struct user_context *)c, USER_DATA_BASE, VM_USER | VM_WRITE) ||
-            !query_exact((struct user_context *)c, USER_STACK_PAGE, VM_USER | VM_WRITE))
+        for (unsigned int p = 0; p < USER_MAX_CODE_PAGES; ++p) {
+            cpu_u64 f = c->code_frame[p];
+            if (p < c->code_pages) {
+                if ((f % VM_PAGE_SIZE != 0) || !f) return 0;
+            } else if (f) return 0;
+        }
+        for (unsigned int p = 0; p < USER_MAX_DATA_PAGES; ++p) {
+            cpu_u64 f = c->data_frame[p];
+            if (p < c->data_pages) {
+                if ((f % VM_PAGE_SIZE != 0) || !f) return 0;
+            } else if (f) return 0;
+        }
+        if ((c->stack_frame % VM_PAGE_SIZE != 0) || !c->stack_frame)
+            return 0;
+        for (unsigned int p = 0; p < c->code_pages; ++p)
+            if (!query_exact((struct user_context *)c,
+                             USER_CODE_BASE + (cpu_u64)p * VM_PAGE_SIZE,
+                             VM_USER | VM_EXECUTE))
+                return 0;
+        for (unsigned int p = 0; p < c->data_pages; ++p)
+            if (!query_exact((struct user_context *)c,
+                             USER_DATA_BASE + (cpu_u64)p * VM_PAGE_SIZE,
+                             VM_USER | VM_WRITE))
+                return 0;
+        if (!query_exact((struct user_context *)c, USER_STACK_PAGE, VM_USER | VM_WRITE))
             return 0;
         struct vm_mapping m;
         /* Guard page and null must report unmapped; the low kernel image
@@ -582,15 +621,25 @@ int user_initialize(void)
     return user_check();
 }
 
-/* Release the three page frames, reporting success. Callers halt on
+/* Release all page frames, reporting success. Callers halt on
    failure (R1 halt-on-rollback-failure): a failed release means PMM
    corruption, since every nonzero frame here was just allocated for this
    context. Unreachable while PMM state is consistent. */
 static int release_frames(struct user_context *c)
 {
     int ok = 1;
-    if (c->code_frame) { if (pmm_release(c->code_frame) != PMM_OK) ok = 0; c->code_frame = 0; }
-    if (c->data_frame) { if (pmm_release(c->data_frame) != PMM_OK) ok = 0; c->data_frame = 0; }
+    for (unsigned int i = 0; i < USER_MAX_CODE_PAGES; ++i) {
+        if (c->code_frame[i]) {
+            if (pmm_release(c->code_frame[i]) != PMM_OK) ok = 0;
+            c->code_frame[i] = 0;
+        }
+    }
+    for (unsigned int i = 0; i < USER_MAX_DATA_PAGES; ++i) {
+        if (c->data_frame[i]) {
+            if (pmm_release(c->data_frame[i]) != PMM_OK) ok = 0;
+            c->data_frame[i] = 0;
+        }
+    }
     if (c->stack_frame) { if (pmm_release(c->stack_frame) != PMM_OK) ok = 0; c->stack_frame = 0; }
     return ok;
 }
@@ -651,7 +700,8 @@ static int clone_high(struct user_context *c)
 }
 
 static int create_with_image(struct user_context **out, const char *code, cpu_u64 code_len,
-                             const char *data, cpu_u64 data_len, int prefill);
+                             const char *data, cpu_u64 data_len, cpu_u64 data_memsz,
+                             int prefill);
 
 int user_create(struct user_context **out, enum user_blob blob)
 {
@@ -659,43 +709,79 @@ int user_create(struct user_context **out, enum user_blob blob)
     cpu_u64 size = (cpu_u64)(blobs[blob].end - blobs[blob].start);
     /* Blobs carry no data segment: NULL with zero length (explicitly
        allowed; copy_page never dereferences it). */
-    return create_with_image(out, blobs[blob].start, size, 0, 0, 1);
+    return create_with_image(out, blobs[blob].start, size, 0, 0, 0, 1);
 }
 
-/* Loaded programs share the exact fixed layout (entry is defined as the
-   code base, so no enter-path change exists): same three mappings, same
-   table count, BSS tail zeroed by the page copy. Attack parameters are
-   NOT prefilled for loaded programs (they would disclose kernel
-   addresses to untrusted code). */
+/* Loaded programs share the fixed layout (entry is defined as the code
+   base): code tiles U-RX pages from USER_CODE_BASE, data tiles U-RW
+   pages from USER_DATA_BASE with the BSS tail zeroed, plus the fixed
+   stack. Attack parameters are NOT prefilled for loaded programs (they
+   would disclose kernel addresses to untrusted code). v1 sizes map one
+   page each, exactly as before; v2 tiles up to the bounded maxima. */
 int user_create_loaded(struct user_context **out, const char *code, cpu_u64 code_len,
-                       const char *data, cpu_u64 data_len)
+                       const char *data, cpu_u64 data_len, cpu_u64 data_memsz)
 {
-    if (!code || !code_len || code_len > VM_PAGE_SIZE || data_len > VM_PAGE_SIZE)
+    struct user_context *c = 0;
+    if (!code || !code_len || code_len > USER_V2_CODE_MAX ||
+        data_memsz > USER_V2_DATA_MAX || data_len > data_memsz)
         return 0;
-    if (data_len && !data) return 0;
-    if (!create_with_image(out, code, code_len, data ? data : "", data_len, 0))
+    if ((data_len || data_memsz) && !data) return 0;
+    if (!create_with_image(out, code, code_len, data ? data : "", data_len,
+                           data_memsz, 0))
         return 0;
-    (*out)->loaded = 1;
+    c = *out;
+    /* Every loaded image carries at least the minimal argv block, so
+       _start's [RSP] load always lands mapped (even with argc==0).
+       Old binaries never read [RSP]; new programs use rdi/rsi. */
+    if (!user_prepare_argv(c, 0, 0, 0)) {
+        struct user_context *d = c;
+        *out = 0;
+        if (!user_destroy(d)) panic("loaded_argv_destroy");
+        return 0;
+    }
+    c->loaded = 1;
     return 1;
 }
 
 static int create_with_image(struct user_context **out, const char *code, cpu_u64 code_len,
-                             const char *data, cpu_u64 data_len, int prefill)
+                             const char *data, cpu_u64 data_len, cpu_u64 data_memsz,
+                             int prefill)
 {
     if (!foreground() || !initialized || !out || !code || !code_len ||
-        code_len > VM_PAGE_SIZE || data_len > VM_PAGE_SIZE ||
-        (data_len && !data))
+        code_len > USER_V2_CODE_MAX || data_memsz > USER_V2_DATA_MAX ||
+        data_len > data_memsz || (data_len && !data))
+        return 0;
+    /* Page counts: code tiles its bytes; data always maps at least one
+       page (the fixed window exists even for empty data); the tail past
+       the file bytes (BSS) is zeroed by the page copies. Overflow-safe:
+       both numerators are bounded far below 2^64 - PAGE. */
+    unsigned int code_pages = (unsigned int)((code_len + VM_PAGE_SIZE - 1) / VM_PAGE_SIZE);
+    unsigned int data_pages = (unsigned int)((data_memsz + VM_PAGE_SIZE - 1) / VM_PAGE_SIZE);
+    if (data_pages < 1) data_pages = 1;
+    if (code_pages < 1 || code_pages > USER_MAX_CODE_PAGES ||
+        data_pages > USER_MAX_DATA_PAGES)
         return 0;
     struct user_context *c = 0;
     for (unsigned int i = 0; i < USER_MAX_CONTEXTS; ++i)
         if (contexts[i].state == USER_FREE) { c = &contexts[i]; break; }
     if (!c) return 0;
-    c->code_frame = c->data_frame = c->stack_frame = 0;
+    for (unsigned int i = 0; i < USER_MAX_CODE_PAGES; ++i) c->code_frame[i] = 0;
+    for (unsigned int i = 0; i < USER_MAX_DATA_PAGES; ++i) c->data_frame[i] = 0;
+    c->stack_frame = 0;
+    c->code_pages = code_pages;
+    c->data_pages = data_pages;
     c->space = (struct vm_space){0};
-    if (pmm_allocate(&c->code_frame) != PMM_OK) return 0;
-    if (pmm_allocate(&c->data_frame) != PMM_OK) {
-        if (!release_frames(c)) panic("rollback_release");
-        return 0;
+    for (unsigned int i = 0; i < code_pages; ++i) {
+        if (pmm_allocate(&c->code_frame[i]) != PMM_OK) {
+            if (!release_frames(c)) panic("rollback_release");
+            return 0;
+        }
+    }
+    for (unsigned int i = 0; i < data_pages; ++i) {
+        if (pmm_allocate(&c->data_frame[i]) != PMM_OK) {
+            if (!release_frames(c)) panic("rollback_release");
+            return 0;
+        }
     }
     if (pmm_allocate(&c->stack_frame) != PMM_OK) {
         if (!release_frames(c)) panic("rollback_release");
@@ -725,29 +811,50 @@ static int create_with_image(struct user_context **out, const char *code, cpu_u6
         c->space = (struct vm_space){0};
         return 0;
     }
-    if (vm_map(&c->space, USER_CODE_BASE, c->code_frame, VM_USER | VM_EXECUTE) != VM_OK ||
-        vm_map(&c->space, USER_DATA_BASE, c->data_frame, VM_USER | VM_WRITE) != VM_OK ||
-        vm_map(&c->space, USER_STACK_PAGE, c->stack_frame, VM_USER | VM_WRITE) != VM_OK)
+    if (vm_map(&c->space, USER_STACK_PAGE, c->stack_frame, VM_USER | VM_WRITE) != VM_OK)
         goto fail;
-    cpu_u64 size = code_len;
-    if (!copy_page(c->code_frame, code, size) ||
-        !copy_page(c->data_frame, data, data_len) || !copy_page(c->stack_frame, 0, 0))
-        goto fail;
+    for (unsigned int i = 0; i < code_pages; ++i) {
+        if (vm_map(&c->space, USER_CODE_BASE + (cpu_u64)i * VM_PAGE_SIZE,
+                   c->code_frame[i], VM_USER | VM_EXECUTE) != VM_OK)
+            goto fail;
+    }
+    for (unsigned int i = 0; i < data_pages; ++i) {
+        if (vm_map(&c->space, USER_DATA_BASE + (cpu_u64)i * VM_PAGE_SIZE,
+                   c->data_frame[i], VM_USER | VM_WRITE) != VM_OK)
+            goto fail;
+    }
+    {
+        cpu_u64 done = 0;
+        for (unsigned int i = 0; i < code_pages; ++i) {
+            cpu_u64 take = code_len - done > VM_PAGE_SIZE ? VM_PAGE_SIZE : code_len - done;
+            if (!copy_page(c->code_frame[i], code + done, take)) goto fail;
+            done += take;
+        }
+        done = 0;
+        for (unsigned int i = 0; i < data_pages; ++i) {
+            cpu_u64 take = data_len - done > VM_PAGE_SIZE ? VM_PAGE_SIZE : data_len - done;
+            if (!copy_page(c->data_frame[i], data + done, take)) goto fail;
+            done += take;
+        }
+        if (!copy_page(c->stack_frame, 0, 0)) goto fail;
+    }
     if (prefill) {
         /* Attack-blob parameters: kernel text/data addresses the fault
            blobs dereference. Fixed user-layout offsets past the GPR
            spill area; never prefilled for loaded programs. */
-        volatile cpu_u64 *dw = vm_frame_access(c->data_frame);
+        volatile cpu_u64 *dw = vm_frame_access(c->data_frame[0]);
         if (!dw) goto fail;
         dw[USER_DATA_KTEXT / 8] = (cpu_u64)&user_enter;
         dw[USER_DATA_KDATA / 8] = (cpu_u64)&user_kernel_cr3;
     }
     /* Fixed layout, fixed table count: root, PDPT, PD, kernel-replica
-       PT, code PT, data/stack PT. Anything else trips fail-closed here
-       for an explicit revisit, never silently. */
+       PT, code PT, data/stack PT. Multi-page v2 windows stay inside one
+       PT each by address-map construction (code PD[2], data/stack
+       PD[3]); anything else trips fail-closed here for an explicit
+       revisit, never silently. */
     if (c->space.table_pages != 6) goto fail;
     c->table_pages_at_create = c->space.table_pages;
-    c->code_size = size;
+    c->code_size = code_len;
     c->rip = USER_CODE_BASE; c->rsp = USER_STACK_TOP; c->rflags = 0x202;
     for (unsigned int i = 0; i < 15; ++i) c->gprs[i] = 0;
     c->state = USER_ACTIVE;
@@ -776,18 +883,30 @@ fail:
     return 0;
 }
 
-/* Unmap the three user pages and release the private root. Shared
+/* Unmap all user pages and release the private root. Shared
    kernel-half tables are never touched: vm_destroy/vm_check must not run
    on user spaces (shared tables break ownership accounting, and
-   destroy_tree would free them). Strict mode requires all three unmaps;
+   destroy_tree would free them). Strict mode requires every unmap;
    lenient mode tolerates already-unmapped pages on create-failure paths
    (insert rolls its own tables back, so pruning still drains to root). */
 static int teardown_space(struct user_context *c, int strict)
 {
-    enum vm_result r1 = vm_unmap(&c->space, USER_CODE_BASE);
-    enum vm_result r2 = vm_unmap(&c->space, USER_DATA_BASE);
-    enum vm_result r3 = vm_unmap(&c->space, USER_STACK_PAGE);
-    if (strict && (r1 != VM_OK || r2 != VM_OK || r3 != VM_OK)) return 0;
+    /* Lenient mode tolerates already-unmapped pages on create-failure
+       paths (insert rolls its own tables back, so pruning still drains
+       to root); the explicit empty branches below document the
+       tolerance instead of discarding results silently. */
+    for (unsigned int i = 0; i < c->code_pages && i < USER_MAX_CODE_PAGES; ++i) {
+        enum vm_result r = vm_unmap(&c->space, USER_CODE_BASE + (cpu_u64)i * VM_PAGE_SIZE);
+        if (strict && r != VM_OK) return 0;
+    }
+    for (unsigned int i = 0; i < c->data_pages && i < USER_MAX_DATA_PAGES; ++i) {
+        enum vm_result r = vm_unmap(&c->space, USER_DATA_BASE + (cpu_u64)i * VM_PAGE_SIZE);
+        if (strict && r != VM_OK) return 0;
+    }
+    {
+        enum vm_result r = vm_unmap(&c->space, USER_STACK_PAGE);
+        if (strict && r != VM_OK) return 0;
+    }
     /* Drop the private low chain (replica PT, PD, PDPT); shared high
        entries die with the root and are never walked as owned tables. */
     if (vm_release_low(&c->space) != VM_OK) return 0;
@@ -813,6 +932,7 @@ int user_destroy(struct user_context *c)
     /* Terminal states destroy freely. A pristine ACTIVE context (never
        entered, unbound) is also safe: nothing references its space. */
     if (c->state != USER_EXITED && c->state != USER_FAULTED &&
+        c->state != USER_ABORTED &&
         !(c->state == USER_ACTIVE && !c->link.bound && !c->entries && !c->resumes))
         return 0;
     if (c->link.bound || !c->space.root || c->space.identity != &c->space) return 0;
@@ -822,15 +942,24 @@ int user_destroy(struct user_context *c)
     for (unsigned int i = 0; i < USER_MAX_CONTEXTS; ++i)
         if (contexts[i].state != USER_FREE && !sync_high(&contexts[i])) return 0;
     if (!teardown_space(c, 1)) return 0;
-    cpu_u64 code = c->code_frame, data = c->data_frame, stack = c->stack_frame;
-    if (pmm_release(code) != PMM_OK || pmm_release(data) != PMM_OK ||
-        pmm_release(stack) != PMM_OK)
-        return 0;
-    enum pmm_state state;
-    if (pmm_query(code, &state) != PMM_OK || state != PMM_STATE_FREE ||
-        pmm_query(data, &state) != PMM_OK || state != PMM_STATE_FREE ||
-        pmm_query(stack, &state) != PMM_OK || state != PMM_STATE_FREE)
-        return 0;
+    for (unsigned int i = 0; i < c->code_pages && i < USER_MAX_CODE_PAGES; ++i) {
+        cpu_u64 frame = c->code_frame[i];
+        enum pmm_state state;
+        if (pmm_release(frame) != PMM_OK) return 0;
+        if (pmm_query(frame, &state) != PMM_OK || state != PMM_STATE_FREE) return 0;
+    }
+    for (unsigned int i = 0; i < c->data_pages && i < USER_MAX_DATA_PAGES; ++i) {
+        cpu_u64 frame = c->data_frame[i];
+        enum pmm_state state;
+        if (pmm_release(frame) != PMM_OK) return 0;
+        if (pmm_query(frame, &state) != PMM_OK || state != PMM_STATE_FREE) return 0;
+    }
+    {
+        cpu_u64 stack = c->stack_frame;
+        enum pmm_state state;
+        if (pmm_release(stack) != PMM_OK) return 0;
+        if (pmm_query(stack, &state) != PMM_OK || state != PMM_STATE_FREE) return 0;
+    }
     unsigned int slot = c->slot;
     cpu_u64 base = c->exit_base, top = c->exit_top;
     *c = (struct user_context){0};
@@ -882,13 +1011,156 @@ cpu_u64 user_enter(struct user_link *link)
     return user_enter_asm(build_frame(c), &link->kern_save, c->space.root);
 }
 
+/* Abort a live context from its owning thread (Slice C terminate path).
+   The caller must be the bound owner (hence not executing inside the
+   context); after this call the context is terminal and never resumed.
+   Gate/fault handlers still require ACTIVE, so any stray frame from the
+   aborted context halts loudly instead of recording over the abort. */
+int user_mark_aborted(struct user_context *c)
+{
+    if (!foreground() || !initialized || !c) return 0;
+    if (c < contexts || c >= contexts + USER_MAX_CONTEXTS) return 0;
+    if (c->state != USER_ACTIVE || !c->link.bound || &c->link != thread_user_link())
+        return 0;
+    if (!c->space.root || c->space.identity != &c->space) return 0;
+    c->state = USER_ABORTED;
+    c->fault_class = 0;
+    ++c->faults;
+    return user_check();
+}
+
+/* Re-sync kernel-half snapshots of all live spaces (Slice C): thread
+   create/join allocates/frees kstack tables in the high half, desyncing
+   the by-value snapshots user spaces carry; refresh explicitly before
+   any user_check comparison (mirrors the destroy-time refresh). */
+int user_sync_spaces(void)
+{
+    if (!foreground() || !initialized) return 0;
+    for (unsigned int i = 0; i < USER_MAX_CONTEXTS; ++i)
+        if (contexts[i].state != USER_FREE && !sync_high(&contexts[i])) return 0;
+    return 1;
+}
+
+/* Image entry for spawned programs (Slice C): like user_enter, but the
+   recorded register state is honored instead of reset, so an argv
+   startup block prepared on the stack page survives entry. RSP is
+   revalidated here (range, alignment, canonicality); a prepared block
+   that fails validation fails entry fail-closed. */
+cpu_u64 user_enter_image(struct user_link *link)
+{
+    if (!enter_valid(link)) return 0;
+    struct user_link *l = link;
+    struct user_context *c = l->context;
+    if (c->rip < USER_CODE_BASE ||
+        c->rip >= USER_CODE_BASE + (cpu_u64)c->code_pages * VM_PAGE_SIZE ||
+        c->rsp <= USER_STACK_PAGE || c->rsp > USER_STACK_TOP || (c->rsp & 7) ||
+        !vm_canonical(c->rsp) ||
+        (c->rflags & 0x202) != 0x202 || (c->rflags & ~0x10ED7ULL)) return 0;
+    if (!thread_attach_user(l)) return 0;
+    if (!sync_high(c)) {
+        if (!thread_detach_user()) panic("rollback_detach");
+        return 0;
+    }
+    cpu_set_rsp0(c->exit_top);
+    ++c->entries;
+    return user_enter_asm(build_frame(c), &l->kern_save, c->space.root);
+}
+
+/* Build the frozen argv startup block on a pristine context (Slice C):
+   [argc:u64][argv[0..argc-1]:u64][NULL:u64][NUL-terminated strings],
+   RSP set to the 16-aligned block base. args/lens point into kernel
+   memory already staged and bounded by the caller (argc<=8, string
+   bytes incl. NULs<=256). Requires kernel CR3 (asserted: the child
+   stack page is written through the frame window, which exists only
+   there). nargs==0 leaves RSP at the stack top (v1-identical). */
+int user_prepare_argv(struct user_context *c, cpu_u64 nargs,
+                      const cpu_u64 *ptrs, const cpu_u64 *lens)
+{
+    cpu_u64 total, strings;
+    volatile cpu_u8 *w;
+    if (!foreground() || !initialized || !c) return 0;
+    if (c < contexts || c >= contexts + USER_MAX_CONTEXTS) return 0;
+    if (c->state != USER_ACTIVE || c->link.bound || c->entries || c->resumes)
+        return 0;
+    if (!c->space.root || c->space.identity != &c->space) return 0;
+    if (nargs > 8) return 0;
+    if (nargs && (!ptrs || !lens)) return 0;
+    /* No nargs==0 shortcut: always build at least [argc=0][NULL] (16
+       bytes, RSP=TOP-16). The rt _start unconditionally loads [RSP] to
+       forward argc, so RSP must always address mapped stack memory;
+       leaving RSP at TOP would fault the very first load. Old binaries
+       never read [RSP], so the shifted base is compatible. */
+    /* Budget: 8 argc + 8*(nargs+1) pointers, then string bytes. All
+       arithmetic overflow-checked before any write. */
+    if (nargs > (cpu_u64)-1 - 1) return 0;
+    strings = 0;
+    for (cpu_u64 i = 0; i < nargs; ++i) {
+        if (lens[i] > 256) return 0;
+        if (strings > 256 - (lens[i] + 1)) return 0;
+        strings += lens[i] + 1;
+    }
+    if (strings > 256) return 0;
+    total = 8 + 8 * (nargs + 1) + strings;
+    if (total > 512 || total > VM_PAGE_SIZE) return 0;
+    /* 16-align the block base (RSP%16==0 contract). The page was zeroed
+       at create and the context never entered, so alignment padding
+       below stays zero. */
+    total = (total + 15) & ~(cpu_u64)15;
+    if (read_cr3() != user_kernel_cr3) return 0;
+    w = vm_frame_access(c->stack_frame);
+    if (!w) return 0;
+    /* Page offsets (page VA base USER_STACK_PAGE, w[0] is its first
+       byte): the aligned block occupies [4096-total, 4096): argc first,
+       then argv+NULL, then alignment padding (already zero: the page was
+       zeroed at create and the context never entered), then the strings
+       at the very top. */
+    {
+        cpu_u64 str_top = VM_PAGE_SIZE - strings;
+        cpu_u64 argc_off = VM_PAGE_SIZE - total;
+        cpu_u64 argv_off = argc_off + 8;
+        cpu_u64 cursor = 0;
+        cpu_u64 w64;
+        if (argv_off + 8 * (nargs + 1) > str_top) return 0;
+        for (cpu_u64 i = 0; i < nargs; ++i) {
+            cpu_u64 len = lens[i];
+            const cpu_u8 *src = (const cpu_u8 *)ptrs[i];
+            cpu_u64 va;
+            if (!src && len) return 0;
+            if (cursor > strings || len + 1 > strings - cursor) return 0;
+            va = USER_STACK_TOP - strings + cursor;
+            /* argv[i] value (little-endian u64). */
+            for (unsigned int b = 0; b < 8; ++b)
+                w[argv_off + 8 * i + b] = (cpu_u8)(va >> (b * 8));
+            for (cpu_u64 k = 0; k < len; ++k) {
+                if (src[k] == 0) return 0;
+                w[str_top + cursor + k] = src[k];
+            }
+            w[str_top + cursor + len] = 0;
+            cursor += len + 1;
+        }
+        if (cursor != strings) return 0;
+        for (unsigned int b = 0; b < 8; ++b)
+            w[argv_off + 8 * nargs + b] = 0;
+        w64 = nargs;
+        for (unsigned int b = 0; b < 8; ++b)
+            w[argc_off + b] = (cpu_u8)(w64 >> (b * 8));
+        c->rsp = USER_STACK_TOP - total;
+    }
+    if (c->rsp <= USER_STACK_PAGE || c->rsp > USER_STACK_TOP || (c->rsp & 15))
+        return 0;
+    if (!vm_canonical(c->rsp)) return 0;
+    return user_check();
+}
+
 cpu_u64 user_resume(struct user_link *link)
 {
     if (!foreground() || !initialized || !link || !link->bound) return 0;
     struct user_context *c = link->context;
     if (!c || &c->link != link || c->state != USER_ACTIVE) return 0;
     if (!c->space.root || c->space.identity != &c->space) return 0;
-    if (c->rip < USER_CODE_BASE || c->rip >= USER_CODE_BASE + VM_PAGE_SIZE ||
+    if (c->code_pages < 1 || c->code_pages > USER_MAX_CODE_PAGES) return 0;
+    if (c->rip < USER_CODE_BASE ||
+        c->rip >= USER_CODE_BASE + (cpu_u64)c->code_pages * VM_PAGE_SIZE ||
         c->rsp <= USER_STACK_PAGE || c->rsp > USER_STACK_TOP || (c->rsp & 7) ||
         !vm_canonical(c->rsp) ||
         (c->rflags & 0x202) != 0x202 || (c->rflags & ~0x10ED7ULL)) return 0;
@@ -941,7 +1213,7 @@ void user_handle_exit(struct exception_frame *f)
        stub always pushes vector 128/error 0, so those checks are
        defense-in-depth; the guest-steerable parts are origin + RAX. */
     cpu_u32 reason = (cpu_u32)f->rax, code = (cpu_u32)f->rbx;
-    int frame_ok = origin_valid(f) && f->vector == 128 && f->error == 0 &&
+    int frame_ok = origin_valid(c, f) && f->vector == 128 && f->error == 0 &&
                    !(f->rax >> 32);
     if (!frame_ok) {
         if (!c->loaded) panic("exit_bad_frame");
@@ -1000,6 +1272,34 @@ void user_handle_exit(struct exception_frame *f)
             c->sys_result = (cpu_u64)rc;
             c->gprs[0] = (cpu_u64)rc;
             sched_resume(user_schedule_next(link, USER_RUN_READ));
+        }
+        if (reason == SYS_SPAWN || reason == SYS_WAIT || reason == SYS_TERMINATE) {
+            /* Stage 18d Slice C: process syscalls. Unused argument
+               registers must be zero (frozen register file); nonzero
+               reserved registers are INVAL returns, never kills. */
+            int rc;
+            if (reason == SYS_SPAWN) {
+                if (f->rdx != 0 || f->rsi != 0 || f->rdi != 0 || f->rbp != 0)
+                    rc = SYS_INVAL;
+                else
+                    rc = sys_spawn(c, f->rbx, f->rcx);
+            } else if (reason == SYS_WAIT) {
+                if (f->rdx != 0 || f->rsi != 0 || f->rdi != 0 || f->rbp != 0)
+                    rc = SYS_INVAL;
+                else
+                    rc = sys_wait(c, f->rbx, f->rcx);
+            } else {
+                if (f->rcx != 0 || f->rdx != 0 || f->rsi != 0 || f->rdi != 0 ||
+                    f->rbp != 0)
+                    rc = SYS_INVAL;
+                else
+                    rc = sys_terminate(c, f->rbx);
+            }
+            c->sys_result = (cpu_u64)rc;
+            c->gprs[0] = (cpu_u64)rc;
+            sched_resume(user_schedule_next(link,
+                reason == SYS_SPAWN ? USER_RUN_SPAWNED :
+                reason == SYS_WAIT ? USER_RUN_WAITED : USER_RUN_TERMINATED));
         }
     }
     c->state = USER_FAULTED; c->fault_class = 2;

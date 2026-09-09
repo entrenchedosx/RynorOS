@@ -47,7 +47,8 @@ def make_image(boot: bytes, payload: bytes) -> bytes:
 
 def build_image(root: Path, destination: Path | None = None, *,
                 test_vector: int = 3, test_armed: bool = True,
-                shell_interactive: bool = False, input_test: bool = False) -> dict:
+                shell_interactive: bool = False, input_test: bool = False,
+                proc_test: bool = False) -> dict:
     if type(test_vector) is not int or test_vector not in (0, 1, 3, 6, 13, 14):
         raise ValueError("Unsupported CPU self-test vector")
     if type(test_armed) is not bool:
@@ -56,6 +57,8 @@ def build_image(root: Path, destination: Path | None = None, *,
         raise ValueError("shell_interactive must be boolean")
     if type(input_test) is not bool:
         raise ValueError("input_test must be boolean")
+    if type(proc_test) is not bool:
+        raise ValueError("proc_test must be boolean")
     destination = destination or root / "build"
     destination.mkdir(parents=True, exist_ok=True)
     # Invalidate only named generated deliverables: an unsuccessful rebuild must
@@ -117,6 +120,8 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/core/load-test.c", "load-test.o"),
             ("kernel/core/rt-test.c", "rt-test.o"),
             ("kernel/core/read-test.c", "read-test.o"),
+            ("kernel/core/proc-test.c", "proc-test.o"),
+            ("kernel/core/proc.c", "proc.o"),
             ("kernel/arch/x86_64/serial.c", "serial.o"),
             ("kernel/arch/x86_64/cpu.c", "cpu.o"),
             ("kernel/interrupts/exceptions.c", "exception-diagnostics.o"),
@@ -134,7 +139,8 @@ def build_image(root: Path, destination: Path | None = None, *,
         ):
             target = output / name
             shell_flags = [f"-DRYNOR_SHELL_INTERACTIVE={int(shell_interactive)}",
-                           f"-DRYNOR_INPUT_TEST={int(input_test)}"]
+                           f"-DRYNOR_INPUT_TEST={int(input_test)}",
+                           f"-DRYNOR_PROC_TEST={int(proc_test)}"]
             run_tool([
                 clang, "--target=x86_64-none-elf", "-std=c11", "-ffreestanding",
                 "-fno-builtin", "-fno-stack-protector", "-fno-pic", "-fno-pie",
@@ -164,6 +170,7 @@ def build_image(root: Path, destination: Path | None = None, *,
             "cpu_self_test": {"vector": test_vector, "armed": test_armed},
             "experimental_shell_interactive": shell_interactive,
             "experimental_input_test": input_test,
+            "experimental_proc_test": proc_test,
             "target": "x86_64-none-elf",
             "payload_sectors": sectors,
             "tools": {"clang": run_tool([clang, "--version"], root).splitlines()[0],

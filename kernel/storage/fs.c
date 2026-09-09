@@ -161,6 +161,12 @@ static int path_ok(const char *path)
     return len;
 }
 
+/* Public strict-path check (Slice C spawn validation reuses it). */
+int fs_path_ok(const char *path)
+{
+    return path_ok(path) >= 0;
+}
+
 /* Exact key lookup in the RAM directory. Returns slot or -1. */
 static int find_key(const char *key, unsigned klen)
 {

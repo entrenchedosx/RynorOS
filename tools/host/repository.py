@@ -11,7 +11,7 @@ REQUIRED_DIRECTORIES = (
     "kernel/drivers", "kernel/runtime", "kernel/shell", "kernel/storage", "kernel/include", "boot", "rynorlang", "rynorlang/lexer",
     "rynorlang/parser", "rynorlang/ast", "rynorlang/compiler", "rynorlang/runtime",
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
-    "user/lib/rt", "user/lib/rt/tests",
+    "user/lib/rt", "user/lib/rt/tests", "user/proc-tests",
     "user/apps", "tools", "tools/build", "tools/host", "tools/rynorlang",
     "tools/rynorlang/runtime",
     "tests", "tests/repository", "tests/fixtures/rynorlang/lexer/good",
@@ -184,6 +184,19 @@ REQUIRED_FILES = (
     "tools/host/input_output.py",
     "tests/repository/test_input_abi.py",
     "tests/integration/test_input.py",
+    # Stage 18d Slice C: process table, spawn/wait/terminate, argv,
+    # RYNX v2 loader, gated lifecycle driver, validator, and tests.
+    "kernel/include/proc.h", "kernel/include/proctest.h",
+    "kernel/core/proc.c", "kernel/core/proc-test.c",
+    "tools/rynorlang/runtime/rynoros_v2.ld",
+    "tools/host/proc_output.py",
+    "tests/repository/test_proc_abi.py",
+    "tests/integration/test_proc.py",
+    "user/proc-tests/p_exit42.c", "user/proc-tests/p_argv.c",
+    "user/proc-tests/p_fault.c", "user/proc-tests/p_spin.c",
+    "user/proc-tests/p_big.c", "user/proc-tests/p_nest.c",
+    "user/proc-tests/p_selfterm.c", "user/proc-tests/p_alias.c",
+    "user/proc-tests/p_regprobe.c", "user/proc-tests/p_eof.c",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.
