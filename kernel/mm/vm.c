@@ -357,12 +357,22 @@ enum vm_result vm_protect(struct vm_space *s, cpu_u64 va, unsigned int p)
        in user spaces is likewise only possible through reviewed
        callers; replica auditing in user.c detects any drift.) */
     if (s != &kernel_space && !(m.permissions & VM_USER)) return VM_PERMISSION;
+    /* Monotonic tightening for user leaves: U is frozen and W/X may only
+       be removed, never granted (stack stays NX, code stays RX). The
+       loader hardcodes the three fixed mappings and no caller widens
+       user permissions today; future callers must justify any relaxation.
+       Without PCID every invlpg below hits the VA on any CR3, so user
+       spaces get the same synchronous invalidation as the kernel space. */
+    if (s != &kernel_space &&
+        (((p ^ m.permissions) & VM_USER) != 0 ||
+         ((p & ~m.permissions) & (VM_WRITE | VM_EXECUTE)) != 0))
+        return VM_PERMISSION;
     cpu_u64 path[VM_LEVELS];
     if ((r = walk(s, va, path)) != VM_OK) return r;
     page_entry e = leaf(m.physical, p);
     e.value |= read_entry(path[0], page_index(va, 0)).value & (PTE_ACCESS | PTE_DIRTY);
     write_entry(path[0], page_index(va, 0), e);
-    if (s == &kernel_space) page_invalidate(va);
+    page_invalidate(va);
     return VM_OK;
 }
 

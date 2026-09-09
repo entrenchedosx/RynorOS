@@ -5,14 +5,17 @@
 /* Stage 18b syscall ABI (int $0x80 ONLY; syscall/sysret unprogrammed).
  *
  * Registers: EAX = number (low 32 bits; high 32 must be zero), EBX/ECX/EDX
- * = arguments (full 64 bits for pointers/lengths). Return in EAX; every
- * other GPR is preserved (the resume frame restores recorded state).
+ * = arguments (full 64 bits for pointers/lengths). Return in full RAX
+ * (0..len or (cpu_u64)-1); every other GPR is preserved (the resume
+ * frame restores recorded state).
  * The gate instruction is exactly CD 80; the hardware frame already
  * points past it, so no kernel RIP adjustment exists. Handlers run with
  * IF=0 (interrupt gate), so IRQ0 cannot interleave a syscall body;
  * preemption happens only at CPL3 boundaries via the verified tick path.
- * Addresses are 32-bit by ABI (the user window lives below 4 GiB);
- * lengths are full 64-bit with overflow-checked arithmetic.
+ * The conventional user window lives below 4 GiB, but the kernel takes
+ * full 64-bit pointers and rejects anything outside U-mapped user pages
+ * (no truncation); lengths are full 64-bit with overflow-checked
+ * arithmetic.
  */
 #define SYS_EXIT 0u
 #define SYS_YIELD 1u

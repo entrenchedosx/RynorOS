@@ -248,7 +248,7 @@ def validate(evidence: UserEvidence) -> list:
         errors.append(f"want 33 creates, got {len(evidence.creates)}")
     else:
         tables = {row[2] for row in evidence.creates}
-        if len(tables) != 1:
+        if tables != {6}:
             errors.append(f"create table counts differ: {sorted(tables)}")
         for _, size, _ in evidence.creates:
             if not 0 < size <= PAGE:
@@ -261,7 +261,9 @@ def validate(evidence: UserEvidence) -> list:
     want_maps = {(0, "code", CODE_BASE, "rx"), (0, "data", DATA_BASE, "rw"),
                  (0, "stack", STACK_PAGE, "rw")}
     got_maps = {(slot, kind, va, perm) for slot, kind, va, _, perm in evidence.maps}
-    if got_maps != want_maps:
+    if len(evidence.maps) != 3:
+        errors.append(f"want 3 map rows, got {len(evidence.maps)}")
+    elif got_maps != want_maps:
         errors.append(f"map rows differ: {sorted(got_maps)}")
     else:
         pas = [pa for _, _, _, pa, _ in evidence.maps]

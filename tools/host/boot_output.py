@@ -15,6 +15,7 @@ from blk_output import validate_blk_section
 from fs_output import split_fs_sections, validate_fs_section
 from user_output import split_user_sections, validate_user_section
 from load_output import split_load_sections, validate_load_section
+from rt_output import split_rt_sections, validate_rt_section
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -80,11 +81,12 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
     # Stage 11 shell output is optional and follows POST_IRQ. When present it
     # must be a complete shell section. A Stage 17a block-evidence section
     # may trail it (test images only), optionally followed by a Stage 17b
-    # filesystem section, a Stage 18a userspace section, and a Stage 18b
-    # loader section. Trailing userspace/loader sections, when present,
-    # must each be structurally complete; absent ones are valid here (the
-    # host boot loop, not this validator, waits for the final verified
-    # markers before declaring success).
+    # filesystem section, a Stage 18a userspace section, a Stage 18b
+    # loader section, and a Stage 18c runtime section. Trailing
+    # userspace/loader/runtime sections, when present, must each be
+    # structurally complete; absent ones are valid here (the host boot
+    # loop, not this validator, waits for the final verified markers
+    # before declaring success).
     shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
     if shell_sep != b"":
         shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
@@ -96,21 +98,25 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             else:
                 errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state,
                                                     shell_script))
-            user_pre, load_part = split_load_sections(tail)
+            no_rt_tail, rt_part = split_rt_sections(tail)
+            user_pre, load_part = split_load_sections(no_rt_tail)
             pre, user_part = split_user_sections(user_pre)
             blk_part, fs_part = split_fs_sections(pre)
             errors.extend(validate_blk_section(blk_part))
             errors.extend(validate_fs_section(fs_part))
             errors.extend(validate_user_section(user_part))
             errors.extend(validate_load_section(load_part))
+            errors.extend(validate_rt_section(rt_part))
     elif require_shell:
         errors.append("Required interactive shell output missing")
     elif post != b"":
-        user_pre, load_part = split_load_sections(post)
+        no_rt_tail, rt_part = split_rt_sections(post)
+        user_pre, load_part = split_load_sections(no_rt_tail)
         pre, user_part = split_user_sections(user_pre)
         blk_part, fs_part = split_fs_sections(pre)
         errors.extend(validate_blk_section(blk_part))
         errors.extend(validate_fs_section(fs_part))
         errors.extend(validate_user_section(user_part))
         errors.extend(validate_load_section(load_part))
+        errors.extend(validate_rt_section(rt_part))
     return errors

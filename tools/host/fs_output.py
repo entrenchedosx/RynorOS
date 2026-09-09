@@ -93,6 +93,9 @@ def decode(image: bytes) -> FsImage:
         name = record[:nul].decode("ascii")
         if any(not 0x20 <= c <= 0x7E for c in map(ord, name)):
             fail("corrupt", "bad-name")
+        for comp in name.split("/"):
+            if not comp or comp in (".", ".."):
+                fail("corrupt", "bad-name")
         if any(record[nul + 1:32]):
             fail("corrupt", "name-padding")
         ftype = record[32]

@@ -6,10 +6,16 @@
 ; the three print helpers the RIR runtime table (rt_print_int/bool/str)
 ; resolves against. Syscalls go through the int $0x80 gate only:
 ; exit (EAX=0, EBX=status), write (EAX=2, EBX=fd, ECX=buf, EDX=len).
-; Only fd 1 exists; syscall addresses are 32-bit (the RynorOS user window
-; lives below 4 GiB by layout -- see docs/design/syscall-abi.md). Only
-; caller-saved registers are touched except RAX (return); rsp discipline
-; follows docs/design/rynorlang-abi.md. Scratch lives on the caller
+; Only fd 1 exists. Helper contract (32-bit): buf must lie below 4 GiB
+; and len must fit 32 bits -- the helpers pass ECX/EDX low halves only,
+; so larger values would truncate (caller bug; the kernel itself takes
+; full 64-bit pointers/lengths and validates -- see
+; docs/design/syscall-abi.md). The compiler only ever emits bounded
+; values here (str <= 4096 bytes, static/stack addresses), so the
+; truncation is a no-op for every compiled program; hand-built callers
+; must respect the contract. Only caller-saved registers are touched
+; except RAX (return); rsp discipline follows
+; docs/design/rynorlang-abi.md. Scratch lives on the caller
 ; stack (no .bss needed).
 bits 64
 default rel

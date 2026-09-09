@@ -88,6 +88,10 @@ static int range_ok(cpu_u64 start, cpu_u64 count, cpu_u64 total)
 
 static int ranges_overlap(cpu_u64 a_start, cpu_u64 a_count, cpu_u64 b_start, cpu_u64 b_count)
 {
+    /* Self-contained against wrap: every caller pre-checks range_ok, but
+       the helper must not depend on that ordering to stay correct. */
+    if (a_count > (cpu_u64)-1 - a_start || b_count > (cpu_u64)-1 - b_start)
+        return 1;
     cpu_u64 a_end = a_start + a_count;
     cpu_u64 b_end = b_start + b_count;
     return a_start < b_end && b_start < a_end;
@@ -280,6 +284,28 @@ int fs_mount(cpu_u32 dev)
         if (entry_free(e)) continue;
         unsigned nlen = name_len(e);
         if (!nlen) { fs_stage = "bad-name"; return FS_CORRUPT; }
+        /* Every slash-separated component must be non-empty and not
+           "." / "..": such names can never resolve (lookup rejects
+           empty components and dot names), so mounting them would hide
+           an unreachable slot/extent. The host builder and decoder
+           enforce the same rule. */
+        {
+            unsigned cstart = 0, k = 0;
+            int badcomp = 0;
+            for (; k <= nlen; ++k) {
+                if (k == nlen || e[k] == '/') {
+                    unsigned clen = k - cstart;
+                    if (!clen) { badcomp = 1; break; }
+                    if (clen == 1 && e[cstart] == '.') { badcomp = 1; break; }
+                    if (clen == 2 && e[cstart] == '.' && e[cstart + 1] == '.') {
+                        badcomp = 1;
+                        break;
+                    }
+                    cstart = k + 1;
+                }
+            }
+            if (badcomp) { fs_stage = "bad-name"; return FS_CORRUPT; }
+        }
         int type = e[FS_D_TYPE];
         if (type != FS_TYPE_FILE && type != FS_TYPE_DIR) { fs_stage = "bad-type"; return FS_CORRUPT; }
         for (unsigned k = 33; k < 40; ++k)
@@ -458,14 +484,14 @@ int fs_read(cpu_u32 handle, cpu_u64 offset, void *buf, cpu_u64 len, cpu_u64 *nre
             cpu_u64 full = (n - done) / 512u;
             cpu_u32 chunk = full > 32u ? 32u : (cpu_u32)full;
             int rc = blk_read(fs_dev, cur, chunk, out, (cpu_u64)chunk * 512u);
-            if (rc) { fs_stage = "io-data"; return FS_IOERR; }
+            if (rc) { if (nread) *nread = done; fs_stage = "io-data"; return FS_IOERR; }
             out += (cpu_u64)chunk * 512u;
             done += (cpu_u64)chunk * 512u;
             cur += chunk;
         } else {
             cpu_u64 take = 512u - pos < n - done ? 512u - pos : n - done;
             int rc = blk_read(fs_dev, cur, 1, fs_scratch, sizeof fs_scratch);
-            if (rc) { fs_stage = "io-data"; return FS_IOERR; }
+            if (rc) { if (nread) *nread = done; fs_stage = "io-data"; return FS_IOERR; }
             mem_copy(out, fs_scratch + pos, take);
             out += take;
             done += take;

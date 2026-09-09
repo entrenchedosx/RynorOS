@@ -17,12 +17,16 @@ and `SYSENTER_CS` stay enforced zero; CPL3 `SYSCALL` still faults.
 * `EAX`: number (low 32 bits; nonzero high 32 fails closed for every
   reason, including the pre-18b exit/yield paths).
 * `EBX`, `ECX`, `EDX`: arguments (full 64 bits for pointers/lengths).
-* Return in `EAX`; every other GPR is preserved (the resume frame
+* Return in full `RAX` (`0..len` or `(u64)-1`, so all 64 bits are
+  significant); every other GPR is preserved (the resume frame
   restores recorded state; only the recorded `RAX` is overwritten).
 * The gate instruction is exactly `CD 80`; the hardware frame already
   points past it, so no kernel `RIP` adjustment exists anywhere.
-* Addresses are 32-bit by ABI (the user window lives below 4 GiB);
-  lengths are full 64-bit with overflow-checked arithmetic.
+* The conventional user window lives below 4 GiB, but the kernel
+  accepts full 64-bit pointers and rejects anything outside `U`-mapped
+  user pages (no truncation — high bits fail closed via the `USER`-bit
+  check in the two-pass copyin); lengths are full 64-bit with
+  overflow-checked arithmetic.
 
 ## Numbers (frozen, extend upward only)
 
@@ -76,6 +80,7 @@ principles); `sysret`/`iretq` never consume user-controlled values
 
 ## Future (18c+, not implemented)
 
-`read`, more fds, `sbrk`/arenas, 64-bit address passing, richer errors,
-blocking waits. None of these exist; the namespace and the copyin
-primitives are designed to extend without renumbering.
+`read`, more fds, `sbrk`/arenas, richer errors, blocking waits. None of
+these exist; the namespace and the copyin primitives are designed to
+extend without renumbering. (Full 64-bit pointers are already accepted
+and validated per §Registers above, so they are not future work.)

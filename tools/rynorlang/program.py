@@ -7,10 +7,12 @@ the frozen frontend (lex/parse/analyze), RIR builder/verifier, and NASM
 backend, then assembles with NASM, links with LLD (plus the host program
 runtime in tools/rynorlang/runtime/rt_linux.asm), and executes the result.
 
-HOST BOOTSTRAP honesty: every artifact here is a host-native Linux x86-64
-ELF for testing. It is NOT a RynorOS userspace program: no RynorOS syscall
-interface exists yet (Stage 18b), so printing and startup use Linux syscalls
-through the labeled runtime object. Nothing here ships in any RynorOS image.
+HOST BOOTSTRAP honesty: every artifact from build_program is a host-native
+Linux x86-64 ELF for testing (printing/startup use Linux syscalls through
+the labeled runtime object). It is NOT a RynorOS userspace program: for the
+RynorOS ABI use build_rynor_program (fixed-VA link plus rt_rynor.asm or the
+18c library, int $0x80 exit/write/yield per docs/design/syscall-abi.md,
+frozen since Stage 18b). Nothing here ships in any RynorOS image.
 
 All entry points return (value, None) or (None, {"code","message"}) and never
 raise on expected failures (bad source, missing toolchain, assembler/linker
@@ -35,11 +37,60 @@ from tools.rynorlang import compile as _compile
 RUNTIME_ASM = Path(__file__).resolve().parent / "runtime" / "rt_linux.asm"
 RYNOR_RUNTIME_ASM = Path(__file__).resolve().parent / "runtime" / "rt_rynor.asm"
 RYNOR_LINK_SCRIPT = Path(__file__).resolve().parent / "runtime" / "rynoros.ld"
+RYNOR_RT_LINK_SCRIPT = Path(__file__).resolve().parent / "runtime" / "rynoros_rt.ld"
+# Stage 18c library runtime: freestanding user/lib/rt sources, compiled for
+# the fixed-VA target and linked instead of rt_rynor.asm when requested.
+RTLIB_DIR = _ROOT / "user" / "lib" / "rt"
+RTLIB_GATE_ASM = "rt_gate.asm"
+RTLIB_C_SOURCES = ("rt.c", "rt_rl.c")
+RTLIB_HEADER = "rt.h"
+RTLIB_CLANG_FLAGS = ("--target=x86_64-none-elf", "-std=c11", "-ffreestanding",
+                     "-fno-builtin", "-fno-stack-protector", "-fno-pic", "-fno-pie",
+                     "-mno-red-zone", "-mgeneral-regs-only", "-fno-ident",
+                     "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
+                     "-ffunction-sections", "-fdata-sections",
+                     "-Wall", "-Wextra", "-Werror", "-O2")
+# Per-function sections plus --gc-sections keep each conformance program
+# inside the 4 KiB code window (the full library does not fit with all
+# call classes linked). The single RW data LOAD comes from the writable
+# .data.rtanchor input (see rt_gate.asm), so no segment-merging flags are
+# needed; the 18b default link keeps its exact historical flags.
+RTLIB_LINK_FLAGS = ("--gc-sections",)
 
 COMP_TOOLCHAIN_MISSING = "COMP_TOOLCHAIN_MISSING"
 COMP_ASSEMBLE_FAILED = "COMP_ASSEMBLE_FAILED"
 COMP_LINK_FAILED = "COMP_LINK_FAILED"
 COMP_NO_RUNTIME = "COMP_NO_RUNTIME"
+
+
+def _discard(workdir: Path, names) -> None:
+    """Remove stale build outputs so a failed rebuild can never leave a
+    prior success behind (mirrors image.py/qemu.py invalidation). Missing
+    files are ignored; nothing else in the directory is touched."""
+    for name in names:
+        try:
+            (workdir / name).unlink()
+        except OSError:
+            pass
+
+
+# Basenames owned by the toolchain staging/linking below. Caller sources
+# and prog names colliding with them would be silently overwritten or
+# linked twice (last-writer-wins), so they are rejected up front.
+_RESERVED_NAMES = frozenset({
+    "rt.h", "rt.c", "rt_rl.c", "rt_gate.asm",
+    "rt.o", "rt_rl.o", "rt_gate.o",
+    "rt_rynor.asm", "rt_rynor.o", "rt_linux.asm", "rt_linux.o",
+    "rynoros.ld", "rynoros_rt.ld",
+    "rt", "rt_rl", "rt_gate", "rt_rynor", "rt_linux",
+    "rynoros", "rynoros_rt",
+})
+
+
+def _reserved(name: str) -> bool:
+    if not name or name in _RESERVED_NAMES or name in (".", ".."):
+        return True
+    return "/" in name or "\\" in name or Path(name).name != name
 
 
 def _find_tool(name: str, override: str):
@@ -170,6 +221,11 @@ def build_program(source: str, filename: str, workdir: str | Path, prog: str = "
         workdir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         return None, {"code": "PAR_INVALID_INPUT", "message": f"cannot create {workdir}: {error}"}
+    if _reserved(prog):
+        return None, {"code": "PAR_INVALID_INPUT",
+                      "message": f"reserved program name: {prog!r}"}
+    _discard(workdir, (f"{prog}.asm", f"{prog}.o", "rt_linux.o", prog,
+                       RUNTIME_ASM.name))
     tools, error = find_toolchain()
     if error is not None:
         return None, error
@@ -224,7 +280,179 @@ def build_program(source: str, filename: str, workdir: str | Path, prog: str = "
              "rir": _rir.dumps(module)}, None)
 
 
-def build_rynor_program(source: str, filename: str, workdir: str | Path, prog: str = "prog"):
+def _find_clang():
+    clang = _find_tool("clang", "RYNOR_CLANG")
+    if clang is None:
+        return None, {"code": COMP_TOOLCHAIN_MISSING,
+                      "message": "clang not found (set RYNOR_CLANG or extend PATH)"}
+    return clang, None
+
+
+def _clang_freestanding_includes(clang):
+    """Locate clang's builtin headers (stdarg.h lives there, not in any
+    sysroot) for --target=x86_64-none-elf freestanding builds."""
+    try:
+        proc = subprocess.run([clang, "-print-resource-dir"], capture_output=True,
+                              text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, {"code": COMP_TOOLCHAIN_MISSING,
+                      "message": f"clang resource query failed: {error}"}
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None, {"code": COMP_TOOLCHAIN_MISSING,
+                      "message": "clang -print-resource-dir failed"}
+    resource = Path(proc.stdout.strip())
+    candidates = [resource / "include"]
+    # Layouts vary (‹resource›/include vs versioned sub/sibling dirs);
+    # probe one level down and across before giving up.
+    for base in (resource, resource.parent):
+        try:
+            entries = sorted(base.iterdir())
+        except OSError:
+            continue
+        candidates.extend(sub / "include" for sub in entries if sub.is_dir())
+    for inc in candidates:
+        if (inc / "stdarg.h").is_file():
+            return [f"-I{inc.as_posix()}"], None
+    return None, {"code": COMP_TOOLCHAIN_MISSING,
+                  "message": f"clang builtin headers missing under: {resource}"}
+
+
+def _build_rtlib_objects(workdir: Path, nasm: str, with_rl: bool,
+                         rtlib_dir=None):
+    """Stage and build the 18c library objects in workdir (basenames only,
+    same path-hygiene rule as the other flows). with_rl adds the RIR
+    print helpers (rt_rl.c); rl_entry selects the gate stub flavor
+    (-DRL_ENTRY calls rl_4_main, otherwise rt_main). rtlib_dir overrides
+    the library source directory (mutation testing stages a copied tree).
+    Returns ({"rt_obj","rt_rl_obj","rt_gate_obj"}, None) or (None, diag);
+    rt_rl_obj is None when with_rl is false."""
+    clang, error = _find_clang()
+    if error is not None:
+        return None, error
+    builtin_includes, error = _clang_freestanding_includes(clang)
+    if error is not None:
+        return None, error
+    libdir = Path(rtlib_dir) if rtlib_dir is not None else RTLIB_DIR
+    names = [RTLIB_HEADER, "rt.c"] + ([RTLIB_C_SOURCES[1]] if with_rl else []) + [RTLIB_GATE_ASM]
+    try:
+        for name in names:
+            (workdir / name).write_bytes((libdir / name).read_bytes())
+    except OSError as error:
+        return None, {"code": COMP_LINK_FAILED,
+                      "message": f"cannot stage 18c library inputs: {error}"}
+    try:
+        objs = {}
+        for name in ["rt.c"] + ([RTLIB_C_SOURCES[1]] if with_rl else []):
+            out = workdir / (Path(name).stem + ".o")
+            proc = subprocess.run(
+                [clang, *RTLIB_CLANG_FLAGS, *builtin_includes, "-I.", "-c", name,
+                 "-o", out.name],
+                capture_output=True, text=True, timeout=120, cwd=str(workdir))
+            if proc.returncode != 0:
+                return None, {"code": COMP_ASSEMBLE_FAILED,
+                              "message": (proc.stderr or proc.stdout).strip()[-2000:]
+                              or f"clang {name} failed"}
+            objs[name] = out
+        gate_out = workdir / "rt_gate.o"
+        gate_argv = [nasm, "-f", "elf64"]
+        if with_rl:
+            gate_argv.append("-DRL_ENTRY")
+        gate_argv += [RTLIB_GATE_ASM, "-o", gate_out.name]
+        gate_proc = subprocess.run(gate_argv, capture_output=True, text=True,
+                                   timeout=120, cwd=str(workdir))
+        if gate_proc.returncode != 0:
+            return None, {"code": COMP_ASSEMBLE_FAILED,
+                          "message": (gate_proc.stderr or gate_proc.stdout).strip()[-2000:]
+                          or "nasm rt_gate failed"}
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, {"code": COMP_LINK_FAILED, "message": f"tool execution failed: {error}"}
+    return ({"rt_obj": objs["rt.c"], "rt_rl_obj": objs.get(RTLIB_C_SOURCES[1]),
+             "rt_gate_obj": gate_out}, None)
+
+
+def build_rynor_c_program(sources: dict, workdir: str | Path, prog: str = "prog",
+                          rtlib_dir=None):
+    """Compile freestanding C sources to a RynorOS userspace ELF.
+
+    sources maps basename -> text (staged verbatim; basenames only, no
+    directories). Exactly one program entry is expected: the library
+    gate stub calls rt_main, so one source must define it. Links the
+    18c library (rt.c, no RIR helpers) with rynoros.ld. rtlib_dir
+    overrides the library source directory (mutation testing). Returns
+    ({"objs","exe"}, None) or (None, {"code","message"}).
+    """
+    workdir = Path(workdir)
+    try:
+        workdir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return None, {"code": "PAR_INVALID_INPUT", "message": f"cannot create {workdir}: {error}"}
+    if not sources or any(Path(name).name != name for name in sources):
+        return None, {"code": "PAR_INVALID_INPUT", "message": "c sources must be nonempty basenames"}
+    if _reserved(prog):
+        return None, {"code": "PAR_INVALID_INPUT",
+                      "message": f"reserved program name: {prog!r}"}
+    for name in sources:
+        if name in _RESERVED_NAMES:
+            return None, {"code": "PAR_INVALID_INPUT",
+                          "message": f"reserved source name: {name!r}"}
+    _discard(workdir, [f"{prog}.elf", "rt.o", "rt_rl.o", "rt_gate.o",
+                       RTLIB_HEADER, "rt.c", "rt_rl.c", RTLIB_GATE_ASM,
+                       RYNOR_RT_LINK_SCRIPT.name] +
+                      [Path(name).stem + ".o" for name in sources])
+    tools, error = find_toolchain()
+    if error is not None:
+        return None, error
+    nasm, linker, _runner = tools
+    if not RYNOR_RT_LINK_SCRIPT.is_file():
+        return None, {"code": COMP_NO_RUNTIME, "message": "RynorOS library link script missing"}
+    try:
+        for name, text in sources.items():
+            (workdir / name).write_text(text, encoding="utf-8")
+    except OSError as error:
+        return None, {"code": "PAR_INVALID_INPUT", "message": f"cannot write c sources: {error}"}
+    lib_objs, error = _build_rtlib_objects(workdir, nasm, with_rl=False,
+                                             rtlib_dir=rtlib_dir)
+    if error is not None:
+        return None, error
+    clang, error = _find_clang()
+    if error is not None:
+        return None, error
+    builtin_includes, error = _clang_freestanding_includes(clang)
+    if error is not None:
+        return None, error
+    exe_path = workdir / f"{prog}.elf"
+    try:
+        objs = []
+        for name in sources:
+            out = workdir / (Path(name).stem + ".o")
+            proc = subprocess.run(
+                [clang, *RTLIB_CLANG_FLAGS, *builtin_includes, "-I.", "-c", name,
+                 "-o", out.name],
+                capture_output=True, text=True, timeout=120, cwd=str(workdir))
+            if proc.returncode != 0:
+                return None, {"code": COMP_ASSEMBLE_FAILED,
+                              "message": (proc.stderr or proc.stdout).strip()[-2000:]
+                              or f"clang {name} failed"}
+            objs.append(out)
+        ld_path = workdir / RYNOR_RT_LINK_SCRIPT.name
+        try:
+            ld_path.write_bytes(RYNOR_RT_LINK_SCRIPT.read_bytes())
+        except OSError as error:
+            return None, {"code": COMP_LINK_FAILED, "message": f"cannot stage link script: {error}"}
+        link_proc = linker(exe_path, [*objs, lib_objs["rt_obj"], lib_objs["rt_gate_obj"]],
+                           workdir, ["-T", ld_path.name, "-e", "_start",
+                                     *RTLIB_LINK_FLAGS])
+        if link_proc.returncode != 0:
+            return None, {"code": COMP_LINK_FAILED,
+                          "message": (link_proc.stderr or link_proc.stdout).strip()[-2000:]
+                          or "link failed"}
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, {"code": COMP_LINK_FAILED, "message": f"tool execution failed: {error}"}
+    return ({"objs": objs, "exe": exe_path}, None)
+
+
+def build_rynor_program(source: str, filename: str, workdir: str | Path, prog: str = "prog",
+                        runtime: str = "rynor", rtlib_dir=None):
     """Compile .rl source to a RynorOS userspace executable (ELF, RynorOS ABI).
 
     Same frontend as build_program, but links rt_rynor.asm (int $0x80
@@ -233,14 +461,29 @@ def build_rynor_program(source: str, filename: str, workdir: str | Path, prog: s
     window). Writes prog.asm, prog.o, rt_rynor.o, rynoros.ld, prog.elf
     into workdir (created). The ELF is an intermediate for the RYNX
     converter (tools/host/rnyx.py), never executed on the host.
+    runtime selects the OS runtime object: "rynor" links rt_rynor.asm
+    (direct-gate helpers, Stage 18b behavior, byte-identical); "rtlib"
+    links the 18c library instead, so RIR print helpers resolve through
+    rt_write (Stage 18c print rebind; host targets are unaffected).
+    rtlib_dir overrides the library source directory (mutation testing).
     On success returns ({"asm","obj","rt_obj","elf","rir"}, None);
     on any expected failure returns (None, {"code","message"}).
     """
+    if runtime not in ("rynor", "rtlib"):
+        raise ValueError(f"unknown RynorOS runtime: {runtime!r}")
     workdir = Path(workdir)
     try:
         workdir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         return None, {"code": "PAR_INVALID_INPUT", "message": f"cannot create {workdir}: {error}"}
+    if _reserved(prog):
+        return None, {"code": "PAR_INVALID_INPUT",
+                      "message": f"reserved program name: {prog!r}"}
+    _discard(workdir, (f"{prog}.asm", f"{prog}.o", "rt_rynor.o", f"{prog}.elf",
+                       RYNOR_RUNTIME_ASM.name, RYNOR_LINK_SCRIPT.name,
+                       RYNOR_RT_LINK_SCRIPT.name, "rt.o", "rt_rl.o",
+                       "rt_gate.o", RTLIB_HEADER, "rt.c", "rt_rl.c",
+                       RTLIB_GATE_ASM))
     tools, error = find_toolchain()
     if error is not None:
         return None, error
@@ -258,7 +501,6 @@ def build_rynor_program(source: str, filename: str, workdir: str | Path, prog: s
     asm_path = workdir / f"{prog}.asm"
     obj_path = workdir / f"{prog}.o"
     rt_obj_path = workdir / "rt_rynor.o"
-    ld_path = workdir / RYNOR_LINK_SCRIPT.name
     exe_path = workdir / f"{prog}.elf"
     try:
         asm_path.write_text(asm_text, encoding="utf-8")
@@ -273,26 +515,46 @@ def build_rynor_program(source: str, filename: str, workdir: str | Path, prog: s
                           "message": (asm_proc.stderr or asm_proc.stdout).strip()[-2000:] or "nasm failed"}
         # Stage runtime and link script by basename (same path-hygiene
         # rule as the Linux flow: no workdir or source-tree leak).
-        rt_src_path = workdir / RYNOR_RUNTIME_ASM.name
+        # The rtlib flavor uses the library script (merged RW data LOAD);
+        # the default flavor keeps rynoros.ld byte-identical to Stage 18b.
+        script_src = RYNOR_RT_LINK_SCRIPT if runtime == "rtlib" else RYNOR_LINK_SCRIPT
+        ld_path = workdir / script_src.name
         try:
-            rt_src_path.write_bytes(RYNOR_RUNTIME_ASM.read_bytes())
-            ld_path.write_bytes(RYNOR_LINK_SCRIPT.read_bytes())
+            ld_path.write_bytes(script_src.read_bytes())
         except OSError as error:
             return None, {"code": COMP_LINK_FAILED, "message": f"cannot stage rynoros inputs: {error}"}
-        rt_proc = subprocess.run([nasm, "-f", "elf64", rt_src_path.name, "-o", rt_obj_path.name],
-                                 capture_output=True, text=True, timeout=120,
-                                 cwd=str(workdir))
-        if rt_proc.returncode != 0:
-            return None, {"code": COMP_ASSEMBLE_FAILED,
-                          "message": (rt_proc.stderr or rt_proc.stdout).strip()[-2000:] or "nasm runtime failed"}
-        link_proc = linker(exe_path, [obj_path, rt_obj_path], workdir,
-                           ["-T", ld_path.name, "-e", "_start"])
+        link_inputs = [obj_path, rt_obj_path]
+        link_flags = ["-T", ld_path.name, "-e", "_start"]
+        if runtime == "rynor":
+            rt_src_path = workdir / RYNOR_RUNTIME_ASM.name
+            try:
+                rt_src_path.write_bytes(RYNOR_RUNTIME_ASM.read_bytes())
+            except OSError as error:
+                return None, {"code": COMP_LINK_FAILED, "message": f"cannot stage rynoros inputs: {error}"}
+            rt_proc = subprocess.run([nasm, "-f", "elf64", rt_src_path.name, "-o", rt_obj_path.name],
+                                     capture_output=True, text=True, timeout=120,
+                                     cwd=str(workdir))
+            if rt_proc.returncode != 0:
+                return None, {"code": COMP_ASSEMBLE_FAILED,
+                              "message": (rt_proc.stderr or rt_proc.stdout).strip()[-2000:] or "nasm runtime failed"}
+        else:
+            lib_objs, error = _build_rtlib_objects(workdir, nasm, with_rl=True,
+                                                   rtlib_dir=rtlib_dir)
+            if error is not None:
+                return None, error
+            link_inputs = [obj_path, lib_objs["rt_obj"], lib_objs["rt_rl_obj"],
+                           lib_objs["rt_gate_obj"]]
+            # Library links add section GC (see build_rynor_c_program).
+            # The default link keeps its exact historical flags so 18b
+            # artifacts rebuild identically.
+            link_flags = link_flags + list(RTLIB_LINK_FLAGS)
+        link_proc = linker(exe_path, link_inputs, workdir, link_flags)
         if link_proc.returncode != 0:
             return None, {"code": COMP_LINK_FAILED,
                           "message": (link_proc.stderr or link_proc.stdout).strip()[-2000:] or "link failed"}
     except (OSError, subprocess.SubprocessError) as error:
         return None, {"code": COMP_LINK_FAILED, "message": f"tool execution failed: {error}"}
-    return ({"asm": asm_path, "obj": obj_path, "rt_obj": rt_obj_path, "exe": exe_path,
+    return ({"asm": asm_path, "obj": obj_path, "rt_obj": link_inputs[1], "exe": exe_path,
              "rir": _rir.dumps(module)}, None)
 
 

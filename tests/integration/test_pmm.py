@@ -82,7 +82,11 @@ class PhysicalMemoryTests(unittest.TestCase):
             # Six-second budget: BIOS-phase boot variance (SMM cycles, timer
             # probing) must not outrun the deadline on a busy host; the guest
             # halts immediately after printing the expected failure marker.
-            with self.assertRaisesRegex(RuntimeError, "timed out"):
+            # Either fail-closed mode proves containment: hang (timeout) or
+            # fast halt with the precise [MM] failure line (fail-fast now
+            # covers MM like VM/HEAP/SCHED); the serial asserts below pin
+            # the diagnosis in both modes.
+            with self.assertRaisesRegex(RuntimeError, "(timed out|\\[MM\\] failure=)"):
                 boot_image(fixture / "build/rynoros.img", logs, timeout=6)
             output = (logs / "serial.log").read_bytes()
             self.assertIn(b"[TEST] exception handling verified", output)
@@ -125,7 +129,9 @@ class PhysicalMemoryTests(unittest.TestCase):
             build_image(fixture)
             logs = ROOT / "build/pmm-tests" / name
             # Six-second budget for BIOS-phase boot variance; see corrupted_handoff.
-            with self.assertRaisesRegex(RuntimeError, "timed out"):
+            # Either fail-closed mode proves the accounting check caught the
+            # defect (hang or precise [MM] failure line).
+            with self.assertRaisesRegex(RuntimeError, "(timed out|\\[MM\\] failure=)"):
                 boot_image(fixture / "build/rynoros.img", logs, timeout=6)
             output = (logs / "serial.log").read_bytes()
             self.assertIn(b"[TEST] exception handling verified", output)
