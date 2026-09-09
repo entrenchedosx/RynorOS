@@ -59,6 +59,12 @@ sys_err read(u32 fd, void *buf, u64 len, u64 *nread_out, u32 flags);
   Future blocking sleeps under bit 0 with identical signature/numbers.
 - User `buf` needs **no** alignment (`copy_to_user` is byte-wise; the
   2-byte rule in `fs.c` constrains kernel staging only).
+- Loss representation (Slice A, frozen): exactly one reserved zero scan
+  byte represents one observed keyboard loss epoch. Physical queued scan
+  bytes never use zero (the ISR consumes 0x00/0xFF as errors with an
+  epoch advance), so the marker is unambiguous. With drop-newest
+  staging the retained bytes precede the gap, hence the marker follows
+  them in delivery order; CPL3 resets modifier state on receipt.
 
 ## B. `spawn_pipe()` outputs + atomicity (Blocker B)
 
@@ -174,6 +180,12 @@ RSP % 16 == 0
 [RSP + 8 + 8*argc]  = NULL : u64
 strings in [RSP + 16 + 8*argc, 0x800000), each NUL-terminated
 argc == 0  =>  [RSP] = 0, [RSP + 8] = NULL   (RSP itself never 0)
+
+C consumption (toolchain convention, not kernel ABI): the rt `_start`
+forwards argc/argv in the SysV registers (`rdi=[RSP]`, `rsi=RSP+8`)
+before calling main, so C mains use a standard `(argc, argv)` signature
+despite the call push; RynorLang mains ignore the registers. Old
+binaries carry their own stub and are unaffected.
 ```
 
 Backward compatibility (verified, not asserted): `rt_gate.asm:17-24`
