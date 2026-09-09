@@ -357,7 +357,7 @@ struct exception_frame *user_schedule_next(struct user_link *link, cpu_u64 retco
     check();
     require(link && current->user == link && link->bound && link->context,
             "user_next_link");
-    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_WRITTEN, "user_next_code");
+    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_READ, "user_next_code");
     link->kern_save.rax = retcode;
     current->saved = link->kern_save;
     struct thread *next = pick_next();
@@ -366,6 +366,38 @@ struct exception_frame *user_schedule_next(struct user_link *link, cpu_u64 retco
     select_thread(next, 0);
     ++switches;
     return &next->saved;
+}
+/* Monotonic CPL3-park evidence for the Slice A input tests. */
+static cpu_u64 cpl3_parks;
+cpu_u64 sched_park_count(void) { return cpl3_parks; }
+struct exception_frame *sched_park_cpl3(struct exception_frame *frame)
+{
+    /* Kernel-mode frames resume untouched (same as the tick path's
+       non-CPL3 branch shape): only CPL3 frames need parking. */
+    if ((frame->cs & 3) != 3) return frame;
+    require(cpu_interrupts_disabled() && irq_in_context() && !held_locks,
+            "park_context");
+    check();
+    struct user_link *link = current->user;
+    require(link && link->bound && link->context, "park_link");
+    /* Audited validation + record + CR3 switch, exactly like the tick
+       CPL3 branch (user.c): all pure checks run pre-switch, so a
+       desynced frame fails here with the entry stack still valid. */
+    if (!user_save_state(link->context, frame)) {
+        frame_failure(frame);
+    }
+    /* Park through kern_save like a tick that selected the current
+       thread (user_entry.asm: return path re-enters via user_resume):
+       no tick accounting, no stop-flag store, no thread selection.
+       Deliberately mirrors the tick tail without touching it. */
+    link->kern_save.rax = USER_RUN_PREEMPTED;
+    current->saved = link->kern_save;
+    ++current->statistics.preemptions;
+    current->statistics.irq_rsp = frame->rsp;
+    current->statistics.irq_rip = frame->rip;
+    if (cpl3_parks == ~0ULL) cpu_halt();
+    ++cpl3_parks;
+    return &current->saved;
 }
 struct exception_frame *sched_handoff(struct exception_frame *original, struct exception_frame *selected)
 {

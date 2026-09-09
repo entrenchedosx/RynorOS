@@ -13,6 +13,7 @@ from runtime_output import validate_runtime_output, parse_runtime_output
 from shell_output import SHELL_START, SHELL_END, SCRIPT, validate_shell_output
 from blk_output import validate_blk_section
 from fs_output import split_fs_sections, validate_fs_section
+from input_output import split_input_tail, validate_input_section
 from user_output import split_user_sections, validate_user_section
 from load_output import split_load_sections, validate_load_section
 from rt_output import split_rt_sections, validate_rt_section
@@ -98,6 +99,12 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             else:
                 errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state,
                                                     shell_script))
+            # Stage 18d input section trails the runtime section on test
+            # images only; absent everywhere else (split returns head).
+            # It must split before the rt/user/load chain: split_rt_sections
+            # would otherwise swallow input lines into the rt section.
+            tail, input_part = split_input_tail(tail)
+            errors.extend(validate_input_section(input_part))
             no_rt_tail, rt_part = split_rt_sections(tail)
             user_pre, load_part = split_load_sections(no_rt_tail)
             pre, user_part = split_user_sections(user_pre)
@@ -110,6 +117,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
     elif require_shell:
         errors.append("Required interactive shell output missing")
     elif post != b"":
+        post, input_part = split_input_tail(post)
+        errors.extend(validate_input_section(input_part))
         no_rt_tail, rt_part = split_rt_sections(post)
         user_pre, load_part = split_load_sections(no_rt_tail)
         pre, user_part = split_user_sections(user_pre)

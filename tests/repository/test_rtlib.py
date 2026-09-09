@@ -59,8 +59,10 @@ class RtlibRebindTests(unittest.TestCase):
         self.assertNotIn("0x80", shim)
         self.assertNotIn("syscall", shim)
         gate = (RTLIB / "rt_gate.asm").read_text(encoding="utf-8")
-        # Exactly one gate instruction in the stub file: the _start exit.
-        self.assertEqual(len(re.findall(r"int 0x80", gate)), 1)
+        # Exactly two gate instructions in the stub file: the _start exit
+        # plus the Stage 18d six-argument gate (rt_gate6, frozen register
+        # file, audited placement). A third gate would fail this pin.
+        self.assertEqual(len(re.findall(r"int 0x80", gate)), 2)
         # The C gate holds the only other int $0x80 (validated wrapper);
         # the RIR shim itself contains no gate.
         c_src = (RTLIB / "rt.c").read_text(encoding="utf-8")
@@ -84,6 +86,10 @@ class RtlibRebindTests(unittest.TestCase):
         self.assertEqual(number(header, "RT_SYS_EXIT"), number(kernel, "SYS_EXIT"))
         self.assertEqual(number(header, "RT_SYS_YIELD"), number(kernel, "SYS_YIELD"))
         self.assertEqual(number(header, "RT_SYS_WRITE"), number(kernel, "SYS_WRITE"))
+        # Stage 18d Slice A extends the surface by exactly one entry.
+        self.assertEqual(number(header, "RT_SYS_READ"), number(kernel, "SYS_READ"))
+        self.assertEqual(number(header, "RT_READ_MAX"), number(kernel, "SYSCALL_READ_MAX"))
+        self.assertEqual(number(header, "RT_FD_STDIN"), number(kernel, "SYS_STDIN"))
         self.assertEqual(number(header, "RT_WRITE_MAX"), number(kernel, "SYSCALL_WRITE_MAX"))
         self.assertEqual(number(header, "RT_FD_STDOUT"), number(kernel, "SYS_STDOUT"))
         doc = (ROOT / "docs/design/syscall-abi.md").read_text(encoding="utf-8")
@@ -94,13 +100,16 @@ class RtlibRebindTests(unittest.TestCase):
         names = re.findall(r"^\s*(RT_\w+)(?:\s*=\s*\d+)?,?\s*$", header, re.M)
         self.assertEqual(names[:6],
                          ["RT_OK", "RT_INVAL", "RT_RANGE", "RT_NOSYS", "RT_AGAIN", "RT_NOMEM"])
-        # Frozen surface: 15 functions (13 + 2 evidence channels).
+        # Frozen surface: 16 functions (13 + 2 evidence channels + the
+        # Stage 18d Slice A fd-read entry; the 18c rt_open/rt_read NOSYS
+        # stubs keep their names and behavior, so the new entry is
+        # rt_fd_read, not a repurposed stub).
         decls = re.findall(r"^\s*(?:void|enum rt_err|unsigned long long|long long)\s+(rt_\w+)\s*\(", header, re.M)
-        self.assertEqual(len(decls), 15, decls)
+        self.assertEqual(len(decls), 16, decls)
         for fn in ("rt_exit", "rt_write", "rt_print", "rt_print_bytes", "rt_fmt",
                    "rt_alloc", "rt_free", "rt_arena_watermark", "rt_live_count",
                    "rt_ptr_off", "rt_nap", "rt_set_flag", "rt_wait_flag",
-                   "rt_open", "rt_read"):
+                   "rt_open", "rt_read", "rt_fd_read"):
             self.assertIn(fn, decls, fn)
         # Doc discloses the evidence channel and the non-NUL contract.
         native = (ROOT / "docs/design/native-runtime.md").read_text(encoding="utf-8")

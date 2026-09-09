@@ -35,9 +35,13 @@ and `SYSENTER_CS` stay enforced zero; CPL3 `SYSCALL` still faults.
 | 0 | exit | `EBX` = status | never returns (terminal) |
 | 1 | yield | — | resumes (no evidence row) |
 | 2 | write | `EBX` = fd, `ECX` = buf, `EDX` = len | bytes written, or `(u64)-1` |
+| 3 | read | `EBX` = fd (0), `ECX` = buf, `EDX` = len, `ESI` = nread_out, `EDI` = flags (0), `EBP` = 0 | `sys_err` in `RAX`, count via `*nread_out` |
 
-Unknown and reserved numbers (`3..2^32-1`) die as `invalid_call`
-(existing kill path). `exit`/`yield` keep their 18a numbers and
+Stage 18d Slice A adds `read` (nonblocking stdin, `sys_err` return with
+out-param count — see `docs/design/stage18d-abi.md` §A); numbers 4–8 are
+frozen by that document with handlers landing in later slices. Unknown
+and reserved numbers (`9..2^32-1`) die as `invalid_call` (existing kill
+path). `exit`/`yield` keep their 18a numbers and
 semantics; `EBX` still carries the exit code.
 
 ## `exit(status)`

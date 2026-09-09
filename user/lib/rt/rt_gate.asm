@@ -24,6 +24,24 @@ _start:
     mov eax, 0
     int 0x80
 
+; Six-argument gate for Stage 18d syscalls (frozen register file:
+; EAX number, EBX ECX EDX ESI EDI EBP args, RAX return, all else
+; preserved by the kernel). SysV input: rdi=num, rsi=a, rdx=b, rcx=c,
+; r8=d, r9=e, [rsp+8]=f. Written in asm (not C constraints) so the
+; register placement is auditable, not optimizer-dependent. No stack
+; use before reading [rsp+8], so the 7th argument address is exact.
+global rt_gate6
+section .text
+rt_gate6:
+    mov eax, edi
+    mov rbx, rsi
+    mov rdx, r8
+    mov rsi, r9
+    mov rdi, r9
+    mov rbp, [rsp + 8]
+    int 0x80
+    ret
+
 ; One writable data byte. Without a truly writable input, an output
 ; section holding only mergeable strings is emitted read-only, and lld
 ; then splits the data window into R-only/RW loads with an alignment

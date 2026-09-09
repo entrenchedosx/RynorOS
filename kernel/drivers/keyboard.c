@@ -48,7 +48,7 @@ int kbd_ring_get(struct kbd_ring *q, struct kbd_sample *out)
 int kbd_decode(struct kbd_decoder *d, cpu_u8 scan, struct kbd_event *out)
 {
     static const cpu_u8 pause_tail[] = {0x1d, 0x45, 0xe1, 0x9d, 0xc5};
-    *out = (struct kbd_event){scan, 0, KBD_EVENT_UNKNOWN};
+    *out = (struct kbd_event){scan, 0, KBD_EVENT_UNKNOWN, 0};
     if (d->pause) {
         unsigned int n = d->pause - 1;
         d->pause = n < sizeof(pause_tail) && scan == pause_tail[n] && n+1 < sizeof(pause_tail) ? d->pause+1 : 0;
@@ -56,7 +56,26 @@ int kbd_decode(struct kbd_decoder *d, cpu_u8 scan, struct kbd_event *out)
     }
     if (scan == 0xe1) { d->extended = 0; d->pause = 1; return 0; }
     if (scan == 0xe0) { d->extended = 1; return 0; }
-    if (d->extended) { d->extended = 0; return 0; }
+    if (d->extended) {
+        d->extended = 0;
+        /* Right Ctrl is the only E0 pair promoted to a key event. Pause
+           safety: the pause branch above runs first, so the 0x1D inside
+           E1 1D 45 E1 9D C5 can never reach this comparison (A2 mutant:
+           checking 0x1D before pause breaks the Pause matrix). */
+        if (scan == 0x1d || scan == 0x9d) {
+            out->key = KBD_KEY_CTRL;
+            out->type = scan & 0x80 ? KBD_EVENT_RELEASE : KBD_EVENT_PRESS;
+            out->extended = 1;
+            return 1;
+        }
+        return 0;
+    }
+    /* Left Ctrl arrives as a single byte (only right Ctrl is E0-prefixed). */
+    if (scan == 0x1d || scan == 0x9d) {
+        out->key = KBD_KEY_CTRL;
+        out->type = scan & 0x80 ? KBD_EVENT_RELEASE : KBD_EVENT_PRESS;
+        return 1;
+    }
     cpu_u8 key = scan & 0x7f;
     switch (key) {
     case 0x1e: case 0x30: case 0x2e: case 0x20: /* a b c d */
@@ -113,6 +132,44 @@ enum kbd_result kbd_poll(struct kbd_event *out)
     else {
         result = kbd_stream_next(&input, &decoder, &consumed_epoch, out);
         if (result < 0) cpu_halt();
+    }
+    irq_restore(flags);
+    return result;
+}
+/* Raw-byte consume for CPL3 syscall delivery (Slice A). Shares the single
+   hardware stream (ring + epoch cursor) with kbd_poll: the two consumers
+   run in disjoint boot phases, never concurrently. Prefix bytes (E0/E1)
+   are delivered verbatim; CPL3 pairs them. Epoch gaps surface here as
+   KBD_LOST exactly like kbd_stream_next (decoder reset included, so a
+   half-consumed prefix never resumes stale). */
+enum kbd_result kbd_take(cpu_u8 *out)
+{
+    cpu_u64 flags = irq_save();
+    enum kbd_result result = KBD_EMPTY;
+    if (!out || irq_in_context()) result = KBD_BAD_CONTEXT;
+    else if (state != READY) result = KBD_NOT_READY;
+    else {
+        if (input.head >= KBD_STORAGE || input.tail >= KBD_STORAGE) cpu_halt();
+        cpu_u64 epoch = input.head == input.tail ? input.epoch :
+                        input.data[input.tail].epoch;
+        if (epoch != consumed_epoch) {
+            consumed_epoch = epoch;
+            decoder = (struct kbd_decoder){0};
+            result = KBD_LOST;
+        } else {
+            struct kbd_sample sample;
+            int got = kbd_ring_get(&input, &sample);
+            if (got < 0) cpu_halt();
+            if (got) {
+                /* 0x00/0xFF never sit in the ring (ISR consumes them as
+                   errors with an epoch advance), so 0x00 stays available
+                   as the read() in-band loss marker. */
+                *out = sample.scan;
+                result = KBD_EVENT;
+            } else {
+                result = KBD_EMPTY;
+            }
+        }
     }
     irq_restore(flags);
     return result;

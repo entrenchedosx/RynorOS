@@ -984,6 +984,23 @@ void user_handle_exit(struct exception_frame *f)
             sys_write_evidence(c, f->rbx, f->rdx, out == (cpu_u64)-1 ? 0 : out);
             sched_resume(user_schedule_next(link, USER_RUN_WRITTEN));
         }
+        if (reason == SYS_READ) {
+            /* Stage 18d Slice A: nonblocking stdin read. Same
+               terminal-for-the-call shape as write: the sys_err code
+               (never a byte count) lands in the resume RAX. The reserved
+               register must be zero (frozen ABI); a nonzero RBP is an
+               INVAL return, never a kill (kill is reserved for the
+               EAX-high-32 rule checked above). */
+            int rc;
+            if (f->rbp != 0) {
+                rc = SYS_INVAL;
+            } else {
+                rc = sys_read(c, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi);
+            }
+            c->sys_result = (cpu_u64)rc;
+            c->gprs[0] = (cpu_u64)rc;
+            sched_resume(user_schedule_next(link, USER_RUN_READ));
+        }
     }
     c->state = USER_FAULTED; c->fault_class = 2;
     c->fault_vector = 128; c->fault_error = reason; c->fault_cr2 = 0;

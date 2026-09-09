@@ -92,7 +92,7 @@ class KeyboardTests(unittest.TestCase):
     def test_runtime_queue_bypass_is_detected(self):
         self.variant("queue-bypass","kernel/drivers/keyboard.c",
                      "result = kbd_stream_next(&input, &decoder, &consumed_epoch, out);",
-                     "if (input.head != input.tail) {result = KBD_EVENT; *out=(struct kbd_event){30,30,KBD_EVENT_PRESS};} else result = kbd_stream_next(&input, &decoder, &consumed_epoch, out);",
+                     "if (input.head != input.tail) {result = KBD_EVENT; *out=(struct kbd_event){30,30,KBD_EVENT_PRESS,0};} else result = kbd_stream_next(&input, &decoder, &consumed_epoch, out);",
                      "[KBD] failure=hardware_counts")
     def test_loss_boundary_is_not_silent(self):
         self.variant("lost-boundary","kernel/drivers/keyboard.c",
@@ -117,7 +117,8 @@ class KeyboardTests(unittest.TestCase):
                      "[KBD] failure=ring_fill")
     def test_extended_key_tail_not_ordinary_enter(self):
         self.variant("prefix","kernel/drivers/keyboard.c",
-                     "if (d->extended) { d->extended = 0; return 0; }","d->extended = 0;",
+                     "            return 1;\n        }\n        return 0;\n    }\n    /* Left Ctrl",
+                     "            return 1;\n        }\n    }\n    /* Left Ctrl",
                      "[KBD] failure=decode_prefix")
     def test_status_error_not_input(self):
         self.variant("status-error","kernel/drivers/keyboard.c",

@@ -49,6 +49,17 @@ struct thread_statistics { cpu_u64 preemptions, dispatches, irq_rsp, irq_rip; };
 int thread_statistics(thread_id id, struct thread_statistics *out);
 int scheduler_statistics(struct sched_statistics *out);
 struct exception_frame *sched_tick(struct exception_frame *frame);
+/* Stage 18d Slice A: park a non-timer IRQ that interrupted CPL3. Kernel
+   frames pass through unchanged. CPL3 frames are validated and recorded
+   with the audited user_save_state (pre-switch, fail-closed), parked in
+   the thread's kern_save with USER_RUN_PREEMPTED, and returned through
+   the normal handoff machinery. No tick accounting, no stop-flag store,
+   no thread selection: the current thread resumes (IRQ1 is a preemption
+   point, not a scheduling point, until a later slice needs otherwise).
+   IRQ context required (same as sched_tick). */
+struct exception_frame *sched_park_cpl3(struct exception_frame *frame);
+/* Number of CPL3 parks performed (test evidence; monotonic). */
+cpu_u64 sched_park_count(void);
 /* Last C validation before assembly changes RSP; unknown pointers never read. */
 struct exception_frame *sched_handoff(struct exception_frame *original,
                                        struct exception_frame *selected);

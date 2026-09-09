@@ -20,11 +20,26 @@
 #define SYS_EXIT 0u
 #define SYS_YIELD 1u
 #define SYS_WRITE 2u
-/* 3..2^32-1 reserved: unknown numbers die as invalid_call; the namespace
+/* Stage 18d numbers (frozen in docs/design/stage18d-abi.md). Only
+ * SYS_READ has a handler; 4..8 remain reserved kills until their slice
+ * (unknown numbers die as invalid_call; the namespace only ever
+ * extends upward, never renumbers). */
+#define SYS_READ 3u
+#define SYS_SPAWN 4u
+#define SYS_WAIT 5u
+#define SYS_TERMINATE 6u
+#define SYS_FREAD 7u
+#define SYS_SPAWN_PIPE 8u
+/* 9..2^32-1 reserved: unknown numbers die as invalid_call; the namespace
    only ever extends upward, never renumbers. */
 
 #define SYS_STDOUT 1u
 #define SYSCALL_WRITE_MAX 4096u
+/* Stage 18d read cap (frozen ABI §A: SYSCALL_WRITE_MAX mirror). */
+#define SYSCALL_READ_MAX 4096u
+/* Stage 18d fd domain: only stdin 0 exists (keyboard staging in Slice A;
+ * endpoint multiplexing arrives with spawn selectors in Slice C). */
+#define SYS_STDIN 0u
 
 /* write() return: bytes written (0..len, short allowed like serial and
    fs_write prefix semantics), or (cpu_u64)-1 on invalid arguments with

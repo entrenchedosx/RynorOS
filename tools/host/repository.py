@@ -175,6 +175,15 @@ REQUIRED_FILES = (
     "tests/integration/test_rt.py",
     "docs/design/native-runtime.md",
     "docs/reports/stage18c.md",
+    # Stage 18d frozen ABI (docs-only freeze pass, no code).
+    "docs/design/stage18d-abi.md",
+    # Stage 18d Slices A/B: gated input driver, UAPI header, validator,
+    # and tests. Later-slice layouts frozen in uapi.h carry no behavior.
+    "kernel/include/uapi.h", "kernel/include/readtest.h",
+    "kernel/core/read-test.c",
+    "tools/host/input_output.py",
+    "tests/repository/test_input_abi.py",
+    "tests/integration/test_input.py",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.

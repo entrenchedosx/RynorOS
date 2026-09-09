@@ -406,4 +406,62 @@ user_blob_rdmsr:
     ud2
 user_blob_rdmsr_end:
 
+; Stage 18d Slice A test probes (NOT fault blobs: these complete via
+; exit and are driven only by the gated input self-test, never by the
+; 18a fault matrix). Absolute addressing only, as above. Arguments come
+; from the data page (prefilled by the driver through the frame window)
+; so one probe covers the whole hostile matrix without new blobs.
+;
+; Data-page vector layout (all u64):
+;   0xa0 fd  0xa8 buf  0xb0 len  0xb8 nread_out  0xc0 flags  0xc8 rbp
+;   0xd0 result RAX (written by the probe before exit)
+global readargs_probe
+global readargs_probe_end
+readargs_probe:
+    mov r11, 0x600000
+    mov eax, 3
+    mov rbx, [r11 + 0xa0]
+    mov rcx, [r11 + 0xa8]
+    mov rdx, [r11 + 0xb0]
+    mov rsi, [r11 + 0xb8]
+    mov rdi, [r11 + 0xc0]
+    mov rbp, [r11 + 0xc8]
+    int 0x80
+    mov r11, 0x600000
+    mov [r11 + 0xd0], rax
+    mov eax, 0
+    mov ebx, 7
+    int 0x80
+    ud2
+readargs_probe_end:
+
+; Long CPL3 window for IRQ1-park tests: 400 iterations of a bounded
+; spin plus a voluntary yield (IRQ0 stays masked, so every exit from
+; CPL3 here is either the final gate exit or a parked IRQ1 resume).
+; Iteration count lands in data+0x08 for the driver to observe.
+global yieldspin_probe
+global yieldspin_probe_end
+yieldspin_probe:
+    mov r11, 0x600000
+    mov qword [r11 + 0x08], 0
+.yploop:
+    inc qword [r11 + 0x08]
+    mov rax, [r11 + 0x08]
+    cmp rax, 400
+    jge .ypdone
+    mov rcx, 200000
+.yspin:
+    dec rcx
+    jnz .yspin
+    mov eax, 1
+    int 0x80
+    mov r11, 0x600000
+    jmp .yploop
+.ypdone:
+    mov eax, 0
+    mov ebx, 7
+    int 0x80
+    ud2
+yieldspin_probe_end:
+
 section .note.GNU-stack noalloc noexec nowrite progbits
