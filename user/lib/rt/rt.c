@@ -90,6 +90,44 @@ enum rt_err rt_print_bytes(const char *s, unsigned long long n)
     return rt_write(RT_FD_STDOUT, s, n);
 }
 
+/* Six-argument gate (asm in rt_gate.asm, not C constraints, so RBP
+   placement is exact): num->EAX, a->EBX, b->ECX, c->EDX, d->ESI,
+   e->EDI, f->EBP; return in RAX. */
+extern unsigned long long rt_gate6(unsigned int num, unsigned long long a,
+                                   unsigned long long b, unsigned long long c,
+                                   unsigned long long d, unsigned long long e,
+                                   unsigned long long f);
+
+enum rt_err rt_fd_read(unsigned int fd, void *buf, unsigned long long n,
+                       unsigned long long *nread, unsigned long long flags)
+{
+    unsigned long long rc;
+    if (fd != RT_FD_STDIN)
+        return RT_INVAL;
+    if (n > RT_READ_MAX)
+        return RT_RANGE;
+    if (flags != 0)
+        return RT_INVAL;
+    if (nread == 0)
+        return RT_INVAL;
+    if (n != 0 && buf == 0)
+        return RT_INVAL;
+    /* Full 64-bit values reach the kernel (B3: truncating any argument
+       to 32 bits here would alias e.g. fd 0x1_00000000 to stdin). */
+    rc = rt_gate6(RT_SYS_READ, (unsigned long long)fd,
+                  (unsigned long long)buf, n,
+                  (unsigned long long)nread, flags, 0);
+    /* Return codes mirror kernel/include/uapi.h (SYS_OK 0, SYS_AGAIN 1);
+       a repository test pins the equality. Anything else collapses to
+       RT_INVAL here (BADARG has no rt_err peer; in-guest probes prove
+       the kernel distinction directly). */
+    if (rc == 0)
+        return RT_OK;
+    if (rc == 1)
+        return RT_AGAIN;
+    return RT_INVAL;
+}
+
 /* Transactional %s/%u/%x/%c formatter. Pass one measures with checked
    bounds; pass two emits. Anything invalid leaves dst untouched.
    Never NUL-terminates: the caller must use the returned count.

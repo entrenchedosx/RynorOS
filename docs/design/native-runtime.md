@@ -21,8 +21,10 @@ run first (`tools/host/rt_output.py`, `tools/host/boot_output.py`).
 
 ## Public interfaces
 
-Frozen surface: 15 functions (13 functional + 2 read-only evidence
-channels `rt_live_count`/`rt_ptr_off`) plus frozen `rt_err`
+Frozen surface: 16 functions (13 functional + 2 read-only evidence
+channels `rt_live_count`/`rt_ptr_off` + the Stage 18d Slice A
+`rt_fd_read`; the 18c `rt_open`/`rt_read` stubs keep their names and
+`RT_NOSYS` behavior) plus frozen `rt_err`
 (`RT_OK 0`, `RT_INVAL 1`, `RT_RANGE 2`, `RT_NOSYS 3`, `RT_AGAIN 4`,
 `RT_NOMEM 5`). The library contains no intentional trap/panic path
 (no `UD2`/`DIV`-by-zero/signed-overflow; all arithmetic unsigned);
@@ -45,7 +47,8 @@ conformance negatives pin down.
 | `rt_nap(yields)` | yield | `RT_OK` or `RT_RANGE` |
 | `rt_set_flag(p)` | none | `RT_OK` or `RT_INVAL` |
 | `rt_wait_flag(p, max_yields)` | yield | `RT_OK`, `RT_AGAIN`, or `RT_INVAL` |
-| `rt_open()` / `rt_read()` | none | always `RT_NOSYS` (honest stub) |
+| `rt_open()` / `rt_read()` | none | always `RT_NOSYS` (honest stub, unchanged by 18d) |
+| `rt_fd_read(fd, buf, n, &nread, flags)` | read (3, via six-register gate) | `RT_OK` (bytes in `*nread`), `RT_AGAIN` (empty, outputs untouched), or `RT_INVAL`/`RT_RANGE` |
 
 ### Syscall mapping table
 

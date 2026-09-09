@@ -16,6 +16,9 @@
 #define RT_SYS_EXIT 0u
 #define RT_SYS_YIELD 1u
 #define RT_SYS_WRITE 2u
+/* Stage 18d Slice A: read number mirrors SYS_READ (pinned equal by test,
+   like the 18b set). Numbers 4..8 have no wrappers until their slice. */
+#define RT_SYS_READ 3u
 
 /* Frozen error set. The library contains no intentional trap/panic
    path (no UD2/DIV-by-zero/signed-overflow); wild caller pointers still
@@ -34,7 +37,9 @@ enum rt_err {
 
 /* Frozen bounds (mirror the kernel/user contracts they sit on). */
 #define RT_FD_STDOUT 1u
+#define RT_FD_STDIN 0u
 #define RT_WRITE_MAX 4096u
+#define RT_READ_MAX 4096u
 #define RT_PRINT_MAX 4096u
 #define RT_ARENA_SIZE 2048u
 #define RT_ARENA_ALIGN_MAX 16u
@@ -80,6 +85,16 @@ unsigned long long rt_ptr_off(const void *ptr);
 enum rt_err rt_nap(unsigned long long yields);
 enum rt_err rt_set_flag(unsigned long long *p);
 enum rt_err rt_wait_flag(unsigned long long *p, unsigned long long max_yields);
+
+/* Stage 18d Slice A: nonblocking fd read over syscall 3. The 18c
+   rt_open/rt_read stubs below stay NOSYS-pinned; this separate entry
+   carries the out-count and flags the frozen ABI requires. Returns
+   RT_OK (bytes in *nread), RT_AGAIN (empty; outputs untouched), or
+   RT_INVAL/RT_RANGE on bad arguments. Kernel sys_err codes map here:
+   OK->OK, AGAIN->AGAIN, everything else->INVAL (BADARG has no rt_err
+   peer; in-guest probes prove the kernel distinction directly). */
+enum rt_err rt_fd_read(unsigned int fd, void *buf, unsigned long long n,
+                       unsigned long long *nread, unsigned long long flags);
 
 /* Honest stubs: always RT_NOSYS, documented. */
 enum rt_err rt_open(const char *path);

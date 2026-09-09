@@ -2,6 +2,7 @@
 #define RYNOR_LOAD_H
 #include "cpu.h"
 #include "user.h"
+#include "uapi.h"
 
 /* Stage 18b executable loading (RYNX v1 envelope over fixed user windows).
  *
@@ -56,6 +57,24 @@ int load_program(struct user_context **out, const cpu_u8 *img, cpu_u64 len);
    to the serial sink. Returns bytes written or (cpu_u64)-1. Runs with
    IF=0 on kernel CR3; never holds the frame window across VM calls. */
 cpu_u64 sys_write(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len);
+
+/* Stage 18d Slice B: validated copy to userspace. Every byte of
+   [uaddr, uaddr+len) must live on a USER+WRITE page (two passes: all
+   pages checked first, then bytes move chunk by chunk; window pointers
+   never survive a VM call). Returns len, or (cpu_u64)-1 with nothing
+   written. len == 0 succeeds without touching the destination. Wrap,
+   supervisor leaves, holes, and noncanonical addresses fail here. */
+cpu_u64 copy_to_user(struct user_context *c, cpu_u64 uaddr,
+                     const cpu_u8 *src, cpu_u64 len);
+
+/* Stage 18d Slice A, syscall 3: nonblocking read from stdin endpoint 0
+   (keyboard scan staging; endpoint multiplexing arrives with spawn
+   selectors in Slice C). Returns a sys_err code (never a byte count):
+   SYS_OK (bytes staged, *nread_out published last), SYS_AGAIN (empty;
+   both outputs untouched), SYS_INVAL (bad arguments; outputs untouched).
+   Runs with IF=0 on kernel CR3. */
+int sys_read(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len,
+             cpu_u64 nread_out, cpu_u64 flags);
 
 /* Print the [LOAD] write evidence row (slot/fd/len/nwritten + hex of
    the staged bytes). Called by the gate handler, not the driver, so

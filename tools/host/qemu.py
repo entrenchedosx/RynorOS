@@ -4,6 +4,7 @@ import json
 import hashlib
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -16,6 +17,7 @@ from user_output import VERIFIED_LINE as USER_VERIFIED, parse_serial as parse_us
 from load_output import VERIFIED_LINE as LOAD_VERIFIED, SKIPPED_LINE as LOAD_SKIPPED
 from rt_output import VERIFIED_LINE as RT_VERIFIED, SKIPPED_LINE as RT_SKIPPED
 from kbd_output import KEYS, KBD_END, key_sequence, validate_keyboard_trace, validate_irq0_trace
+from input_output import INPUT_VERIFIED, INPUT_SCANS, input_key_sequence
 from display_output import DISPLAY_END, DISPLAY_START, parse_display_output, verify_display_pixels, verify_display_scanout
 from shell_output import SHELL_END, SHELL_KEYS, SCANS as SHELL_SCANS
 from kernel_elf import read_symbols
@@ -33,7 +35,8 @@ _PROVENANCE = {}
 
 
 def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
-                  require_shell: bool = False, shell_script=()) -> bool:
+                   require_shell: bool = False, shell_script=(),
+                   require_input: bool = False) -> bool:
     """Pure completion predicate for the boot loop (unit-testable).
 
     Defaults mirror boot_image's non-interactive path. A normal
@@ -53,9 +56,13 @@ def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
     # its section (verified after running, skipped when no image), and
     # the runtime driver always ends the transcript the same way, so a
     # missing terminator means the guest is still in that phase.
-    return USER_VERIFIED in observed and \
-        (LOAD_VERIFIED in observed or LOAD_SKIPPED in observed) and \
-        (RT_VERIFIED in observed or RT_SKIPPED in observed)
+    if not (USER_VERIFIED in observed and
+            (LOAD_VERIFIED in observed or LOAD_SKIPPED in observed) and
+            (RT_VERIFIED in observed or RT_SKIPPED in observed)):
+        return False
+    if require_input:
+        return INPUT_VERIFIED in observed
+    return True
 
 
 def _file_provenance(path: Path, *, version_command=None) -> dict:
@@ -98,7 +105,9 @@ def _locate_firmware(qemu_path: Path) -> Path | None:
 
 
 def _inject_pending_keys(process, observed: bytes, keys: list[str], next_index: list[int],
-                         shell_keys: tuple[str, ...] | list[str] = (), shell_index: list[int] | None = None) -> None:
+                         shell_keys: tuple[str, ...] | list[str] = (), shell_index: list[int] | None = None,
+                         input_keys: tuple[str, ...] | list[str] = (), input_index: list[int] | None = None,
+                         window_seen: list[int] | None = None) -> None:
     """Send one validated host-selected key after its serial request. The Stage 8
     keys are driven by the "[KBD] waiting" markers and the Stage 11 interactive
     shell keys by the "[SHELL] waiting" markers; each stream advances only when
@@ -106,6 +115,12 @@ def _inject_pending_keys(process, observed: bytes, keys: list[str], next_index: 
     sleep; emulator key-release timing still exists."""
     if shell_index is None:
         shell_index = [0]
+    if input_index is None:
+        input_index = [0]
+    if window_seen is None:
+        _window_seen = [0]
+    else:
+        _window_seen = window_seen
     if next_index[0] < len(keys):
         marker = b"[KBD] waiting for input=%d\r\n" % next_index[0]
         if marker not in observed:
@@ -124,6 +139,35 @@ def _inject_pending_keys(process, observed: bytes, keys: list[str], next_index: 
         process.stdin.write(b"sendkey %s\n" % shell_keys[shell_index[0]].encode())
         process.stdin.flush()
         shell_index[0] += 1
+    # Stage 18d input stream: indexed markers take one key each from the
+    # positional tuple; a window marker names its own keys (attempts vary,
+    # so windows are self-describing, never positional).
+    if input_index[0] < len(input_keys):
+        marker = b"[INPUT] waiting for input=%d\r\n" % input_index[0]
+        if marker in observed:
+            if process.stdin is None:
+                raise RuntimeError("QEMU monitor input is unavailable")
+            process.stdin.write(b"sendkey %s\n" % input_keys[input_index[0]].encode())
+            process.stdin.flush()
+            input_index[0] += 1
+            return
+    # Windows are served in transcript order (attempt numbers restart per
+    # window, so the Nth marker is the next unserved window).
+    seen = 0
+    for match in re.finditer(rb"\[INPUT\] window attempt=(\d+) keys=([a-z_,]+)\r\n", observed):
+        if seen < _window_seen[0]:
+            seen += 1
+            continue
+        names = match.group(2).decode().split(",")
+        if any(name not in INPUT_SCANS for name in names):
+            raise ValueError("window requests unknown input key")
+        if process.stdin is None:
+            raise RuntimeError("QEMU monitor input is unavailable")
+        for key in names:
+            process.stdin.write(b"sendkey %s\n" % key.encode())
+        process.stdin.flush()
+        _window_seen[0] += 1
+        return
 
 
 def _capture_display_evidence(process, observed: bytes, logs: Path, deadline: float) -> None:
@@ -194,6 +238,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                max_ram_below_4g_mib: int | None = None,
                keys: tuple[str, ...] = KEYS, inject_keys: bool = True,
                shell_interactive: bool = False, shell_keys=None,
+               input_keys=None, require_input: bool = False,
                extra_drives: tuple = ()) -> bytes:
     # Entries are paths (snapshot overlay on) or (path, snapshot_on)
     # tuples for tests that own a private image copy.
@@ -213,6 +258,9 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     if shell_interactive and (len(shell_keys) != len(SHELL_KEYS) or
                               any(key not in SHELL_SCANS for key in shell_keys)):
         raise ValueError("shell_keys must contain exactly 39 supported keys")
+    if input_keys is not None and not require_input:
+        raise ValueError("input_keys requires require_input")
+    input_keys = tuple(input_key_sequence(input_keys)) if require_input else ()
     if not math.isfinite(timeout) or not 0 < timeout <= 60:
         raise ValueError("Boot timeout must be finite and in (0, 60] seconds")
     if type(test_vector) is not int or test_vector not in VECTOR_NAMES:
@@ -280,6 +328,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     cleanup = "not-started"
     next_key = [0]
     shell_key = [0]
+    input_index = [0]
+    window_seen = [0]
     start = time.monotonic()
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     with diagnostic.open("wb") as diagnostic_file:
@@ -305,7 +355,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                                            b"[LOAD] failure=", b"[USER] failure=",
                                                            b"[FS] failure=", b"[BLK] failure=",
                                                            b"[MM] failure=",
-                                                           b"[KSTACK] failure="))), None)
+                                                           b"[KSTACK] failure=",
+                                                           b"[INPUT] failure="))), None)
                 if driver_failure is not None:
                     failure = driver_failure.decode('ascii', errors='replace')
                     break
@@ -323,10 +374,16 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                         break
                 if inject_keys:
                     _inject_pending_keys(process, observed, list(keys), next_key,
-                                         list(shell_keys), shell_key)
+                                         list(shell_keys), shell_key,
+                                         list(input_keys), input_index,
+                                         window_seen)
                 if boot_complete(observed, test_vector, keys,
-                                require_shell=shell_interactive,
-                                shell_script=shell_keys):
+                                 require_shell=shell_interactive,
+                                 shell_script=shell_keys,
+                                 require_input=require_input):
+                    # The input stream is sized for worst-case retries; only
+                    # consumed keys are asserted (by the input validator from
+                    # transcript markers), so leftover tuple entries are fine.
                     if test_vector == 3 and next_key[0] != len(keys):
                         failure = "Keyboard completed without all host inputs"
                     elif test_vector == 3:
@@ -391,8 +448,12 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     if test_vector == 3 and KBD_END in observed and not errors:
         trace = debug.read_text(encoding="utf-8", errors="replace")
         try:
-            validate_keyboard_trace(trace, keys,
-                                    tuple(SHELL_SCANS[key] for key in shell_keys))
+            # Input runs validate the longer trace (stage-8 + input bytes)
+            # in their own test with input awareness; the stock gate would
+            # reject the extra input bytes as foreign.
+            if not require_input:
+                validate_keyboard_trace(trace, keys,
+                                        tuple(SHELL_SCANS[key] for key in shell_keys))
             validate_irq0_trace(trace)
         except ValueError as error:
             failure = failure or str(error)

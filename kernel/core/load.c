@@ -4,6 +4,7 @@
 #include "irq.h"
 #include "io.h"
 #include "vm.h"
+#include "kbd.h"
 #include "serial.h"
 
 /* Stage 18b executable loading + syscalls (int $0x80 gate extension).
@@ -114,6 +115,114 @@ cpu_u64 sys_write(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len)
     if (buf + len < buf) return (cpu_u64)-1;
     if (copy_from_user(c, write_stage, buf, len) != len) return (cpu_u64)-1;
     return len;
+}
+
+/* Destination-range check shared by copy_to_user: every page covering
+   [uaddr, uaddr+len) must query OK with USER *and* WRITE (supervisor
+   leaves, RX code/data, holes, and noncanonical addresses fail here).
+   Pure validation: touches no user memory. */
+static cpu_u64 dest_ok(struct user_context *c, cpu_u64 uaddr, cpu_u64 len)
+{
+    cpu_u64 off = 0;
+    if (!c) return (cpu_u64)-1;
+    if (len == 0) return 0;
+    if (uaddr + len < uaddr) return (cpu_u64)-1;
+    while (off < len) {
+        cpu_u64 addr = uaddr + off;
+        cpu_u64 page = addr & ~(VM_PAGE_SIZE - 1);
+        cpu_u64 chunk = VM_PAGE_SIZE - (addr & (VM_PAGE_SIZE - 1));
+        if (chunk > len - off) chunk = len - off;
+        struct vm_mapping m;
+        if (vm_query(&c->space, page, &m) != VM_OK ||
+            (m.permissions & (VM_USER | VM_WRITE)) != (VM_USER | VM_WRITE))
+            return (cpu_u64)-1;
+        off += chunk;
+    }
+    return len;
+}
+
+cpu_u64 copy_to_user(struct user_context *c, cpu_u64 uaddr,
+                     const cpu_u8 *src, cpu_u64 len)
+{
+    cpu_u64 off = 0;
+    if (!c || (len && !src)) return (cpu_u64)-1;
+    if (len == 0) return 0;
+    /* Pass one: validate the whole range before any byte moves (B2
+       mutant: validating only the first page lets a cross-page attack
+       through; pass two below would then write past the checked page). */
+    if (dest_ok(c, uaddr, len) != len) return (cpu_u64)-1;
+    while (off < len) {
+        cpu_u64 addr = uaddr + off;
+        cpu_u64 page = addr & ~(VM_PAGE_SIZE - 1);
+        cpu_u64 chunk = VM_PAGE_SIZE - (addr & (VM_PAGE_SIZE - 1));
+        if (chunk > len - off) chunk = len - off;
+        /* Re-query per chunk (never trust pass-one across a VM call):
+           mappings cannot change mid-call (single CPU, IF=0, no other
+           actor maps this space), so this re-check always agrees. */
+        struct vm_mapping m;
+        if (vm_query(&c->space, page, &m) != VM_OK ||
+            (m.permissions & (VM_USER | VM_WRITE)) != (VM_USER | VM_WRITE))
+            return (cpu_u64)-1;
+        cpu_u64 frame = m.physical & ~(VM_PAGE_SIZE - 1);
+        volatile cpu_u8 *w = vm_frame_access(frame);
+        if (!w) return (cpu_u64)-1;
+        cpu_u64 start = addr & (VM_PAGE_SIZE - 1);
+        for (cpu_u64 i = 0; i < chunk; ++i)
+            w[start + i] = src[off + i];
+        off += chunk;
+    }
+    return len;
+}
+
+/* Staging for validated keyboard bytes (single CPU, IF=0 handler context
+   only; never shared, never retained across calls). */
+static cpu_u8 read_stage[SYSCALL_READ_MAX];
+
+int sys_read(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len,
+             cpu_u64 nread_out, cpu_u64 flags)
+{
+    cpu_u64 staged = 0;
+    if (!c) return SYS_INVAL;
+    /* Scalar validation before any memory touch. fd is full-64-bit
+       compared (B3 mutant: truncating to 32 bits would accept
+       0x1_00000000 as stdin). */
+    if (fd != SYS_STDIN) return SYS_INVAL;
+    if (flags != 0) return SYS_INVAL;
+    if (len > SYSCALL_READ_MAX) return SYS_INVAL;
+    /* Destination capability before any dequeue (A3 mutant: dequeuing
+       first would let a hostile nread_out discard user input). */
+    if (dest_ok(c, nread_out, sizeof(cpu_u64)) != sizeof(cpu_u64))
+        return SYS_INVAL;
+    if (len == 0) {
+        cpu_u64 zero = 0;
+        if (copy_to_user(c, nread_out, (const cpu_u8 *)&zero,
+                         sizeof(zero)) != sizeof(zero))
+            return SYS_INVAL;
+        return SYS_OK;
+    }
+    if (buf + len < buf) return SYS_INVAL;
+    if (dest_ok(c, buf, len) != len) return SYS_INVAL;
+    /* Stage from the keyboard ring. EMPTY stops (AGAIN); LOST stages one
+       0x00 marker byte (never queued by the ISR, so unambiguous) and the
+       loop continues with post-gap bytes. */
+    while (staged < len) {
+        cpu_u8 byte = 0;
+        enum kbd_result take = kbd_take(&byte);
+        if (take == KBD_EMPTY) break;
+        if (take == KBD_LOST) {
+            read_stage[staged++] = 0x00;
+            continue;
+        }
+        if (take != KBD_EVENT) return SYS_INVAL;
+        read_stage[staged++] = byte;
+    }
+    if (!staged) return SYS_AGAIN;
+    if (copy_to_user(c, buf, read_stage, staged) != staged) return SYS_INVAL;
+    /* Publish the count LAST (output-publication rule). */
+    if (copy_to_user(c, nread_out, (const cpu_u8 *)&staged,
+                     sizeof(staged)) != sizeof(staged))
+        return SYS_INVAL;
+    return SYS_OK;
 }
 
 static void text(const char *s)

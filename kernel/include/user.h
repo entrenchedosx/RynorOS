@@ -50,6 +50,9 @@
 #define USER_RUN_PREEMPTED 3u
 #define USER_RUN_FAULTED 4u
 #define USER_RUN_WRITTEN 5u
+/* Stage 18d Slice A: read() resumes the process like write (terminal for
+ * the call, not for the process). Kernel-internal run code, not UAPI. */
+#define USER_RUN_READ 6u
 
 enum user_state { USER_FREE, USER_ACTIVE, USER_EXITED, USER_FAULTED };
 
