@@ -168,7 +168,7 @@ class InputTests(unittest.TestCase):
         hostile output pointer discard user input."""
         self.mutant("dequeue-first", [(
             "kernel/core/load.c",
-            "    if (dest_ok(c, nread_out, sizeof(cpu_u64)) != sizeof(cpu_u64))\n"
+            "    if (copy_dest_ok(c, nread_out, sizeof(cpu_u64)) != sizeof(cpu_u64))\n"
             "        return SYS_INVAL;",
             "    (void)nread_out;",
             1)], ("[INPUT] failure=r_preserved", "[INPUT] failure="))
@@ -192,8 +192,8 @@ class InputTests(unittest.TestCase):
              "    if (uaddr + len < uaddr) return (cpu_u64)-1;\n    if (off < len) {",
              1),
             ("kernel/core/load.c",
-             "    if (dest_ok(c, uaddr, len) != len) return (cpu_u64)-1;\n    while (off < len) {",
-             "    if (dest_ok(c, uaddr, len) != len) return (cpu_u64)-1;\n    if (off < len) {",
+             "    if (copy_dest_ok(c, uaddr, len) != len) return (cpu_u64)-1;\n    while (off < len) {",
+             "    if (copy_dest_ok(c, uaddr, len) != len) return (cpu_u64)-1;\n    if (off < len) {",
              1),
         ], ("[INPUT] failure=copy_cross", "[INPUT] failure=copy_code_intact"))
 

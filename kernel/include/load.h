@@ -12,15 +12,21 @@
  * See docs/design/executable-format.md.
  *
  * Layout (little-endian, 28 bytes, no trailing bytes):
- *   u8[4] magic "RYNX", u16 version (1), u16 arch (1 = x86-64),
+ *   u8[4] magic "RYNX", u16 version (1 or 2), u16 arch (1 = x86-64),
  *   u16 header_len (28), u16 reserved (0), u32 entry_off (0: entry is
  *   defined as USER_CODE_BASE; a variable entry needs an audited
- *   enter-at-offset path first), u32 code_size (1..4096),
- *   u32 data_filesz (0..4096), u32 data_memsz (filesz..4096),
+ *   enter-at-offset path first), u32 code_size (v1: 1..4096;
+ *   v2: 1..32768), u32 data_filesz (v1: 0..4096; v2: 0..16384),
+ *   u32 data_memsz (filesz..same class max),
  * then code_size code bytes, then data_filesz data bytes.
  */
 #define RNYX_MAGIC 0x584e5952u
 #define RNYX_VERSION 1u
+/* Stage 18d Slice C: bounded multi-page envelopes (same 28-byte layout,
+ * version-gated size classes; v1 caps byte-identical). */
+#define RNYX_VERSION2 2u
+#define RNYX_V2_CODE_MAX (8u * 4096u)
+#define RNYX_V2_DATA_MAX (4u * 4096u)
 #define RNYX_ARCH_X86_64 1u
 #define RNYX_HEADER_LEN 28u
 
@@ -57,6 +63,13 @@ int load_program(struct user_context **out, const cpu_u8 *img, cpu_u64 len);
    to the serial sink. Returns bytes written or (cpu_u64)-1. Runs with
    IF=0 on kernel CR3; never holds the frame window across VM calls. */
 cpu_u64 sys_write(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len);
+/* Validated copyin for spawn staging (Slice C): same two-pass
+   discipline as sys_write's internal helper. */
+cpu_u64 copy_from_user(struct user_context *c, cpu_u8 *dst,
+                       cpu_u64 uaddr, cpu_u64 len);
+/* Validated copyout range check (Slice C): every byte of the range must
+   be mapped USER+WRITE. Pure validation, no memory touched. */
+cpu_u64 copy_dest_ok(struct user_context *c, cpu_u64 uaddr, cpu_u64 len);
 
 /* Stage 18d Slice B: validated copy to userspace. Every byte of
    [uaddr, uaddr+len) must live on a USER+WRITE page (two passes: all

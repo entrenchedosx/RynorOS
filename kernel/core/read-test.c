@@ -123,7 +123,7 @@ static void set_irq(unsigned int irq, int on, const char *why)
 
 static volatile cpu_u8 *data_window(struct user_context *c)
 {
-    volatile cpu_u8 *w = vm_frame_access(c->data_frame);
+    volatile cpu_u8 *w = vm_frame_access(c->data_frame[0]);
     require(w != 0, "data_window");
     return w;
 }
@@ -144,14 +144,14 @@ static struct user_context *make_probe(const cpu_u8 *code, cpu_u64 len, const ch
 {
     struct user_context *c = 0;
     require(len > 0 && len <= VM_PAGE_SIZE, "probe_size");
-    require(user_create_loaded(&c, (const char *)code, len, "", 0) && c, why);
+    require(user_create_loaded(&c, (const char *)code, len, "", 0, 0) && c, why);
     return c;
 }
 /* Enter and run to EXITED (IRQ masked in matrix phases, so only the
    gate exit terminates; PREEMPTED/READ resume transparently). */
 static void run_exit(struct user_context *c, const char *why)
 {
-    cpu_u64 rc = user_enter(&c->link);
+    cpu_u64 rc = user_enter_image(&c->link);
     while (rc == USER_RUN_PREEMPTED || rc == USER_RUN_YIELDED ||
            rc == USER_RUN_WRITTEN || rc == USER_RUN_READ)
         rc = user_resume(&c->link);
@@ -260,7 +260,7 @@ static void copy_tests(void)
     ++pass;
     require(copy_to_user(c, USER_CODE_BASE, src, 8) == (cpu_u64)-1, "copy_code_rc");
     {
-        volatile cpu_u8 *cw = vm_frame_access(c->code_frame);
+        volatile cpu_u8 *cw = vm_frame_access(c->code_frame[0]);
         require(cw != 0, "copy_code_window");
         for (unsigned int i = 0; i < 8; ++i)
             require(cw[i] == (cpu_u8)readargs_probe[i], "copy_code_intact");

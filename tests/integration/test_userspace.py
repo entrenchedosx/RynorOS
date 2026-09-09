@@ -72,8 +72,8 @@ class UserspaceIntegrationTests(unittest.TestCase):
                           (13, 0x08), (13, 0x08),
                           (13, 0),
                           (128, 0x99)])
-        self.assertEqual(len(evidence.creates), 33)
-        self.assertEqual(len(evidence.destroys), 33)
+        self.assertEqual(len(evidence.creates), 34)
+        self.assertEqual(len(evidence.destroys), 34)
         # v==14 rows in print order: five fixed landmarks, three
         # supervisor-violation reads/writes, the kernel fetch, the stack
         # fetch, then the kernel-stack push fault.
@@ -197,8 +197,28 @@ class UserspaceIntegrationTests(unittest.TestCase):
         # (A desync into unmapped memory triple-faults even earlier;
         # both are fail-closed, this one asserts the handler check.)
         output, error = self._run_user_mutation([(
-            "    cpu_set_rsp0(c->exit_top);\n    ++c->entries;",
-            "    cpu_set_rsp0(USER_DATA_BASE + VM_PAGE_SIZE);\n    ++c->entries;",
+            "    for (unsigned int i = 0; i < 15; ++i) c->gprs[i] = 0;\n"
+            "    c->rip = USER_CODE_BASE; c->rsp = USER_STACK_TOP; c->rflags = 0x202;\n"
+            "    if (!sync_high(c)) {\n"
+            "        /* Unwind the attach: enter must be all-or-nothing. The detach is\n"
+            "           checked (R1): failure means scheduler corruption, so halt. */\n"
+            "        if (!thread_detach_user()) panic(\"rollback_detach\");\n"
+            "        return 0;\n"
+            "    }\n"
+            "    cpu_set_rsp0(c->exit_top);\n"
+            "    ++c->entries;\n"
+            "    return user_enter_asm(build_frame(c), &link->kern_save, c->space.root);",
+            "    for (unsigned int i = 0; i < 15; ++i) c->gprs[i] = 0;\n"
+            "    c->rip = USER_CODE_BASE; c->rsp = USER_STACK_TOP; c->rflags = 0x202;\n"
+            "    if (!sync_high(c)) {\n"
+            "        /* Unwind the attach: enter must be all-or-nothing. The detach is\n"
+            "           checked (R1): failure means scheduler corruption, so halt. */\n"
+            "        if (!thread_detach_user()) panic(\"rollback_detach\");\n"
+            "        return 0;\n"
+            "    }\n"
+            "    cpu_set_rsp0(USER_DATA_BASE + VM_PAGE_SIZE);\n"
+            "    ++c->entries;\n"
+            "    return user_enter_asm(build_frame(c), &link->kern_save, c->space.root);",
         )], source="kernel/core/user.c", timeout=20)
         self.assertIsNotNone(error)
         self.assertIn(b"[USER] failure=exit_rsp0", output)
@@ -213,8 +233,16 @@ class UserspaceIntegrationTests(unittest.TestCase):
         # against the 20 s deadline, failing fast hosts deterministically;
         # sibling suites accept both modes).
         output, error = self._run_user_mutation([(
-            "    if (vm_map(&c->space, USER_CODE_BASE, c->code_frame, VM_USER | VM_EXECUTE) != VM_OK ||",
-            "    if (vm_map(&c->space, USER_CODE_BASE, c->code_frame, VM_EXECUTE) != VM_OK ||",
+            "    for (unsigned int i = 0; i < code_pages; ++i) {\n"
+            "        if (vm_map(&c->space, USER_CODE_BASE + (cpu_u64)i * VM_PAGE_SIZE,\n"
+            "                   c->code_frame[i], VM_USER | VM_EXECUTE) != VM_OK)\n"
+            "            goto fail;\n"
+            "    }",
+            "    for (unsigned int i = 0; i < code_pages; ++i) {\n"
+            "        if (vm_map(&c->space, USER_CODE_BASE + (cpu_u64)i * VM_PAGE_SIZE,\n"
+            "                   c->code_frame[i], VM_EXECUTE) != VM_OK)\n"
+            "            goto fail;\n"
+            "    }",
         )], source="kernel/core/user.c", timeout=20)
         self.assertIsNotNone(error)
         self.assertTrue("timed out" in error or b"[USER] failure=create_a" in output,

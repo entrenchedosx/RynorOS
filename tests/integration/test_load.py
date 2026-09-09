@@ -135,7 +135,9 @@ def _corrupt(index, good):
     if index == 0:
         blob[0:4] = b"BAD!"
     elif index == 1:
-        struct.pack_into("<H", blob, 4, 2)
+        # RYNX v2 (Stage 18d Slice C) accepts version 2 with v1 sizes as
+        # a legitimate small v2 image, so the version-reject probe uses 3.
+        struct.pack_into("<H", blob, 4, 3)
     elif index == 2:
         struct.pack_into("<H", blob, 6, 2)
     elif index == 3:
@@ -330,8 +332,16 @@ class LoadIntegrationTests(unittest.TestCase):
 
     def test_mut_loader_maps_rwx(self):
         output, error = self._run_load_mutation([(
-            "    if (vm_map(&c->space, USER_CODE_BASE, c->code_frame, VM_USER | VM_EXECUTE) != VM_OK ||",
-            "    if (vm_map(&c->space, USER_CODE_BASE, c->code_frame, VM_USER | VM_WRITE | VM_EXECUTE) != VM_OK ||",
+            "    for (unsigned int i = 0; i < code_pages; ++i) {\n"
+            "        if (vm_map(&c->space, USER_CODE_BASE + (cpu_u64)i * VM_PAGE_SIZE,\n"
+            "                   c->code_frame[i], VM_USER | VM_EXECUTE) != VM_OK)\n"
+            "            goto fail;\n"
+            "    }",
+            "    for (unsigned int i = 0; i < code_pages; ++i) {\n"
+            "        if (vm_map(&c->space, USER_CODE_BASE + (cpu_u64)i * VM_PAGE_SIZE,\n"
+            "                   c->code_frame[i], VM_USER | VM_WRITE | VM_EXECUTE) != VM_OK)\n"
+            "            goto fail;\n"
+            "    }",
         )], source="kernel/core/user.c", timeout=20)
         self.assertIsNotNone(error)
         self.assertNotIn(b"[LOAD] load verified", output)

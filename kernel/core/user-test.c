@@ -96,15 +96,18 @@ static void map_evidence(struct user_context *c)
 static void lifecycle_tests(void)
 {
     struct accounting before = account();
-    struct user_context *a = 0, *b = 0, *d = 0;
+    struct user_context *a = 0, *b = 0, *c = 0, *d = 0;
     require(user_create(&a, USER_BLOB_EXIT) && a, "create_a");
     create_evidence(a);
     map_evidence(a);
     require(user_create(&b, USER_BLOB_EXIT) && b && b != a, "create_b");
     create_evidence(b);
     require(b->table_pages_at_create == a->table_pages_at_create, "tables_equal");
+    /* Stage 18d Slice C: three static contexts (was two in 18a-18c). */
+    require(user_create(&c, USER_BLOB_EXIT) && c && c != a && c != b, "create_c");
+    create_evidence(c);
     require(!user_create(&d, USER_BLOB_EXIT) && !d, "admission_full");
-    text("[USER] admission rejected slots=2\r\n");
+    text("[USER] admission rejected slots=3\r\n");
     thread_id junk = ~0ULL;
     require(!thread_create_with_flags(&junk, worker_main, 0, 0x402) &&
             !thread_create_with_flags(&junk, worker_main, 0, 0) &&
@@ -121,6 +124,10 @@ static void lifecycle_tests(void)
     require(user_destroy(b), "destroy_b");
     text("[USER] destroy slot=");
     number(bslot);
+    text("\r\n");
+    require(user_destroy(c), "destroy_c");
+    text("[USER] destroy slot=");
+    number(c->slot);
     text("\r\n");
     require(user_destroy(d), "destroy_d");
     text("[USER] destroy slot=");
@@ -302,7 +309,7 @@ static void worker_main(void *arg)
     require(rc == USER_RUN_EXITED && c->exit_code == 7 && c->state == USER_EXITED, "w_exit");
     worker_preemptions = c->preemptions;
     worker_code = c->code_size;
-    worker_data_frame = c->data_frame;
+    worker_data_frame = c->data_frame[0];
     require(thread_detach_user(), "w_detach");
     /* Leave teardown to bootstrap: it verifies the data frame (spill
        stability) after the join, then destroys. Destroying here would
@@ -350,7 +357,7 @@ static void preempt_tests(void)
     cpu_u64 rc = user_enter(&b->link);
     while (rc == USER_RUN_PREEMPTED || rc == USER_RUN_YIELDED) rc = user_resume(&b->link);
     require(rc == USER_RUN_EXITED && b->exit_code == 7 && b->state == USER_EXITED, "preempt_exit");
-    cpu_u64 b_pre = b->preemptions, b_code = b->code_size, b_data = b->data_frame;
+    cpu_u64 b_pre = b->preemptions, b_code = b->code_size, b_data = b->data_frame[0];
     require(thread_detach_user(), "preempt_detach");
     while (thread_ready_count() > 1) require(thread_yield(), "preempt_join");
     struct thread_statistics ws;

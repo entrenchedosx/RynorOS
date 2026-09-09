@@ -15,6 +15,13 @@ extern rt_main
 %endif
 section .text.start progbits alloc exec
 _start:
+    ; Frozen argv handoff (Stage 18d Slice C): the kernel enters with
+    ; RSP%16==0 and [RSP]=argc (see docs/design/stage18d-abi.md §E).
+    ; Forward argc/argv in the SysV argument registers so C mains use a
+    ; standard signature after the call push; RynorLang mains ignore the
+    ; registers. Old binaries carry their own stub and are unaffected.
+    mov rdi, [rsp]
+    lea rsi, [rsp + 8]
 %ifdef RL_ENTRY
     call rl_4_main
 %else
@@ -30,16 +37,26 @@ _start:
 ; r8=d, r9=e, [rsp+8]=f. Written in asm (not C constraints) so the
 ; register placement is auditable, not optimizer-dependent. No stack
 ; use before reading [rsp+8], so the 7th argument address is exact.
+; r10/r11 stage the rcx<->rdx swap (both are caller-saved scratch).
+; RBX/RBP are callee-saved under SysV and are preserved here with
+; push/pop (unlike inline-asm gates, the compiler cannot see inside).
 global rt_gate6
 section .text
 rt_gate6:
+    push rbx
+    push rbp
+    mov r10, rcx
+    mov r11, rdx
     mov eax, edi
     mov rbx, rsi
-    mov rdx, r8
-    mov rsi, r9
+    mov rcx, r11
+    mov rdx, r10
+    mov rsi, r8
     mov rdi, r9
-    mov rbp, [rsp + 8]
+    mov rbp, [rsp + 24]
     int 0x80
+    pop rbp
+    pop rbx
     ret
 
 ; One writable data byte. Without a truly writable input, an output

@@ -357,7 +357,7 @@ struct exception_frame *user_schedule_next(struct user_link *link, cpu_u64 retco
     check();
     require(link && current->user == link && link->bound && link->context,
             "user_next_link");
-    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_READ, "user_next_code");
+    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_TERMINATED, "user_next_code");
     link->kern_save.rax = retcode;
     current->saved = link->kern_save;
     struct thread *next = pick_next();

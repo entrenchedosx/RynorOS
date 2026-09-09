@@ -1,4 +1,4 @@
-"""RYNX v1: RynorOS userspace executable envelope (host side).
+"""RYNX v1/v2: RynorOS userspace executable envelope (host side).
 
 Stage 18b loads native RynorLang programs linked at fixed user virtual
 addresses (.text at USER_CODE_BASE, rodata/data/bss in the data window).
@@ -7,16 +7,20 @@ minimal envelope the kernel validates with checked arithmetic, and
 rejects anything outside the documented subset. See
 docs/design/executable-format.md.
 
+Stage 18d Slice C adds version 2 (same 28-byte layout, version-gated
+size classes): code tiles up to 32 KiB, data up to 16 KiB. v1 behavior
+is byte-identical (default conversion path unchanged).
+
 Envelope layout (all little-endian, 28 bytes, no trailing bytes):
   u8[4]  magic "RYNX"
-  u16    version (1)
+  u16    version (1 or 2)
   u16    arch (1 = x86-64)
   u16    header_len (28)
   u16    reserved (0)
   u32    entry_off (0: entry is defined as USER_CODE_BASE)
-  u32    code_size (1..4096)
-  u32    data_filesz (0..4096)
-  u32    data_memsz (filesz..4096)
+  u32    code_size (v1: 1..4096; v2: 1..32768)
+  u32    data_filesz (v1: 0..4096; v2: 0..16384)
+  u32    data_memsz (filesz..same class max)
 followed by code_size code bytes then data_filesz data bytes.
 """
 
@@ -24,12 +28,15 @@ import struct
 
 MAGIC = b"RYNX"
 VERSION = 1
+VERSION2 = 2
 ARCH_X86_64 = 1
 HEADER_LEN = 28
 
 CODE_BASE = 0x400000
 DATA_BASE = 0x600000
 PAGE = 4096
+CODE_MAX2 = 8 * PAGE
+DATA_MAX2 = 4 * PAGE
 
 PT_NULL = 0
 PT_LOAD = 1
@@ -55,15 +62,36 @@ def _u64(data, offset):
     return struct.unpack_from("<Q", data, offset)[0]
 
 
-def build_envelope(code: bytes, data_filesz: int, data_memsz: int, data: bytes) -> bytes:
+def build_envelope(code: bytes, data_filesz: int, data_memsz: int, data: bytes,
+                   version: int = VERSION) -> bytes:
     """Assemble a validated envelope (used by tests and the converter)."""
-    header = (MAGIC + struct.pack("<HHHH", VERSION, ARCH_X86_64, HEADER_LEN, 0)
+    if version not in (VERSION, VERSION2):
+        raise ValueError(f"unknown RYNX version {version}")
+    code_max = PAGE if version == VERSION else CODE_MAX2
+    data_max = PAGE if version == VERSION else DATA_MAX2
+    if not 1 <= len(code) <= code_max:
+        raise ValueError("bad code size for version %d" % version)
+    if not 0 <= data_filesz <= data_memsz <= data_max:
+        raise ValueError("bad data sizes for version %d" % version)
+    if len(bytes(data)) != data_filesz:
+        raise ValueError("data payload length mismatch")
+    header = (MAGIC + struct.pack("<HHHH", version, ARCH_X86_64, HEADER_LEN, 0)
               + struct.pack("<IIII", 0, len(code), data_filesz, data_memsz))
     return header + bytes(code) + bytes(data)
 
 
-def elf_to_rnyx(data: bytes) -> bytes:
-    """Convert a linked RynorOS ELF to RYNX bytes. Raises ValueError."""
+def elf_to_rnyx(data: bytes, version: int = VERSION) -> bytes:
+    """Convert a linked RynorOS ELF to RYNX bytes. Raises ValueError.
+
+    version selects the size class (1: single-page windows, the default
+    byte-identical path; 2: bounded multi-page windows). The ELF itself
+    must already observe the chosen windows (enforced by the link
+    script); this function never widens v1 images.
+    """
+    if version not in (VERSION, VERSION2):
+        raise ValueError(f"unknown RYNX version {version}")
+    code_max = PAGE if version == VERSION else CODE_MAX2
+    data_max = PAGE if version == VERSION else DATA_MAX2
     data = bytes(data)
     if len(data) < 64 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
         raise ValueError("not a 64-bit little-endian ELF")
@@ -106,7 +134,7 @@ def elf_to_rnyx(data: bytes) -> bytes:
                 raise ValueError("W+X segment")
             if p_memsz != p_filesz:
                 raise ValueError("BSS in executable segment")
-            if p_vaddr != CODE_BASE or p_memsz > PAGE:
+            if p_vaddr != CODE_BASE or p_memsz > code_max:
                 raise ValueError("code outside the code window")
             if code is not None:
                 raise ValueError("duplicate code segment")
@@ -118,12 +146,12 @@ def elf_to_rnyx(data: bytes) -> bytes:
             # the whole page U-RW, so both tile one file image; string
             # immutability inside it is a language property).
             if p_vaddr < DATA_BASE or p_vaddr + p_memsz < p_vaddr \
-                    or p_vaddr + p_memsz > DATA_BASE + PAGE:
+                    or p_vaddr + p_memsz > DATA_BASE + data_max:
                 raise ValueError("data outside the data window")
             data_loads.append((p_vaddr, p_offset, p_filesz, p_memsz))
     if code is None:
         raise ValueError("no code segment")
-    if not 0 < code_filesz <= PAGE:
+    if not 0 < code_filesz <= code_max:
         raise ValueError("bad code size")
     data_loads.sort()
     data_blob = b""
@@ -138,6 +166,7 @@ def elf_to_rnyx(data: bytes) -> bytes:
         cursor += memsz
         data_memsz += memsz
     data_filesz = len(data_blob)
-    if not 0 <= data_filesz <= data_memsz <= PAGE:
+    if not 0 <= data_filesz <= data_memsz <= data_max:
         raise ValueError("bad data sizes")
-    return build_envelope(code, data_filesz, data_memsz, data_blob)
+    return build_envelope(code, data_filesz, data_memsz, data_blob,
+                          version=version)
