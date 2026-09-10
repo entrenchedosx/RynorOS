@@ -379,12 +379,14 @@ def build_rynor_c_program(sources: dict, workdir: str | Path, prog: str = "prog"
 
     sources maps basename -> text (staged verbatim; basenames only, no
     directories). Exactly one program entry is expected: the library
-    gate stub calls rt_main, so one source must define it. Links the
-    18c library (rt.c, no RIR helpers) with rynoros.ld. rtlib_dir
-    overrides the library source directory (mutation testing).
-    link_script names an alternate script from the runtime directory
-    (Stage 18d v2: "rynoros_v2.ld" for bounded multi-page windows;
-    default keeps the v1 script byte-identical). Returns
+    gate stub calls rt_main, so one source must define it. ".h"
+    entries are staged verbatim for #include use but never compiled
+    (Stage 18d Slice D: guest programs share rt_pipe.h this way).
+    Links the 18c library (rt.c, no RIR helpers) with rynoros.ld.
+    rtlib_dir overrides the library source directory (mutation
+    testing). link_script names an alternate script from the runtime
+    directory (Stage 18d v2: "rynoros_v2.ld" for bounded multi-page
+    windows; default keeps the v1 script byte-identical). Returns
     ({"objs","exe"}, None) or (None, {"code","message"}).
     """
     workdir = Path(workdir)
@@ -430,6 +432,8 @@ def build_rynor_c_program(sources: dict, workdir: str | Path, prog: str = "prog"
     try:
         objs = []
         for name in sources:
+            if Path(name).suffix == ".h":
+                continue
             out = workdir / (Path(name).stem + ".o")
             proc = subprocess.run(
                 [clang, *RTLIB_CLANG_FLAGS, *builtin_includes, "-I.", "-c", name,

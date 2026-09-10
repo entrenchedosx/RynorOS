@@ -18,6 +18,10 @@ from proc_output import split_proc_tail, validate_proc_section
 from user_output import split_user_sections, validate_user_section
 from load_output import split_load_sections, validate_load_section
 from rt_output import split_rt_sections, validate_rt_section
+from pipe_output import (FREAD_START, FREAD_VERIFIED, PIPE_START,
+                         PIPE_VERIFIED, strip_section,
+                         extract_fread_section, extract_pipe_section,
+                         validate_fread_section, validate_pipe_section)
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -89,6 +93,26 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
     # structurally complete; absent ones are valid here (the host boot
     # loop, not this validator, waits for the final verified markers
     # before declaring success).
+    # Stage 18d Slice D file/pipe sections trail the proc run on
+    # pipe-test images only. They are stripped (and validated) before
+    # the Slice C chain below, whose splitters are greedy to end of
+    # tail; absent sections are a silent no-op everywhere else.
+    def strip_pipe_sections(block: bytes) -> tuple:
+        errs: list[str] = []
+        if FREAD_START in block:
+            if extract_fread_section(block) is None:
+                errs.append("fread section incomplete")
+            else:
+                errs.extend(validate_fread_section(block))
+                block = strip_section(block, FREAD_START, FREAD_VERIFIED)
+        if PIPE_START in block:
+            if extract_pipe_section(block) is None:
+                errs.append("pipe section incomplete")
+            else:
+                errs.extend(validate_pipe_section(block))
+                block = strip_section(block, PIPE_START, PIPE_VERIFIED)
+        return block, errs
+
     shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
     if shell_sep != b"":
         shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
@@ -105,7 +129,11 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             # It must split before the rt/user/load chain: split_rt_sections
             # would otherwise swallow input lines into the rt section.
             # The Slice C proc section (with embedded child [LOAD] write
-            # rows) trails input the same way when present.
+            # rows) trails input the same way when present. Slice D
+            # file/pipe sections trail proc; strip them first (the
+            # chain below is greedy to end of tail).
+            tail, pipe_errs = strip_pipe_sections(tail)
+            errors.extend(pipe_errs)
             tail, proc_part = split_proc_tail(tail)
             errors.extend(validate_proc_section(proc_part))
             tail, input_part = split_input_tail(tail)
@@ -122,6 +150,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
     elif require_shell:
         errors.append("Required interactive shell output missing")
     elif post != b"":
+        post, pipe_errs = strip_pipe_sections(post)
+        errors.extend(pipe_errs)
         post, proc_part = split_proc_tail(post)
         errors.extend(validate_proc_section(proc_part))
         post, input_part = split_input_tail(post)

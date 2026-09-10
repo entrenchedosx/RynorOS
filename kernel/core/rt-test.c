@@ -61,9 +61,11 @@ static void balanced(struct accounting before)
     text("[RT] accounting balanced\r\n");
 }
 
-/* File staging: largest rt program stays under header + 4K code + 4K
-   data (single-read cap); 2-byte aligned for the block layer. */
-static _Alignas(2) cpu_u8 file_buf[16384u];
+/* File staging uses the shared boot-test buffer defined in
+   load-test.c (Stage 18d Slice D BSS budget; 2-byte aligned there).
+   Test drivers run sequentially and always fill before reading. */
+extern cpu_u8 load_file_buf[16384u];
+#define file_buf load_file_buf
 
 /* Run to a terminal code, resuming yields/writes. The timer stays
    masked, so preemptions cannot occur; any other return fails. */

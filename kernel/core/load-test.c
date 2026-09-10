@@ -62,8 +62,15 @@ static void balanced(struct accounting before)
 }
 
 /* File staging: largest RYNX is header + 4K code + 4K data (under the
-   single-read cap); 2-byte aligned for the block layer. */
-static _Alignas(2) cpu_u8 file_buf[16384u];
+   single-read cap); 2-byte aligned for the block layer.
+   Stage 18d Slice D: this 16 KiB buffer is the single shared file
+   staging area for the boot-time test drivers (load/rt/fs). The drivers
+   run strictly sequentially and every use fills the buffer before
+   reading it, so sharing is sound; it saves 32 KiB of kernel BSS
+   against the fixed 0x70000 link budget (see rt-test.c, fs-test.c).
+   Production syscall staging (load.c) never uses this buffer. */
+_Alignas(2) cpu_u8 load_file_buf[16384u];
+#define file_buf load_file_buf
 
 /* Run to a terminal code, resuming yields/writes/preemptions. */
 static cpu_u64 run_loaded(struct user_link *link)

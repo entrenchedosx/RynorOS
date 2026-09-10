@@ -58,6 +58,11 @@ enum stdout_sel {
 #define UAPI_MAX_BIN_NAME 27u
 #define UAPI_MAX_PROCS 3u
 #define UAPI_PIPE_BUF 4096u
+/* Stage 18d Slice D: stateless fread batch cap (frozen ABI §D table:
+   len<=16384, no flags word) and single-pipe bound (3 contexts admit at
+   most one concurrent two-child pipeline). */
+#define UAPI_FREAD_MAX 16384u
+#define UAPI_PIPE_MAX 1u
 
 /* Argument descriptor: 16 bytes, alignment 8. Caller strings carry no
  * NUL (the kernel appends exactly one per argument); interior NUL bytes

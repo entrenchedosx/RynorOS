@@ -7,6 +7,8 @@
 #include "kbd.h"
 #include "serial.h"
 #include "proc.h"
+#include "pipe.h"
+#include "fs.h"
 
 /* Stage 18b executable loading + syscalls (int $0x80 gate extension).
    All entry points require IF=0 foreground unless noted; hostile bytes
@@ -128,6 +130,33 @@ cpu_u64 sys_write(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len)
     if (!c) return (cpu_u64)-1;
     /* Argument validation precedes any memory touch. */
     if (fd != SYS_STDOUT) return (cpu_u64)-1;
+    /* Stage 18d Slice D: fd1 pipe-writer routing. Ordinary children
+       (STDOUT_SERIAL) take the byte-identical path below; two-stage
+       producers (STDOUT_PIPE) enqueue into the kernel-owned pipe. */
+    {
+        int owner = proc_owner_of(c);
+        if (owner != PROC_OWNER_KERNEL && owner >= 0) {
+            cpu_u64 gen = 0;
+            unsigned int stdin_sel = STDIN_KBD, stdout_sel = STDOUT_SERIAL;
+            int live = 0;
+            if (proc_slot_info((unsigned int)owner, &gen, &stdin_sel,
+                               &stdout_sel, &live) && live &&
+                stdout_sel == STDOUT_PIPE) {
+                cpu_u64 w;
+                if (len > SYSCALL_WRITE_MAX) return (cpu_u64)-1;
+                if (len == 0) return 0;
+                if (buf + len < buf) return (cpu_u64)-1;
+                if (copy_from_user(c, write_stage, buf, len) != len)
+                    return (cpu_u64)-1;
+                w = pipe_write((unsigned int)owner, gen, write_stage, len);
+                /* pipe_write: count/short-0 pass through; broken (-1)
+                   passes through; invalid (-2) maps to the existing
+                   invalid class (-1). */
+                if (w == (cpu_u64)-2) return (cpu_u64)-1;
+                return w;
+            }
+        }
+    }
     if (len > SYSCALL_WRITE_MAX) return (cpu_u64)-1;
     if (len == 0) return 0;
     if (buf + len < buf) return (cpu_u64)-1;
@@ -193,9 +222,14 @@ cpu_u64 copy_to_user(struct user_context *c, cpu_u64 uaddr,
     return len;
 }
 
-/* Staging for validated keyboard bytes (single CPU, IF=0 handler context
-   only; never shared, never retained across calls). */
-static cpu_u8 read_stage[SYSCALL_READ_MAX];
+/* Staging for validated keyboard/file bytes (single CPU, IF=0 handler
+   context only; never shared, never retained across calls). Slice D:
+   2-byte aligned so the same buffer stages fs_read chunks (the block
+   layer rejects odd buffers); reuse across read/fread is sound because
+   handlers never interleave (IF=0, single CPU). */
+static _Alignas(2) cpu_u8 read_stage[SYSCALL_READ_MAX];
+/* Slice D fread pathname staging (33 = 32-byte cap + NUL). */
+static cpu_u8 fread_path[33];
 
 int sys_read(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len,
              cpu_u64 nread_out, cpu_u64 flags)
@@ -212,6 +246,48 @@ int sys_read(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len,
        first would let a hostile nread_out discard user input). */
     if (copy_dest_ok(c, nread_out, sizeof(cpu_u64)) != sizeof(cpu_u64))
         return SYS_INVAL;
+    /* Stage 18d Slice D: fd0 pipe-reader routing. Two-stage consumers
+       (STDIN_PIPE) read from the kernel-owned pipe; every other caller
+       takes the unchanged keyboard/CLOSED path below. */
+    {
+        int owner = proc_owner_of(c);
+        if (owner != PROC_OWNER_KERNEL && owner >= 0) {
+            cpu_u64 gen = 0;
+            unsigned int stdin_sel = STDIN_KBD, stdout_sel = STDOUT_SERIAL;
+            int live = 0;
+            if (proc_slot_info((unsigned int)owner, &gen, &stdin_sel,
+                               &stdout_sel, &live) && live &&
+                stdin_sel == STDIN_PIPE) {
+                cpu_u64 n = 0;
+                int rc;
+                if (len == 0) {
+                    cpu_u64 zero = 0;
+                    if (copy_to_user(c, nread_out, (const cpu_u8 *)&zero,
+                                     sizeof(zero)) != sizeof(zero))
+                        return SYS_INVAL;
+                    return SYS_OK;
+                }
+                if (buf + len < buf) return SYS_INVAL;
+                if (copy_dest_ok(c, buf, len) != len) return SYS_INVAL;
+                /* Stage without dequeuing; dequeue only after both
+                   user copies succeed (D-M9: early dequeue loses bytes
+                   on a failed copyout). */
+                rc = pipe_read_stage((unsigned int)owner, gen, read_stage,
+                                     len, &n);
+                if (rc == SYS_AGAIN) return SYS_AGAIN;
+                if (rc != SYS_OK) return SYS_INVAL;
+                if (n > 0) {
+                    if (copy_to_user(c, buf, read_stage, n) != n)
+                        return SYS_INVAL;
+                }
+                if (copy_to_user(c, nread_out, (const cpu_u8 *)&n,
+                                 sizeof(n)) != sizeof(n))
+                    return SYS_INVAL;
+                if (n > 0 && !pipe_read_commit(n)) return SYS_INVAL;
+                return SYS_OK;
+            }
+        }
+    }
     /* Per-process CLOSED stdin (Slice C spawn selectors) reads EOF
        without touching the shared keyboard stream. Contexts outside any
        process (test probes, bootstrap) always see the keyboard. */
@@ -254,6 +330,139 @@ int sys_read(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len,
     return SYS_OK;
 }
 
+/* Stage 18d Slice D: stateless file read over a kernel-memory path.
+ *
+ * kpath is NUL-terminated kernel memory (never a user pointer); kbuf is
+ * a kernel buffer of at least len bytes, 2-byte aligned when len > 0;
+ * len is bounded by UAPI_FREAD_MAX. Each call opens internally, reads
+ * at most len bytes at offset, and closes: no handle escapes. Returns
+ * a frozen sys_err code with *nread_out published only on SYS_OK
+ * (short at EOF, zero exactly at EOF); every other outcome leaves it
+ * untouched. The driver exercises this core directly; sys_fread adds
+ * the userspace staging/publication shell. */
+int kern_fread(const char *kpath, cpu_u64 offset, cpu_u8 *kbuf,
+               cpu_u64 len, cpu_u64 *nread_out)
+{
+    struct fs_stat st;
+    cpu_u32 h = 0;
+    cpu_u64 n = 0;
+    int rc;
+    if (!foreground() || !kpath || !nread_out) return SYS_INVAL;
+    if (len > UAPI_FREAD_MAX) return SYS_INVAL;
+    if (len > 0 && (!kbuf || ((cpu_u64)kbuf & 1u))) return SYS_INVAL;
+    /* Staged-pathname rule: the caller staged the path; semantic
+       validation runs on the kernel copy only (D-M2 mutant). */
+    if (!fs_path_ok(kpath)) return SYS_BADARG;
+    rc = fs_stat(kpath, &st);
+    if (rc != FS_OK) return SYS_NOTFOUND;
+    if (st.type != FS_TYPE_FILE) return SYS_MALFORMED;
+    if (offset > st.size) return SYS_BADARG;
+    {
+        cpu_u64 avail = st.size - offset;
+        n = len < avail ? len : avail;
+    }
+    if (n == 0) {
+        *nread_out = 0;
+        return SYS_OK;
+    }
+    if (fs_open(kpath, &h) != FS_OK) return SYS_NOTFOUND;
+    {
+        cpu_u64 got = 0;
+        while (got < n) {
+            cpu_u64 chunk = n - got > SYSCALL_READ_MAX ? SYSCALL_READ_MAX : n - got;
+            cpu_u64 m = 0;
+            /* Chunk offsets advance monotonically (no wrap: off <= size,
+               chunk <= size - off), so every fs_read range is in-bounds
+               by construction. */
+            if (fs_read(h, offset + got, kbuf + got, chunk, &m) != FS_OK ||
+                m != chunk) {
+                (void)fs_close(h);
+                return SYS_IOERR;
+            }
+            got += m;
+        }
+    }
+    if (fs_close(h) != FS_OK) return SYS_IOERR;
+    *nread_out = n;
+    return SYS_OK;
+}
+
+/* Stage 18d Slice D, syscall 7: stateless fread.
+ * Frozen register file: EBX path_ptr, ECX path_len (1..32), EDX offset,
+ * ESI buf, EDI len (<=16384), EBP nread_out. No flags word exists.
+ * Validation order (Slice B discipline): scalars -> wrap checks ->
+ * stage pathname once -> validate staged path -> validate outputs ->
+ * filesystem operation into kernel staging -> copy payload out ->
+ * publish count LAST. */
+int sys_fread(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
+              cpu_u64 offset, cpu_u64 buf, cpu_u64 len, cpu_u64 nread_out)
+{
+    cpu_u64 done = 0;
+    if (!c) return SYS_INVAL;
+    if (!foreground()) return SYS_INVAL;
+    if (path_len < 1 || path_len > FS_MAX_PATH) return SYS_BADARG;
+    if (len > UAPI_FREAD_MAX) return SYS_INVAL;
+    if (path_ptr + path_len < path_ptr) return SYS_BADARG;
+    /* Stage the pathname once; every later check runs on the copy. */
+    if (copy_from_user(c, fread_path, path_ptr, path_len) != path_len)
+        return SYS_BADARG;
+    fread_path[path_len] = 0;
+    if (!fs_path_ok((const char *)fread_path)) return SYS_BADARG;
+    /* Output capability before any filesystem operation (A3: a hostile
+       destination must fail here, never after state moves). The data
+       buffer is untouched on zero-length calls. */
+    if (len > 0) {
+        if (buf + len < buf) return SYS_BADARG;
+        if (copy_dest_ok(c, buf, len) != len) return SYS_BADARG;
+    }
+    if (nread_out + sizeof(cpu_u64) < nread_out) return SYS_BADARG;
+    if (copy_dest_ok(c, nread_out, sizeof(cpu_u64)) != sizeof(cpu_u64))
+        return SYS_BADARG;
+    /* Zero length still names a file: validate path, existence, type,
+       and offset (never touching buf), then publish zero. */
+    if (len == 0) {
+        cpu_u64 m = 0;
+        cpu_u64 zero = 0;
+        int rc = kern_fread((const char *)fread_path, offset, read_stage,
+                            0, &m);
+        if (rc != SYS_OK) return rc;
+        if (copy_to_user(c, nread_out, (const cpu_u8 *)&zero,
+                         sizeof(zero)) != sizeof(zero))
+            return SYS_INVAL;
+        return SYS_OK;
+    }
+    /* Bounded chunk loop over the 4 KiB kernel stage (no 16 KiB static
+       staging against the link budget; each chunk is an independent
+       stateless read, so multi-chunk transfers are byte-identical to a
+       single call). */
+    while (done < len) {
+        cpu_u64 chunk = len - done > SYSCALL_READ_MAX ? SYSCALL_READ_MAX : len - done;
+        cpu_u64 m = 0;
+        int rc = kern_fread((const char *)fread_path, offset + done,
+                            read_stage, chunk, &m);
+        if (rc != SYS_OK) {
+            /* Short reads surface as OK inside kern_fread; any error
+               here (NOTFOUND/MALFORMED/BADARG/IOERR) leaves both user
+               outputs untouched. BADARG arises only for offset past
+               end, which the first chunk reports deterministically. */
+            return rc;
+        }
+        if (m > 0) {
+            if (copy_to_user(c, buf + done, read_stage, m) != m)
+                return SYS_INVAL;
+            done += m;
+        }
+        if (m < chunk) break; /* EOF: no further bytes exist. */
+        if (done >= len) break;
+        /* offset + done cannot wrap: done <= len <= 16K and the file
+           offset advanced monotonically inside kern_fread. */
+    }
+    if (copy_to_user(c, nread_out, (const cpu_u8 *)&done,
+                     sizeof(done)) != sizeof(done))
+        return SYS_INVAL;
+    return SYS_OK;
+}
+
 static void text(const char *s)
 {
     /* Evidence printing; the caller guarantees a working serial. */
@@ -270,9 +479,24 @@ static void number(cpu_u64 n)
 }
 
 void sys_write_evidence(struct user_context *c, cpu_u64 fd, cpu_u64 len,
-                        cpu_u64 nwritten)
+                         cpu_u64 nwritten)
 {
     static const char digits[] = "0123456789abcdef";
+    /* Stage 18d Slice D: pipe writes carry no per-call evidence row
+       (streaming throughput would flood the transcript); driver
+       evidence comes from pipe snapshots. Serial rows are unchanged. */
+    {
+        int owner = proc_owner_of(c);
+        if (owner != PROC_OWNER_KERNEL && owner >= 0) {
+            cpu_u64 gen = 0;
+            unsigned int stdin_sel = STDIN_KBD, stdout_sel = STDOUT_SERIAL;
+            int live = 0;
+            if (proc_slot_info((unsigned int)owner, &gen, &stdin_sel,
+                               &stdout_sel, &live) && live &&
+                stdout_sel == STDOUT_PIPE)
+                return;
+        }
+    }
     text("[LOAD] write slot=");
     number(c->slot);
     text(" fd=");

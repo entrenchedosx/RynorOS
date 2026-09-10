@@ -16,6 +16,7 @@
 #include "rttest.h"
 #include "readtest.h"
 #include "proctest.h"
+#include "pipetest.h"
 
 /* RYNOR_VERSION is supplied from project.json, without timestamps or host paths. */
 void kernel_main(void)
@@ -75,6 +76,11 @@ void kernel_main(void)
        When disabled nothing prints here, so default transcripts stay
        byte-identical. */
     if (RYNOR_PROC_TEST) proc_self_test();
+    serial_flush();
+    /* Stage 18d Slice D gated pipe/file test (test images only): runs
+       after the proc test; its [FREAD]/[PIPE] sections become the
+       transcript terminator when enabled. Disabled prints nothing. */
+    if (RYNOR_PIPE_TEST) pipe_self_test();
     serial_flush();
     serial_flush();
     /* Returning reaches the entry stub's CLI/HLT loop, never BIOS or host code. */

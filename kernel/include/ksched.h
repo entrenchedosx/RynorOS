@@ -41,6 +41,12 @@ int thread_state(thread_id id, enum thread_state *out);
 thread_id thread_current(void);
 int thread_current_stack_base(cpu_u64 *base);
 int thread_ready_count(void);
+/* Stage 18d Slice D: FREE thread slots (pure capacity query, IF=0;
+ * mirrors thread_ready_count). Lets spawn_pipe verify two-worker
+ * capacity before creating anything, so a second-half thread
+ * exhaustion fails closed with zero admission instead of stranding a
+ * first worker that has no teardown path. No scheduler change. */
+int thread_free_count(void);
 int thread_yield(void); /* saves/restores caller IF; rejects IRQ/lock context */
 void thread_exit(void) __attribute__((noreturn)); /* never frees its live stack */
 

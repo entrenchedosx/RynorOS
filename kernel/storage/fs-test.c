@@ -47,7 +47,11 @@ static cpu_u64 byte_wsum(const cpu_u8 *b, cpu_u64 n)
     return s;
 }
 
-static _Alignas(2) cpu_u8 fsbuf[16384u];
+/* Bulk staging uses the shared boot-test buffer defined in
+   load-test.c (Stage 18d Slice D BSS budget; 2-byte aligned there).
+   Test drivers run sequentially and always fill before reading. */
+extern cpu_u8 load_file_buf[16384u];
+#define fsbuf load_file_buf
 static _Alignas(2) cpu_u8 tiny[64u];
 
 /* Fixed write payloads are generated here and printed as hex: the host
