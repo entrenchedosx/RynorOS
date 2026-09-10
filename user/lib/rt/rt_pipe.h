@@ -22,6 +22,12 @@
 
 #define RT_SYS_FREAD 7u
 #define RT_SYS_SPAWN_PIPE 8u
+/* Stage 18d Slice E: process numbers for shell use (shells use the
+   raw gate for exact sys_err codes; these mirrors exist for
+   readability only). Pinned equal to the kernel header by test. */
+#define RT_SYS_SPAWN 4u
+#define RT_SYS_WAIT 5u
+#define RT_SYS_TERMINATE 6u
 
 #define RT_PIPE_BUF 4096u
 #define RT_FREAD_MAX 16384u
@@ -31,6 +37,34 @@ extern unsigned long long rt_gate6(unsigned int num, unsigned long long a,
                                    unsigned long long b, unsigned long long c,
                                    unsigned long long d, unsigned long long e,
                                    unsigned long long f);
+
+/* Frozen spawn/wait layouts for shell use (16/96/16 bytes; identical
+ * to kernel/include/uapi.h, pinned by test, never kernel headers). */
+struct rt_user_arg {
+    unsigned long long ptr;
+    unsigned long long len;
+};
+
+struct rt_spawn_spec {
+    unsigned long long path_ptr;
+    unsigned long long path_len;
+    unsigned long long args_ptr;
+    unsigned int nargs;
+    unsigned int stdin_sel;
+    unsigned int stdout_sel;
+    unsigned int stderr_sel;
+    unsigned long long file_in;
+    unsigned long long file_out;
+    unsigned long long file_err;
+    unsigned long long reserved[4];
+};
+
+struct rt_proc_status {
+    unsigned int state;
+    unsigned int code;
+    unsigned int detail;
+    unsigned int reserved;
+};
 
 /* Thin fread wrapper. Kernel sys_err collapses like rt_fd_read:
  * OK -> RT_OK, everything else -> RT_INVAL (exact codes are asserted

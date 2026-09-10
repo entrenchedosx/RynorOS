@@ -210,6 +210,17 @@ REQUIRED_FILES = (
     "user/proc-tests/p_fprod.c", "user/proc-tests/p_fcons.c",
     "user/proc-tests/p_freadprobe.c", "user/proc-tests/p_pipeprobe.c",
     "user/proc-tests/p_discprobe.c", "user/proc-tests/p_rxread.c",
+    # Stage 18d Slice E: CPL3 shell, shell helpers, shell boot driver,
+    # shell validator, and tests. No evaluator exists yet (Slice F).
+    "kernel/include/shd.h", "kernel/core/shd.c",
+    "user/shell/sh.c", "user/shell/sh_key.c", "user/shell/sh_key.h",
+    "user/shell/sh_parse.c", "user/shell/sh_parse.h",
+    "user/proc-tests/sh_echo.c", "user/proc-tests/sh_cat.c",
+    "user/proc-tests/sh_upper.c", "user/proc-tests/sh_exit.c",
+    "user/proc-tests/sh_dcode.c", "user/proc-tests/sh_prod.c",
+    "tools/host/sh_output.py",
+    "tests/repository/test_shell_abi.py",
+    "tests/integration/test_cplshell.py",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.

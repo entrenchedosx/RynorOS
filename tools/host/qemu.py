@@ -20,6 +20,8 @@ from kbd_output import KEYS, KBD_END, key_sequence, validate_keyboard_trace, val
 from input_output import INPUT_VERIFIED, INPUT_SCANS, input_key_sequence
 from proc_output import PROC_VERIFIED
 from pipe_output import FREAD_VERIFIED, PIPE_VERIFIED
+from sh_output import stream_contains as sh_stream_contains
+from sh_output import terminal_stream as sh_stream
 from display_output import DISPLAY_END, DISPLAY_START, parse_display_output, verify_display_pixels, verify_display_scanout
 from shell_output import SHELL_END, SHELL_KEYS, SCANS as SHELL_SCANS
 from kernel_elf import read_symbols
@@ -39,7 +41,8 @@ _PROVENANCE = {}
 def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
                    require_shell: bool = False, shell_script=(),
                    require_input: bool = False, require_proc: bool = False,
-                   require_pipe: bool = False) -> bool:
+                   require_pipe: bool = False, require_sh: bool = False,
+                   sh_done: bytes | None = None) -> bool:
     """Pure completion predicate for the boot loop (unit-testable).
 
     Defaults mirror boot_image's non-interactive path. A normal
@@ -70,6 +73,14 @@ def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
     if require_pipe:
         return (PROC_VERIFIED in observed and FREAD_VERIFIED in observed
                 and PIPE_VERIFIED in observed)
+    if require_sh:
+        # Interactive sessions end at harness-defined completion (the
+        # shell itself never halts); script sessions end at [SHD] halt.
+        # sh_done names the exact completion row for the test; [SH]
+        # rows match on the decoded [LOAD]-hex stream, [SHD] rows raw.
+        if sh_done is None:
+            return False
+        return sh_done in observed or sh_stream_contains(observed, sh_done)
     return True
 
 
@@ -115,7 +126,9 @@ def _locate_firmware(qemu_path: Path) -> Path | None:
 def _inject_pending_keys(process, observed: bytes, keys: list[str], next_index: list[int],
                          shell_keys: tuple[str, ...] | list[str] = (), shell_index: list[int] | None = None,
                          input_keys: tuple[str, ...] | list[str] = (), input_index: list[int] | None = None,
-                         window_seen: list[int] | None = None) -> None:
+                         window_seen: list[int] | None = None,
+                         sh_keys: tuple | list = (), sh_sent: list[int] | None = None,
+                         sh_burst: tuple | list = (), burst_sent: list[int] | None = None) -> None:
     """Send one validated host-selected key after its serial request. The Stage 8
     keys are driven by the "[KBD] waiting" markers and the Stage 11 interactive
     shell keys by the "[SHELL] waiting" markers; each stream advances only when
@@ -147,6 +160,72 @@ def _inject_pending_keys(process, observed: bytes, keys: list[str], next_index: 
         process.stdin.write(b"sendkey %s\n" % shell_keys[shell_index[0]].encode())
         process.stdin.flush()
         shell_index[0] += 1
+    # Stage 18d Slice E shell streams. sh_burst entries go blind
+    # exactly once, right after the keyboard self-test ends (nobody
+    # drains the queue until the shell starts, so overruns/epochs are
+    # deterministic). sh_keys entries serve one [SH] wantkey marker
+    # each; an entry is one sendkey name or a tuple joined with "-"
+    # into a single held combo (e.g. ("shift", "a") sends
+    # "shift-a"; ("ctrl", "c") sends "ctrl-c").
+    if sh_sent is None:
+        sh_sent = [0]
+    if burst_sent is None:
+        burst_sent = [0]
+    if not burst_sent[0] and KBD_END in observed and sh_burst:
+        if process.stdin is None:
+            raise RuntimeError("QEMU monitor input is unavailable")
+        for entry in sh_burst:
+            names = (entry,) if isinstance(entry, str) else tuple(entry)
+            process.stdin.write(b"sendkey %s\n" % "-".join(names).encode())
+        process.stdin.flush()
+        burst_sent[0] = 1
+    # Strict paced serving: the shell prints wantkey markers as it
+    # consumes key events and only accepts typing while a line is open
+    # (submitted/executing input is discarded, so oversending future
+    # lines corrupts them — never send past the highest marker seen).
+    # One send per poll; markers may skip on multi-event drains, hence
+    # max-seen (not sequential) tracking.
+    if sh_keys:
+        if process.stdin is None:
+            raise RuntimeError("QEMU monitor input is unavailable")
+        stream = sh_stream(observed)
+        seen = -1
+        for match in re.finditer(rb"\[SH\] wantkey (\d+)\r\n", stream):
+            seen = max(seen, int(match.group(1)))
+        if seen >= 0 and sh_sent[0] <= seen and sh_sent[0] < len(sh_keys):
+            entry = sh_keys[sh_sent[0]]
+            names = (entry,) if isinstance(entry, str) else tuple(entry)
+            process.stdin.write(b"sendkey %s\n" % "-".join(names).encode())
+            process.stdin.flush()
+            sh_sent[0] += 1
+            return
+        # Foreground abort: the next key is Ctrl-C, its line was
+        # submitted (prior key consumed, and no fresh marker arrives
+        # while a child runs), and a spawn is observably outstanding
+        # (spawned rows exceed closing done/abort rows). Regular keys
+        # are never served unpaced; Ctrl-C acts on foreground work,
+        # so only it may skip the marker wait. If the child already
+        # exited, its done row closes the spawn and the later marker
+        # serves this Ctrl-C as an editing abort instead (the E-C4
+        # race rule covers both orders).
+        if sh_sent[0] < len(sh_keys) and seen == sh_sent[0] - 1:
+            entry = sh_keys[sh_sent[0]]
+            names = (entry,) if isinstance(entry, str) else tuple(entry)
+            if tuple(names) == ("ctrl", "c"):
+                # Positional outstanding check (counts misalign:
+                # builtins donate dones without spawns): a spawn is
+                # outstanding iff the latest spawn-lifecycle row
+                # opened one after the latest close.
+                last_open = stream.rfind(b"[SH] spawned ")
+                last_close = max(stream.rfind(b"[SH] done status="),
+                                 stream.rfind(b"[SH] abort child status="),
+                                 stream.rfind(b"[SH] abort pipeline status="))
+                if last_open > last_close:
+                    process.stdin.write(b"sendkey %s\n"
+                                        % "-".join(names).encode())
+                    process.stdin.flush()
+                    sh_sent[0] += 1
+                    return
     # Stage 18d input stream: indexed markers take one key each from the
     # positional tuple; a window marker names its own keys (attempts vary,
     # so windows are self-describing, never positional).
@@ -246,9 +325,11 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                max_ram_below_4g_mib: int | None = None,
                keys: tuple[str, ...] = KEYS, inject_keys: bool = True,
                shell_interactive: bool = False, shell_keys=None,
-                input_keys=None, require_input: bool = False,
-                require_proc: bool = False, require_pipe: bool = False,
-                extra_drives: tuple = ()) -> bytes:
+               input_keys=None, require_input: bool = False,
+               require_proc: bool = False, require_pipe: bool = False,
+               sh_keys=None, sh_burst: tuple | list = (), require_sh: bool = False,
+               sh_done: bytes | None = None,
+               extra_drives: tuple = ()) -> bytes:
     # Entries are paths (snapshot overlay on) or (path, snapshot_on)
     # tuples for tests that own a private image copy.
     # Invalidate stale evidence before any validation failure can leave
@@ -270,6 +351,11 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     if input_keys is not None and not require_input:
         raise ValueError("input_keys requires require_input")
     input_keys = tuple(input_key_sequence(input_keys)) if require_input else ()
+    if (sh_keys is not None or sh_burst or sh_done is not None) and not require_sh:
+        raise ValueError("sh_keys/sh_burst/sh_done require require_sh")
+    sh_keys = tuple(sh_keys) if sh_keys is not None else ()
+    if require_sh and sh_done is None:
+        raise ValueError("require_sh needs sh_done")
     if not math.isfinite(timeout) or not 0 < timeout <= 60:
         raise ValueError("Boot timeout must be finite and in (0, 60] seconds")
     if type(test_vector) is not int or test_vector not in VECTOR_NAMES:
@@ -339,6 +425,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     shell_key = [0]
     input_index = [0]
     window_seen = [0]
+    sh_sent = [0]
+    burst_sent = [0]
     start = time.monotonic()
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     with diagnostic.open("wb") as diagnostic_file:
@@ -368,7 +456,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                                            b"[INPUT] failure=",
                                                            b"[PROC] failure=",
                                                            b"[FREAD] failure=",
-                                                           b"[PIPE] failure="))), None)
+                                                           b"[PIPE] failure=",
+                                                           b"[SHD] failure="))), None)
                 if driver_failure is not None:
                     failure = driver_failure.decode('ascii', errors='replace')
                     break
@@ -388,13 +477,16 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                     _inject_pending_keys(process, observed, list(keys), next_key,
                                          list(shell_keys), shell_key,
                                          list(input_keys), input_index,
-                                         window_seen)
+                                         window_seen, list(sh_keys), sh_sent,
+                                         sh_burst, burst_sent)
                 if boot_complete(observed, test_vector, keys,
                                  require_shell=shell_interactive,
                                  shell_script=shell_keys,
                                  require_input=require_input,
                                  require_proc=require_proc,
-                                 require_pipe=require_pipe):
+                                 require_pipe=require_pipe,
+                                 require_sh=require_sh,
+                                 sh_done=sh_done):
                     # The input stream is sized for worst-case retries; only
                     # consumed keys are asserted (by the input validator from
                     # transcript markers), so leftover tuple entries are fine.
@@ -464,8 +556,9 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
         try:
             # Input runs validate the longer trace (stage-8 + input bytes)
             # in their own test with input awareness; the stock gate would
-            # reject the extra input bytes as foreign.
-            if not require_input:
+            # reject the extra input bytes as foreign. Shell runs type an
+            # open-ended session the stock gate cannot predict either.
+            if not require_input and not require_sh:
                 validate_keyboard_trace(trace, keys,
                                         tuple(SHELL_SCANS[key] for key in shell_keys))
             validate_irq0_trace(trace)
