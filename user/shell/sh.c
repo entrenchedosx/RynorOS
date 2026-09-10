@@ -1,0 +1,785 @@
+/* Stage 18d Slice E CPL3 shell (composition layer, no evaluation).
+ *
+ * Boots from /bin/sh via the kernel shell driver (bootstrap thread,
+ * stdin KBD, stdout SERIAL, optional argv[0] script path). Reads raw
+ * scan bytes (syscall 3), decodes Set-1 in CPL3 (sh_key.c), edits one
+ * bounded line, parses the frozen grammar (sh_parse.c; shared by
+ * interactive and script input), and executes via spawn/wait/
+ * terminate/spawn_pipe/fread only. No kernel policy calls exist.
+ *
+ * Execution model: one foreground submission at a time. Interactive
+ * lines and script buffers feed the same statement pump (parse one
+ * ';'/newline-delimited statement, execute, repeat when idle), so
+ * parity holds by construction. The event loop always services
+ * keyboard (Ctrl-C) and child polls together; idle iterations yield.
+ *
+ * Status policy (CPL3-only, documented; kernel ABI unchanged):
+ *   EXITED(c) -> c & 0xFF | FAULTED -> 129 | ABORTED -> 130
+ *   NOTFOUND -> 127 | MALFORMED -> 126 | other spawn errors -> 125
+ *   syntax/args/script-local errors -> 2 | initial -> 0
+ *   pipelines report the right-hand (consumer) status.
+ * The cache changes only on defined final outcomes, never on RUNNING
+ * polls. `status` prints the cache without changing it.
+ *
+ * Transcript rows (all shell prints use these exact forms):
+ *   [SH] ready | [SH] prompt | [SH] wantkey N | [SH] done status=N
+ *   [SH] spawned a=S,G[, b=S,G] | [SH] reaped S,G STATE CODE
+ *   [SH] overlap 1 | [SH] abort line | [SH] abort child status=N
+ *   [SH] abort pipeline status=N | [SH] error <class>
+ *   [SH] script PATH | [SH] script done status=N
+ * Typed input is echoed; child output passes through raw.
+ */
+#include "rt.h"
+#include "rt_pipe.h"
+#include "sh_key.h"
+#include "sh_parse.h"
+
+/* Frozen value mirrors (kernel/include/uapi.h + syscall domain;
+   pinned equal by test; user builds never include kernel headers). */
+#define SH_OK 0u
+#define SH_AGAIN 1u
+#define SH_INVAL 2u
+#define SH_NOTFOUND 3u
+#define SH_MALFORMED 4u
+#define SH_BADHANDLE 5u
+#define SH_BUSY 6u
+#define SH_NOMEM 7u
+#define SH_BADARG 8u
+#define SH_GONE 9u
+#define SH_IOERR 10u
+#define SH_RUNNING 0u
+#define SH_EXITED 1u
+#define SH_FAULTED 2u
+#define SH_ABORTED 3u
+#define SH_STDIN_CLOSED 0u
+#define SH_STDIN_KBD 1u
+#define SH_STDIN_PIPE 2u
+#define SH_STDOUT_SERIAL 0u
+#define SH_STDOUT_PIPE 1u
+
+/* Shell bounds (§43; data window keeps headroom for Slice F). */
+#define SH_LINE_MAX 256
+#define SH_SCRIPT_MAX 4096
+#define SH_READ_CHUNK 512
+#define SH_POLL_MAX 1000000u
+
+/* Shell status codes (policy above). */
+#define SH_ST_FAULT 129u
+#define SH_ST_ABORT 130u
+#define SH_ST_NOTFOUND 127u
+#define SH_ST_MALFORMED 126u
+#define SH_ST_SPAWNERR 125u
+#define SH_ST_SYNTAX 2u
+
+extern unsigned long long rt_gate6(unsigned int num, unsigned long long a,
+                                   unsigned long long b, unsigned long long c,
+                                   unsigned long long d, unsigned long long e,
+                                   unsigned long long f);
+
+static unsigned long long sh_sys_spawn(const struct rt_spawn_spec *spec,
+                                       unsigned long long *handle_out)
+{
+    return rt_gate6(RT_SYS_SPAWN, (unsigned long long)spec,
+                    (unsigned long long)handle_out, 0, 0, 0, 0);
+}
+
+static unsigned long long sh_sys_spawn_pipe(const struct rt_spawn_spec *a,
+                                            const struct rt_spawn_spec *b,
+                                            unsigned long long *ha,
+                                            unsigned long long *hb)
+{
+    return rt_gate6(RT_SYS_SPAWN_PIPE, (unsigned long long)a,
+                    (unsigned long long)b, (unsigned long long)ha,
+                    (unsigned long long)hb, 0, 0);
+}
+
+static unsigned long long sh_sys_wait(unsigned long long h,
+                                      struct rt_proc_status *st)
+{
+    return rt_gate6(RT_SYS_WAIT, h, (unsigned long long)st, 0, 0, 0, 0);
+}
+
+static unsigned long long sh_sys_terminate(unsigned long long h)
+{
+    return rt_gate6(RT_SYS_TERMINATE, h, 0, 0, 0, 0, 0);
+}
+
+/* ---- output helpers ---- */
+
+static void sh_write(const char *s, unsigned long long n)
+{
+    unsigned long long at = 0;
+    if (n == 0 || s == 0) return;
+    while (at < n) {
+        unsigned long long chunk = n - at;
+        if (chunk > RT_WRITE_MAX) chunk = RT_WRITE_MAX;
+        if (rt_write(RT_FD_STDOUT, s + at, chunk) != RT_OK) return;
+        at += chunk;
+    }
+}
+
+static unsigned long long sh_strlen(const char *s, unsigned long long cap)
+{
+    unsigned long long n = 0;
+    while (n < cap && s[n] != 0) ++n;
+    return n;
+}
+
+static void sh_print(const char *s) { sh_write(s, sh_strlen(s, 8192)); }
+
+/* Atomic row printer: shell rows ([SH]/[SHD]) are assembled in a
+   stack buffer and emitted with ONE write, so concurrent child
+   output (same [LOAD] channel) can only interleave BETWEEN rows,
+   never inside one. Every row fits easily; overflow truncates
+   defensively (unreachable by construction). */
+static char rowbuf[256];
+static unsigned int rowlen;
+
+static void row_begin(void) { rowlen = 0; }
+
+static void row_str(const char *s)
+{
+    while (*s != 0 && rowlen < sizeof(rowbuf))
+        rowbuf[rowlen++] = *s++;
+}
+
+static void row_num(unsigned long long v)
+{
+    char b[21];
+    unsigned int i = 20;
+    b[i] = 0;
+    do {
+        b[--i] = (char)('0' + v % 10u);
+        v /= 10u;
+    } while (v);
+    row_str(b + i);
+}
+
+static void row_handle(unsigned long long h)
+{
+    row_num((unsigned int)(h & 0xffffffffULL));
+    row_str(",");
+    row_num(h >> 32);
+}
+
+static void row_flush(void) { sh_write(rowbuf, rowlen); }
+
+static void row_simple(const char *s)
+{
+    row_begin();
+    row_str(s);
+    row_flush();
+}
+
+/* ---- shell state ---- */
+
+static struct shk_state kbd;
+static char line[SH_LINE_MAX + 1];
+static unsigned int linelen;
+static unsigned int line_submitted; /* Enter received; pump owns line */
+static unsigned long long line_pos; /* pump cursor into line */
+static char script[SH_SCRIPT_MAX + 1];
+static unsigned long long script_len;
+static unsigned long long script_pos;
+static int script_mode;
+static int script_aborted;
+static unsigned long long last_status;
+static unsigned long long wantkey;
+static unsigned int wantkey_printed;
+/* Foreground children: 0, 1, or 2 live handles (second only pipes). */
+static unsigned long long fh[2];
+static unsigned int nfh;
+static int fh_abort; /* a terminate actually killed (>= 1 live handle) */
+static int overlap_seen;
+static unsigned long long final_status;
+static int final_kind; /* 0 none, 1 done, 2 abort-child, 3 abort-pipe */
+
+static unsigned long long map_child(unsigned int state, unsigned long long code)
+{
+    if (state == SH_EXITED) return code & 0xffu;
+    if (state == SH_FAULTED) return SH_ST_FAULT;
+    return SH_ST_ABORT;
+}
+
+static unsigned long long map_spawn(unsigned long long rc)
+{
+    if (rc == SH_NOTFOUND) return SH_ST_NOTFOUND;
+    if (rc == SH_MALFORMED) return SH_ST_MALFORMED;
+    return SH_ST_SPAWNERR;
+}
+
+static void emit_prompt(void)
+{
+    row_simple("[SH] prompt\r\n");
+    wantkey_printed = 0;
+}
+
+static void emit_done(void)
+{
+    if (overlap_seen) {
+        row_simple("[SH] overlap 1\r\n");
+        overlap_seen = 0;
+    }
+    if (final_kind == 1) {
+        row_begin();
+        row_str("[SH] done status=");
+        row_num(final_status);
+        row_str("\r\n");
+        row_flush();
+    } else if (final_kind == 2) {
+        row_begin();
+        row_str("[SH] abort child status=");
+        row_num(final_status);
+        row_str("\r\n");
+        row_flush();
+    } else if (final_kind == 3) {
+        row_begin();
+        row_str("[SH] abort pipeline status=");
+        row_num(final_status);
+        row_str("\r\n");
+        row_flush();
+    }
+    final_kind = 0;
+}
+
+static void clear_line(void)
+{
+    unsigned int i;
+    linelen = 0;
+    line_pos = 0;
+    line_submitted = 0;
+    for (i = 0; i <= SH_LINE_MAX; ++i) line[i] = 0;
+}
+
+static void build_spec(struct rt_spawn_spec *spec, struct rt_user_arg *vec,
+                       const char *path, unsigned long long path_len,
+                       unsigned int argc, const char *const *argv,
+                       unsigned int stdin_sel, unsigned int stdout_sel)
+{
+    unsigned int i;
+    spec->path_ptr = (unsigned long long)path;
+    spec->path_len = path_len;
+    spec->args_ptr = (unsigned long long)vec;
+    spec->nargs = argc;
+    spec->stdin_sel = stdin_sel;
+    spec->stdout_sel = stdout_sel;
+    spec->stderr_sel = 0;
+    spec->file_in = 0;
+    spec->file_out = 0;
+    spec->file_err = 0;
+    for (i = 0; i < 4; ++i) spec->reserved[i] = 0;
+    for (i = 0; i < argc; ++i) {
+        vec[i].ptr = (unsigned long long)argv[i];
+        vec[i].len = sh_strlen(argv[i], 256);
+    }
+}
+
+/* Start one parsed command (shared single/pipe tail). Path length is
+   CPL3-checked (the kernel would BADARG it; obvious cases fail here
+   with the stable shell error). */
+static unsigned long long cmd_path_len(const char *p)
+{
+    return sh_strlen(p, 65);
+}
+
+static void reap_children(void);
+
+static void exec_single(struct shp_cmd *cmd)
+{
+    struct rt_spawn_spec spec;
+    struct rt_user_arg vec[SHP_MAX_ARGS];
+    const char *argv[SHP_MAX_ARGS];
+    unsigned long long h = 0, rc, plen;
+    unsigned int i;
+    for (i = 0; i < cmd->argc; ++i) argv[i] = cmd->argv[i];
+    plen = cmd_path_len(argv[0]);
+    if (plen == 0 || plen > 32) {
+        sh_print("[SH] error args\r\n");
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        return;
+    }
+    build_spec(&spec, vec, argv[0], plen, cmd->argc, argv,
+               SH_STDIN_CLOSED, SH_STDOUT_SERIAL);
+    rc = sh_sys_spawn(&spec, &h);
+    if (rc != SH_OK) {
+        row_begin();
+        row_str("[SH] error spawn ");
+        row_num(rc);
+        row_str("\r\n");
+        row_flush();
+        last_status = map_spawn(rc);
+        final_status = last_status;
+        final_kind = 1;
+        return;
+    }
+    row_begin();
+    row_str("[SH] spawned a=");
+    row_handle(h);
+    row_str("\r\n");
+    row_flush();
+    fh[0] = h;
+    nfh = 1;
+    fh_abort = 0;
+}
+
+static void exec_pipe(struct shp_cmd *a, struct shp_cmd *b)
+{
+    struct rt_spawn_spec sa, sb;
+    struct rt_user_arg va[SHP_MAX_ARGS], vb[SHP_MAX_ARGS];
+    const char *aa[SHP_MAX_ARGS], *ab[SHP_MAX_ARGS];
+    unsigned long long ha = 0, hb = 0, rc, lena, lenb;
+    unsigned int i;
+    for (i = 0; i < a->argc; ++i) aa[i] = a->argv[i];
+    for (i = 0; i < b->argc; ++i) ab[i] = b->argv[i];
+    lena = cmd_path_len(aa[0]);
+    lenb = cmd_path_len(ab[0]);
+    if (lena == 0 || lena > 32 || lenb == 0 || lenb > 32) {
+        sh_print("[SH] error args\r\n");
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        return;
+    }
+    build_spec(&sa, va, aa[0], lena, a->argc, aa,
+               SH_STDIN_CLOSED, SH_STDOUT_PIPE);
+    build_spec(&sb, vb, ab[0], lenb, b->argc, ab,
+               SH_STDIN_PIPE, SH_STDOUT_SERIAL);
+    rc = sh_sys_spawn_pipe(&sa, &sb, &ha, &hb);
+    if (rc != SH_OK) {
+        row_begin();
+        row_str("[SH] error spawn ");
+        row_num(rc);
+        row_str("\r\n");
+        row_flush();
+        last_status = map_spawn(rc);
+        final_status = last_status;
+        final_kind = 1;
+        return;
+    }
+    row_begin();
+    row_str("[SH] spawned a=");
+    row_handle(ha);
+    row_str(" b=");
+    row_handle(hb);
+    row_str("\r\n");
+    row_flush();
+    fh[0] = ha;
+    fh[1] = hb;
+    nfh = 2;
+    fh_abort = 0;
+}
+
+/* Execute one parsed statement (already fully validated). */
+static void exec_parsed(struct shp_line *parsed)
+{
+    if (parsed->status_only) {
+        row_begin();
+        row_num(last_status);
+        row_str("\r\n");
+        row_flush();
+        final_status = last_status;
+        final_kind = 1;
+        return;
+    }
+    if (parsed->ncmds == 1) {
+        exec_single(&parsed->cmds[0]);
+        return;
+    }
+    exec_pipe(&parsed->cmds[0], &parsed->cmds[1]);
+}
+
+/* Statement pump over the active source (submitted line or script).
+ * Parses and starts at most one foreground action per call; empty
+ * statements are skipped silently. Syntax errors finalize at once
+ * with zero spawns (E-M2). Unsubmitted interactive lines never
+ * execute (typing is not submission). */
+static void pump(void)
+{
+    const char *base;
+    unsigned long long len, *pos;
+    if (nfh != 0 || final_kind != 0) return;
+    if (!script_mode) {
+        if (!line_submitted) return;
+        base = line;
+        len = linelen;
+        pos = &line_pos;
+    } else {
+        if (script_aborted) return;
+        base = script;
+        len = script_len;
+        pos = &script_pos;
+    }
+    for (;;) {
+        struct shp_line parsed;
+        unsigned long long used = 0;
+        int rc;
+        if (*pos >= len) return;
+        rc = shp_parse_stmt(base + *pos, len - *pos, &parsed, &used);
+        if (used == 0) {
+            /* Progress guarantee: the parser reports a first-byte
+               rejection without consuming input (used stays 0 on
+               every error path), which would re-parse the same byte
+               forever — a submitted line and a script never grow, so
+               waiting is a silent hang. Consume through the end of
+               the failed statement (one separator, like a successful
+               parse); the loud syntax error below follows, and `;`
+               sequencing after an error is preserved. */
+            unsigned long long q = *pos;
+            while (q < len && base[q] != ';' && base[q] != '\n' &&
+                   base[q] != '\r')
+                ++q;
+            if (q < len) ++q;
+            used = q - *pos;
+        }
+        *pos += used;
+        if (rc == SHP_EMPTY) continue;
+        if (rc != SHP_OK) {
+            sh_print("[SH] error syntax\r\n");
+            last_status = SH_ST_SYNTAX;
+            final_status = last_status;
+            final_kind = 1;
+            return;
+        }
+        exec_parsed(&parsed);
+        return;
+    }
+}
+
+/* Poll foreground children once. Returns 1 if waiting continues,
+ * 0 when fully reaped (final_* latched). RUNNING never touches the
+ * cached status (E-M15). Overlap latches when both pipe sides are
+ * observed RUNNING together after start. */
+static int poll_children(void)
+{
+    unsigned int i, live = 0, term = 0;
+    static unsigned long long tstate[2];
+    static unsigned long long tcode[2];
+    static int have_term[2] = {0, 0};
+    if (nfh == 0) return 0;
+    for (i = 0; i < nfh; ++i) {
+        struct rt_proc_status st;
+        unsigned long long rc;
+        if (have_term[i]) {
+            term++;
+            continue;
+        }
+        st.state = 99;
+        st.code = 0;
+        st.detail = 0;
+        st.reserved = 0;
+        rc = sh_sys_wait(fh[i], &st);
+        if (rc != SH_OK) {
+            /* Unreachable: handles are retained until first terminal
+               observation, and the kernel consumes exactly once. */
+            have_term[i] = 1;
+            tstate[i] = SH_ABORTED;
+            tcode[i] = 0;
+            term++;
+            continue;
+        }
+        if (st.state == SH_RUNNING) {
+            live++;
+            continue;
+        }
+        have_term[i] = 1;
+        tstate[i] = st.state;
+        tcode[i] = st.code;
+        term++;
+        row_begin();
+        row_str("[SH] reaped ");
+        row_handle(fh[i]);
+        row_str(st.state == SH_EXITED ? " exited " :
+                st.state == SH_FAULTED ? " faulted " : " aborted ");
+        row_num(st.code);
+        row_str("\r\n");
+        row_flush();
+    }
+    if (live > 1) overlap_seen = 1;
+    if (term < nfh) return 1;
+    /* All reaped: finalize exactly once. */
+    if (nfh == 1) {
+        final_status = map_child((unsigned int)tstate[0], tcode[0]);
+    } else {
+        /* Pipeline rule: right-hand (consumer) status. */
+        final_status = map_child((unsigned int)tstate[1], tcode[1]);
+    }
+    if (fh_abort)
+        final_status = SH_ST_ABORT;
+    final_kind = fh_abort ? (nfh == 2 ? 3 : 2) : 1;
+    last_status = final_status;
+    nfh = 0;
+    have_term[0] = 0;
+    have_term[1] = 0;
+    return 0;
+}
+
+static void reap_children(void)
+{
+    unsigned long long spins = 0;
+    while (poll_children()) {
+        if (++spins > SH_POLL_MAX) {
+            sh_print("[SH] error wait-stuck\r\n");
+            last_status = SH_ST_SPAWNERR;
+            final_status = last_status;
+            final_kind = 1;
+            nfh = 0;
+            return;
+        }
+        if (rt_nap(1) != RT_OK) return;
+    }
+}
+
+/* Ctrl-C action by foreground state. Editing: discard the whole
+ * submission, marker, new prompt, status preserved. Foreground work:
+ * terminate live handles (ALREADY_GONE tolerated), reap, then the
+ * abort outcome only if some terminate actually killed (else the
+ * natural result stands — the E-C4 race rule); the remainder of the
+ * submitted line is always discarded. */
+static void ctrl_c(void)
+{
+    unsigned int i, killed = 0;
+    sh_print("^C\r\n");
+    if (nfh == 0) {
+        clear_line();
+        sh_print("[SH] abort line\r\n");
+        if (!script_mode) emit_prompt();
+        return;
+    }
+    for (i = 0; i < nfh; ++i) {
+        unsigned long long rc = sh_sys_terminate(fh[i]);
+        if (rc == SH_OK) killed = 1;
+    }
+    fh_abort = killed ? 1 : 0;
+    reap_children();
+    clear_line();
+    if (script_mode) {
+        /* A Ctrl-C during a script aborts the script after reaping. */
+        emit_done();
+        script_aborted = 1;
+        return;
+    }
+    emit_done();
+    emit_prompt();
+}
+
+static void submit_line(void)
+{
+    sh_print("\r\n");
+    line_submitted = 1;
+    line_pos = 0;
+}
+
+/* Decode one raw byte into editor/executor actions. Returns 1 for a
+   key event (drives harness pacing), 0 for silent bytes (breaks,
+   prefixes, LOST): pacing counts KEYS, never raw bytes, so
+   make/break timing can never desynchronize the marker stream. */
+static int on_byte(unsigned char b)
+{
+    struct shk_event ev;
+    if (!shk_feed(&kbd, b, &ev)) return 0;
+    if (ev.kind == SHK_NONE) return 0;
+    if (ev.kind == SHK_CTRL_C) {
+        ctrl_c();
+        return 1;
+    }
+    /* While a child runs, after submission, or in script mode, only
+       Ctrl-C acts on keyboard text (no Slice E type-ahead: typing
+       never mutates a submitted line; deterministic). Discards do not
+       advance pacing. */
+    if (nfh != 0 || script_mode || line_submitted) return 0;
+    if (ev.kind == SHK_ENTER) {
+        submit_line();
+        return 1;
+    }
+    if (ev.kind == SHK_BSPACE) {
+        if (linelen > 0) {
+            linelen--;
+            line[linelen] = 0;
+            sh_print("\b \b");
+        }
+        return 1;
+    }
+    if (ev.kind == SHK_CHAR) {
+        if (linelen >= SH_LINE_MAX) {
+            sh_print("[SH] error line-too-long\r\n");
+            last_status = SH_ST_SYNTAX;
+            final_status = last_status;
+            final_kind = 1;
+            emit_done();
+            clear_line();
+            emit_prompt();
+            return 1;
+        }
+        line[linelen++] = ev.chr;
+        line[linelen] = 0;
+        sh_write(&ev.chr, 1);
+        return 1;
+    }
+    return 0;
+}
+
+/* Idle pacing: a bounded micro-spin (no gates) before yielding, so
+   an interactive shell idles at human timescales instead of flooding
+   the CPU trace with poll gates. Always followed by a real yield
+   (workers still scheduled promptly); transfer-active iterations
+   skip it for tight reap/Ctrl-C latency. */
+static void idle_pause(void)
+{
+    volatile unsigned long long i = 0;
+    while (i < 200000u) ++i;
+}
+
+/* Drain available raw input once. Returns key events consumed
+   (pacing units, not bytes). */
+static unsigned long long drain_input(void)
+{
+    static unsigned char buf[SH_READ_CHUNK];
+    unsigned long long n = 0xAAAAAAAAAAAAAAAAULL, got = 0;
+    enum rt_err rc = rt_fd_read(RT_FD_STDIN, buf, sizeof(buf), &n, 0);
+    unsigned long long k;
+    if (rc == RT_AGAIN) return 0;
+    if (rc != RT_OK) return 0;
+    for (k = 0; k < n; ++k)
+        got += (unsigned long long)on_byte(buf[k]);
+    return got;
+}
+
+/* Load a script file through stateless fread into the bounded buffer.
+ * Returns 1 with script_len set, or prints a marker and returns 0. */
+static int load_script(const char *path)
+{
+    unsigned long long plen = 0, off = 0;
+    while (plen < 33 && path[plen] != 0) ++plen;
+    if (plen == 0 || plen > 32) {
+        sh_print("[SH] error script-path\r\n");
+        last_status = SH_ST_SYNTAX;
+        return 0;
+    }
+    for (;;) {
+        unsigned long long n = 0xAAAAAAAAAAAAAAAAULL;
+        unsigned long long want = SH_SCRIPT_MAX - off;
+        enum rt_err rc;
+        if (want == 0) {
+            sh_print("[SH] error script-too-large\r\n");
+            last_status = SH_ST_SYNTAX;
+            return 0;
+        }
+        if (want > RT_FREAD_MAX) want = RT_FREAD_MAX;
+        rc = rt_fread(path, plen, off, script + off, want, &n);
+        if (rc != RT_OK) {
+            sh_print("[SH] error script-read\r\n");
+            last_status = SH_ST_SYNTAX;
+            return 0;
+        }
+        off += n;
+        if (n < want) break;
+    }
+    script_len = off;
+    script[off] = 0;
+    return 1;
+}
+
+int rt_main(int argc, char **argv)
+{
+    if (argc < 0 || argc > 1) rt_exit(64);
+    script_mode = 0;
+    script_aborted = 0;
+    last_status = 0;
+    wantkey = 0;
+    wantkey_printed = 0;
+    nfh = 0;
+    fh_abort = 0;
+    overlap_seen = 0;
+    final_kind = 0;
+    script_len = 0;
+    script_pos = 0;
+    clear_line();
+    if (argc == 1) {
+        unsigned long long L = 0;
+        script_mode = 1;
+        while (L < 33 && argv[0][L] != 0) ++L;
+        if (L == 0 || L > 32) {
+            sh_print("[SH] error script-path\r\n");
+            last_status = SH_ST_SYNTAX;
+            rt_exit(2);
+        }
+        row_begin();
+        row_str("[SH] script ");
+        row_str(argv[0]);
+        row_str("\r\n");
+        row_flush();
+        if (!load_script(argv[0])) {
+            row_begin();
+            row_str("[SH] script done status=");
+            row_num(last_status);
+            row_str("\r\n");
+            row_flush();
+            rt_exit((int)last_status);
+        }
+    } else {
+        sh_print("[SH] ready\r\n");
+        emit_prompt();
+    }
+    for (;;) {
+        unsigned long long progress = 0, keys = 0;
+        /* Pacing marker for the harness: printed only when ready for
+           fresh typing (no submitted line, no child, interactive).
+           The harness sends exactly one key per marker. */
+        if (!script_mode && !line_submitted && nfh == 0 &&
+            !wantkey_printed) {
+            row_begin();
+            row_str("[SH] wantkey ");
+            row_num(wantkey);
+            row_str("\r\n");
+            row_flush();
+            wantkey_printed = 1;
+        }
+        keys = drain_input();
+        progress += keys;
+        /* Statement pump (starts foreground work when idle). */
+        pump();
+        if (nfh != 0) {
+            if (!poll_children()) {
+                /* Fully reaped: outcome row below. */
+                emit_done();
+            } else {
+                progress++;
+            }
+        } else if (final_kind != 0) {
+            /* Synchronous outcome (empty/builtin/error/spawn-fail). */
+            emit_done();
+            progress++;
+        }
+        /* Settle: fully idle with nothing pending. */
+        if (nfh == 0 && final_kind == 0) {
+            if (script_mode) {
+                if (script_aborted || script_pos >= script_len) {
+                    row_begin();
+                    row_str("[SH] script done status=");
+                    row_num(last_status);
+                    row_str("\r\n");
+                    row_flush();
+                    rt_exit((int)last_status);
+                }
+            } else if (line_submitted && line_pos >= linelen) {
+                clear_line();
+                emit_prompt();
+            }
+        }
+        /* Pacing: consumed keys retire their marker. */
+        if (keys > 0) {
+            wantkey += keys;
+            wantkey_printed = 0;
+        }
+        /* Cooperative pacing: truly idle iterations (no keys, no
+           live children, no fresh outcome) spin briefly WITHOUT
+           gates, then always yield. Busy work (transfers, reaps)
+           never spins, so completion latency stays tight. */
+        if (progress == 0 && nfh == 0 && final_kind == 0)
+            idle_pause();
+        if (rt_nap(1) != RT_OK) rt_exit(66);
+    }
+    return 0;
+}

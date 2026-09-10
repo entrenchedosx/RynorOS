@@ -48,7 +48,8 @@ def make_image(boot: bytes, payload: bytes) -> bytes:
 def build_image(root: Path, destination: Path | None = None, *,
                 test_vector: int = 3, test_armed: bool = True,
                 shell_interactive: bool = False, input_test: bool = False,
-                proc_test: bool = False, pipe_test: bool = False) -> dict:
+                proc_test: bool = False, pipe_test: bool = False,
+                shell_boot: bool = False, shell_script=None) -> dict:
     if type(test_vector) is not int or test_vector not in (0, 1, 3, 6, 13, 14):
         raise ValueError("Unsupported CPU self-test vector")
     if type(test_armed) is not bool:
@@ -61,6 +62,13 @@ def build_image(root: Path, destination: Path | None = None, *,
         raise ValueError("proc_test must be boolean")
     if type(pipe_test) is not bool:
         raise ValueError("pipe_test must be boolean")
+    if type(shell_boot) is not bool:
+        raise ValueError("shell_boot must be boolean")
+    if shell_script is not None and (type(shell_script) is not str or not
+                                     shell_script.startswith("/")):
+        raise ValueError("shell_script must be None or an absolute path")
+    if shell_script is not None and not shell_boot:
+        raise ValueError("shell_script requires shell_boot")
     destination = destination or root / "build"
     destination.mkdir(parents=True, exist_ok=True)
     # Invalidate only named generated deliverables: an unsuccessful rebuild must
@@ -126,6 +134,7 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/core/proc.c", "proc.o"),
             ("kernel/core/pipe.c", "pipe.o"),
             ("kernel/core/pipe-test.c", "pipe-test.o"),
+            ("kernel/core/shd.c", "shd.o"),
             ("kernel/arch/x86_64/serial.c", "serial.o"),
             ("kernel/arch/x86_64/cpu.c", "cpu.o"),
             ("kernel/interrupts/exceptions.c", "exception-diagnostics.o"),
@@ -145,7 +154,9 @@ def build_image(root: Path, destination: Path | None = None, *,
             shell_flags = [f"-DRYNOR_SHELL_INTERACTIVE={int(shell_interactive)}",
                            f"-DRYNOR_INPUT_TEST={int(input_test)}",
                            f"-DRYNOR_PROC_TEST={int(proc_test)}",
-                           f"-DRYNOR_PIPE_TEST={int(pipe_test)}"]
+                           f"-DRYNOR_PIPE_TEST={int(pipe_test)}",
+                           f"-DRYNOR_SHELL_BOOT={int(shell_boot)}",
+                           f'-DSHELL_SCRIPT_PATH="{shell_script or ""}"']
             run_tool([
                 clang, "--target=x86_64-none-elf", "-std=c11", "-ffreestanding",
                 "-fno-builtin", "-fno-stack-protector", "-fno-pic", "-fno-pie",
@@ -177,6 +188,8 @@ def build_image(root: Path, destination: Path | None = None, *,
             "experimental_input_test": input_test,
             "experimental_proc_test": proc_test,
             "experimental_pipe_test": pipe_test,
+            "experimental_shell_boot": shell_boot,
+            "experimental_shell_script": shell_script or "",
             "target": "x86_64-none-elf",
             "payload_sectors": sectors,
             "tools": {"clang": run_tool([clang, "--version"], root).splitlines()[0],

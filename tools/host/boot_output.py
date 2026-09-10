@@ -22,6 +22,8 @@ from pipe_output import (FREAD_START, FREAD_VERIFIED, PIPE_START,
                          PIPE_VERIFIED, strip_section,
                          extract_fread_section, extract_pipe_section,
                          validate_fread_section, validate_pipe_section)
+from sh_output import (has_shell_rows, strip_shell_lines,
+                       validate_sh_section)
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -131,9 +133,14 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             # The Slice C proc section (with embedded child [LOAD] write
             # rows) trails input the same way when present. Slice D
             # file/pipe sections trail proc; strip them first (the
-            # chain below is greedy to end of tail).
+            # chain below is greedy to end of tail). Slice E shell
+            # rows ([SH]/[SHD] plus child [LOAD] writes) are stripped
+            # the same way when a shell run is present.
             tail, pipe_errs = strip_pipe_sections(tail)
             errors.extend(pipe_errs)
+            if has_shell_rows(tail):
+                errors.extend(validate_sh_section(tail))
+                tail = strip_shell_lines(tail)
             tail, proc_part = split_proc_tail(tail)
             errors.extend(validate_proc_section(proc_part))
             tail, input_part = split_input_tail(tail)
@@ -152,6 +159,9 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
     elif post != b"":
         post, pipe_errs = strip_pipe_sections(post)
         errors.extend(pipe_errs)
+        if has_shell_rows(post):
+            errors.extend(validate_sh_section(post))
+            post = strip_shell_lines(post)
         post, proc_part = split_proc_tail(post)
         errors.extend(validate_proc_section(proc_part))
         post, input_part = split_input_tail(post)
