@@ -85,9 +85,26 @@ cpu_u64 copy_to_user(struct user_context *c, cpu_u64 uaddr,
    selectors in Slice C). Returns a sys_err code (never a byte count):
    SYS_OK (bytes staged, *nread_out published last), SYS_AGAIN (empty;
    both outputs untouched), SYS_INVAL (bad arguments; outputs untouched).
-   Runs with IF=0 on kernel CR3. */
+   Runs with IF=0 on kernel CR3. Slice D routes STDIN_PIPE callers to
+   the kernel-owned pipe (AGAIN when empty/live, OK+0 at terminal EOF);
+   keyboard/CLOSED behavior is unchanged. */
 int sys_read(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len,
              cpu_u64 nread_out, cpu_u64 flags);
+
+/* Stage 18d Slice D, syscall 7: stateless fread over an absolute path
+   (no discovery, no handles). Frozen register order: path_ptr,
+   path_len (1..32), offset, buf, len (<=UAPI_FREAD_MAX), nread_out.
+   Short reads at EOF are OK (never an error); offset past end is
+   BADARG; missing/ non-file map to NOTFOUND/MALFORMED like spawn.
+   Outputs are published last and left untouched on every error. */
+int sys_fread(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
+              cpu_u64 offset, cpu_u64 buf, cpu_u64 len, cpu_u64 nread_out);
+/* Kernel-memory fread core shared by sys_fread (chunked) and the test
+   driver (whole reads): kpath is NUL-terminated kernel memory, kbuf is
+   a kernel buffer of at least len bytes (2-byte aligned when len > 0).
+   See load.c for the contract. */
+int kern_fread(const char *kpath, cpu_u64 offset, cpu_u8 *kbuf,
+               cpu_u64 len, cpu_u64 *nread_out);
 
 /* Print the [LOAD] write evidence row (slot/fd/len/nwritten + hex of
    the staged bytes). Called by the gate handler, not the driver, so

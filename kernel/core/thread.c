@@ -228,6 +228,15 @@ int thread_ready_count(void)
         if (threads[i].state == THREAD_READY || threads[i].state == THREAD_RUNNING) ++count;
     return count;
 }
+int thread_free_count(void)
+{
+    if (!cpu_interrupts_disabled() || !initialized) return 0;
+    check();
+    int count = 0;
+    for (unsigned int i = 0; i < SCHED_THREADS; ++i)
+        if (threads[i].state == THREAD_FREE) ++count;
+    return count;
+}
 int scheduler_statistics(struct sched_statistics *out)
 {
     if (!foreground() || !initialized || !out) return 0;
@@ -357,7 +366,7 @@ struct exception_frame *user_schedule_next(struct user_link *link, cpu_u64 retco
     check();
     require(link && current->user == link && link->bound && link->context,
             "user_next_link");
-    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_TERMINATED, "user_next_code");
+    require(retcode >= USER_RUN_EXITED && retcode <= USER_RUN_SPAWN_PIPE, "user_next_code");
     link->kern_save.rax = retcode;
     current->saved = link->kern_save;
     struct thread *next = pick_next();

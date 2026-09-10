@@ -61,6 +61,10 @@
 #define USER_RUN_SPAWNED 7u
 #define USER_RUN_WAITED 8u
 #define USER_RUN_TERMINATED 9u
+/* Stage 18d Slice D: fread/spawn_pipe resume codes (terminal for the
+ * call, not for the process). Kernel-internal, not UAPI. */
+#define USER_RUN_FREAD 10u
+#define USER_RUN_SPAWN_PIPE 11u
 
 /* USER_ABORTED (Slice C): worker-observed kill flag converted to a
  * terminal state on the owning thread only. Never resumed, never

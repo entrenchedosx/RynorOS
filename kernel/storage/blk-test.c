@@ -48,7 +48,12 @@ static cpu_u64 byte_wsum(const cpu_u8 *b, cpu_u64 n)
     return s;
 }
 
-static _Alignas(2) cpu_u8 io_area[BLK_MAX_BLOCKS * 512u];
+/* Bulk I/O staging uses the shared boot-test buffer defined in
+   load-test.c (Stage 18d Slice D BSS budget: 16 KiB, 2-byte aligned
+   there; BLK_MAX_BLOCKS * 512 == 16384 matches exactly). Test drivers
+   run sequentially and always fill before reading. */
+extern cpu_u8 load_file_buf[16384u];
+#define io_area load_file_buf
 static _Alignas(2) cpu_u8 blk_scratch[512u];
 
 static void bounds_tests(cpu_u32 boot_id)

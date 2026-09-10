@@ -39,7 +39,7 @@ REPOSITORY_TEST_INVENTORY = {
     "test_rnyx": 13,
     "test_semantic_api_gauntlet": 8,
     "test_shell_output": 7, "test_timer_output": 4, "test_vm_output": 5,
-    "test_input_abi": 10, "test_proc_abi": 11,
+    "test_input_abi": 10, "test_proc_abi": 11, "test_pipe_abi": 10,
 }
 INTEGRATION_TEST_INVENTORY = {
     "test_audit": 4, "test_boot": 14, "test_display": 31, "test_heap": 5,
@@ -47,6 +47,7 @@ INTEGRATION_TEST_INVENTORY = {
     "test_scheduler": 23, "test_shell": 9, "test_vm": 8,
     "test_storage": 10, "test_filesystem": 19, "test_userspace": 18,
     "test_load": 15, "test_rt": 12, "test_input": 7, "test_proc": 10,
+    "test_pipe": 15,
 }
 
 

@@ -1226,6 +1226,9 @@ void user_handle_exit(struct exception_frame *f)
             panic("exit_mask");
         if (reason == SYS_EXIT) {
             c->state = USER_EXITED; c->exit_code = code; ++c->gate_exits;
+            /* Slice D: authoritative process record + pipe-endpoint
+               close at gate time (no gate-to-worker transient). */
+            proc_note_gate_exit(c);
             if (!c->loaded) {
                 text("[USER] exit slot=");
                 number(c->slot);
@@ -1301,10 +1304,34 @@ void user_handle_exit(struct exception_frame *f)
                 reason == SYS_SPAWN ? USER_RUN_SPAWNED :
                 reason == SYS_WAIT ? USER_RUN_WAITED : USER_RUN_TERMINATED));
         }
+        if (reason == SYS_FREAD || reason == SYS_SPAWN_PIPE) {
+            /* Stage 18d Slice D: stateless file reads and atomic pipe
+               spawn. fread uses all six argument registers (no reserved
+               word exists); spawn_pipe requires EDI/EBP zero (frozen
+               register file). Nonzero reserved registers are INVAL
+               returns, never kills. */
+            int rc;
+            if (reason == SYS_FREAD) {
+                rc = sys_fread(c, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi,
+                               f->rbp);
+            } else {
+                if (f->rdi != 0 || f->rbp != 0)
+                    rc = SYS_INVAL;
+                else
+                    rc = sys_spawn_pipe(c, f->rbx, f->rcx, f->rdx, f->rsi);
+            }
+            c->sys_result = (cpu_u64)rc;
+            c->gprs[0] = (cpu_u64)rc;
+            sched_resume(user_schedule_next(link,
+                reason == SYS_FREAD ? USER_RUN_FREAD : USER_RUN_SPAWN_PIPE));
+        }
     }
     c->state = USER_FAULTED; c->fault_class = 2;
     c->fault_vector = 128; c->fault_error = reason; c->fault_cr2 = 0;
     ++c->faults;
+    /* Slice D: authoritative process record + pipe-endpoint close at
+       gate time (invalid_call kill is terminal like any fault). */
+    proc_note_gate_fault(c);
     if (!c->loaded) fault_evidence(c);
     sched_resume(user_schedule_next(link, USER_RUN_FAULTED));
 }
@@ -1346,6 +1373,8 @@ void user_handle_fault(struct exception_frame *f, cpu_u64 cr2)
             c->fault_vector = f->vector; c->fault_error = f->error;
             c->fault_cr2 = cr2;
             ++c->faults;
+            /* Slice D: authoritative process record at fault time. */
+            proc_note_gate_fault(c);
             sched_resume(user_schedule_next(link, USER_RUN_FAULTED));
         }
     }
@@ -1354,6 +1383,8 @@ void user_handle_fault(struct exception_frame *f, cpu_u64 cr2)
     c->state = USER_FAULTED; c->fault_class = 1;
     c->fault_vector = f->vector; c->fault_error = f->error; c->fault_cr2 = cr2;
     ++c->faults;
+    /* Slice D: authoritative process record at fault time. */
+    proc_note_gate_fault(c);
     if (!c->loaded) fault_evidence(c);
     sched_resume(user_schedule_next(link, USER_RUN_FAULTED));
 }

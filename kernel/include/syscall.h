@@ -20,10 +20,10 @@
 #define SYS_EXIT 0u
 #define SYS_YIELD 1u
 #define SYS_WRITE 2u
-/* Stage 18d numbers (frozen in docs/design/stage18d-abi.md). Only
- * SYS_READ has a handler; 4..8 remain reserved kills until their slice
- * (unknown numbers die as invalid_call; the namespace only ever
- * extends upward, never renumbers). */
+/* Stage 18d numbers (frozen in docs/design/stage18d-abi.md). Slice C
+ * added handlers for 4..6; Slice D adds 7 (fread) and 8 (spawn_pipe).
+ * Unknown numbers die as invalid_call; the namespace only ever
+ * extends upward, never renumbers. */
 #define SYS_READ 3u
 #define SYS_SPAWN 4u
 #define SYS_WAIT 5u

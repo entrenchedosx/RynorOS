@@ -197,6 +197,19 @@ REQUIRED_FILES = (
     "user/proc-tests/p_big.c", "user/proc-tests/p_nest.c",
     "user/proc-tests/p_selfterm.c", "user/proc-tests/p_alias.c",
     "user/proc-tests/p_regprobe.c", "user/proc-tests/p_eof.c",
+    # Stage 18d Slice D: stateless fread, final /bin discovery,
+    # kernel-owned pipes, atomic spawn_pipe, gated file/pipe driver,
+    # pipe helpers, validator, and tests.
+    "kernel/include/pipe.h", "kernel/include/pipetest.h",
+    "kernel/core/pipe.c", "kernel/core/pipe-test.c",
+    "user/lib/rt/rt_pipe.h",
+    "tools/host/pipe_output.py",
+    "tests/repository/test_pipe_abi.py",
+    "tests/integration/test_pipe.py",
+    "user/proc-tests/p_prod.c", "user/proc-tests/p_cons.c",
+    "user/proc-tests/p_fprod.c", "user/proc-tests/p_fcons.c",
+    "user/proc-tests/p_freadprobe.c", "user/proc-tests/p_pipeprobe.c",
+    "user/proc-tests/p_discprobe.c", "user/proc-tests/p_rxread.c",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.

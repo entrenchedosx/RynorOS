@@ -34,11 +34,33 @@ struct proc_slot {
     thread_id worker;
     int worker_valid;
     int kill_requested;
-    int stdin_closed; /* stdin_sel==STDIN_CLOSED at spawn */
+    /* Stage 18d Slice D: frozen endpoint selectors (fd0/fd1 routing).
+       Ordinary children: stdin CLOSED/KBD, stdout SERIAL. Pipeline
+       producer: stdout PIPE_W; consumer: stdin PIPE_R. Stale while
+       FREE; validated for every live slot by proc_check. */
+    unsigned int stdin_sel;
+    unsigned int stdout_sel;
     cpu_u64 exit_code;
     cpu_u64 fault_vector;
     cpu_u64 fault_error;
 };
+/* Slot introspection for the pipe layer (pipe_check, syscall routing):
+   reports generation, endpoint selectors, and liveness (state != FREE).
+   Callers hold IF=0. Returns 0 on bad slot (fail-closed). */
+int proc_slot_info(unsigned int slot, cpu_u64 *gen,
+                   unsigned int *stdin_sel, unsigned int *stdout_sel,
+                   int *live);
+/* Gate-side authoritative terminal records (Slice D): called from the
+   gate/fault entry path (IF=0, on the exiting thread) immediately after
+   the context record is written. Sets PL_EXITED/FAULTED with the
+   recorded codes and closes the owned pipe endpoint atomically with the
+   context record, so no observer (driver or in-guest waiter) can ever
+   see a context-terminal/process-active transient. The worker-side
+   record stays as a guarded backstop; the kill path is untouched
+   (abort is observed on the worker loop with record+close already
+   atomic there). No-ops for contexts outside any process. */
+void proc_note_gate_exit(struct user_context *c);
+void proc_note_gate_fault(struct user_context *c);
 
 /* Structural invariants (IF=0 foreground). Detects illegal states,
    thread/context mismatches, dangling owners, bad generations,
@@ -78,5 +100,30 @@ int proc_terminate(cpu_u64 handle, int owner, int self_slot);
 int sys_spawn(struct user_context *caller, cpu_u64 spec_ptr, cpu_u64 handle_out);
 int sys_wait(struct user_context *caller, cpu_u64 handle, cpu_u64 status_out);
 int sys_terminate(struct user_context *caller, cpu_u64 handle);
+int sys_spawn_pipe(struct user_context *caller, cpu_u64 spec_a,
+                   cpu_u64 spec_b, cpu_u64 handle_a_out, cpu_u64 handle_b_out);
+/* Final executable discovery (Slice D): staged is a NUL-terminated
+   kernel buffer with slen=strlen bytes (1..32). Absolute inputs (any
+   '/') must pass fs_path_ok and are used as-is; bare names map to
+   "/bin/"+name with name<=UAPI_MAX_BIN_NAME (never truncate; longer is
+   BADARG) and the construction is re-validated. out is a 33-byte kernel
+   buffer receiving the NUL-terminated absolute path. */
+int resolve_exec_path(const char *staged, cpu_u64 slen, char *out);
+/* Atomic two-child admission (Slice D): resolved absolute executable
+   paths plus staged kernel argv vectors admit exactly two ACTIVE
+   children sharing one freshly attached pipe ring (A.stdout=PIPE_W,
+   B.stdin=PIPE_R; A.stdin selects CLOSED/KBD, B.stdout is SERIAL).
+   Images are fetched (heap-staged one at a time, so two maximum-size
+   images never coexist) and validated here (NOTFOUND/MALFORMED like
+   spawn). All-or-nothing: every pre-commit failure restores slots
+   (generations unchanged), contexts, threads, heap, and pipe state
+   with zero visible children. */
+int proc_spawn_pipe(const char *path_a,
+                    const cpu_u64 *arg_ptrs_a, const cpu_u64 *arg_lens_a,
+                    cpu_u64 nargs_a, unsigned int stdin_a,
+                    const char *path_b,
+                    const cpu_u64 *arg_ptrs_b, const cpu_u64 *arg_lens_b,
+                    cpu_u64 nargs_b,
+                    int owner, cpu_u64 *handle_a_out, cpu_u64 *handle_b_out);
 
 #endif
