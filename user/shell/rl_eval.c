@@ -184,6 +184,16 @@ int rl_eval(struct rl_eval_ctx *ctx, unsigned short root,
                     (unsigned short)(((unsigned int)i) | (1u << 15));
                 ctx->walk[wtop++] = (unsigned int)nd->k1;
                 break;
+            case RLN_LEN:
+                /* Slice G len(arg): same walk shape as CALL. Only
+                 * str-typed arguments reach evaluation ( statically
+                 * rejected otherwise); the result is an int. */
+                if (nd->k1 == RL_NONODE) return RL_EV_INTERNAL;
+                if (wtop + 2u > ctx->walkcap) return RL_EV_INTERNAL;
+                ctx->walk[wtop++] =
+                    (unsigned short)(((unsigned int)i) | (1u << 15));
+                ctx->walk[wtop++] = (unsigned int)nd->k1;
+                break;
             default:
                 /* Commands, pipelines, and lets never evaluate to
                  * values (unit-typed, statically rejected in value
@@ -322,6 +332,18 @@ int rl_eval(struct rl_eval_ctx *ctx, unsigned short root,
                     if (ctx->emit) ctx->emit(rbuf, rn);
                 }
                 rl_vunit(&v);
+                if (vtop >= ctx->vcap) return RL_EV_INTERNAL;
+                ctx->vstack[vtop++] = v;
+            } else if (nd->kind == RLN_LEN) {
+                /* len(arg): pure byte length of the evaluated runtime
+                 * string (decoded bytes, excluding any C NUL the
+                 * implementation may use elsewhere). No emission, no
+                 * spawn, no session effect: the value alone decides. */
+                struct rl_val a, v;
+                if (vtop < 1u) return RL_EV_INTERNAL;
+                a = ctx->vstack[--vtop];
+                if (a.type != RLV_STR) return RL_EV_INTERNAL;
+                rl_vint(&v, (unsigned long long)a.len);
                 if (vtop >= ctx->vcap) return RL_EV_INTERNAL;
                 ctx->vstack[vtop++] = v;
             } else {

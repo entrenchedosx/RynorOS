@@ -4,7 +4,8 @@
  * explicit (node,visited) walk stack plus a live-value stack bounded
  * by depth+1. Only pure language nodes are reachable here: literals,
  * variables (resolved to symbol indices by semantics), unary/binary
- * operators, and print calls. Command/pipeline/let nodes in value
+ * operators, print calls, and the Slice G len builtin (pure int
+ * result, no emission). Command/pipeline/let nodes in value
  * position are statically rejected before evaluation (commands yield
  * unit; 18d-base has no output-capture channel), so reaching one is
  * an internal error, never user input.

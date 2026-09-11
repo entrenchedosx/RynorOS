@@ -8,7 +8,7 @@
  * computes answers. Session isolation: this image owns a private
  * rl_sess (never the shell's).
  *
- * Usage: rltest <cap-session|str-life|perf|depth|leak>
+ * Usage: rltest <cap-session|str-life|perf|depth|leak|len>
  *   cap-session <total>: build session to exactly <total> bytes with
  *     one final sized let (8191/8192 must commit; 8193 must reject
  *     with rollback + expression recovery).
@@ -20,6 +20,9 @@
  *   perf: near-8K session then a full-rebuild submission (bounded).
  *   depth: 63/64/65-deep paren expressions.
  *   leak: 50x syntax/semantic/success submits with per-submit walks.
+ *   len: Slice G builtin (literals, escapes, long literal, vars,
+ *     arity/type/unknown rejects with rollback, len-depth 64/65,
+ *     ownership across mixed resets, heavy len-error leak loop).
  */
 #include "rt.h"
 #include "rl_sem.h"
@@ -478,6 +481,251 @@ static int streq2(const char *a, const char *b)
     return a[i] == b[i];
 }
 
+static unsigned int tlen(const char *s)
+{
+    unsigned int n = 0;
+    while (s[n] != 0) ++n;
+    return n;
+}
+
+/* Submit, asserting the exact emitted value bytes. */
+static void sub_val(const char *text, const char *want, const char *tag)
+{
+    const char *diag = 0;
+    unsigned int i;
+    int k;
+    ebuf_used = 0;
+    k = dosub(text, tlen(text), &diag);
+    if (k != RL_SUB_OK) {
+        check(0, tag);
+        return;
+    }
+    if (ebuf_used != tlen(want)) {
+        check(0, tag);
+        return;
+    }
+    for (i = 0; i < ebuf_used; ++i) {
+        if (ebuf[i] != want[i]) {
+            check(0, tag);
+            return;
+        }
+    }
+    check(1, tag);
+}
+
+/* Submit, asserting rejection class, zero emission, and full
+ * rollback (source/symbols/session bytes frozen, scratch flat). */
+static void sub_rej(const char *text, int kind, const char *want_diag,
+                    const char *tag)
+{
+    const char *diag = 0;
+    struct rl_stats before, after;
+    int k;
+    rstats(&before);
+    ebuf_used = 0;
+    k = dosub(text, tlen(text), &diag);
+    rstats(&after);
+    if (k != kind || !diag_is(diag, want_diag)) {
+        check(0, tag);
+        return;
+    }
+    if (ebuf_used != 0u) {
+        check(0, tag);
+        return;
+    }
+    check(after.srclen == before.srclen &&
+              after.nsyms == before.nsyms &&
+              after.sess_live == before.sess_live &&
+              after.sub_live == 0u,
+          tag);
+}
+
+static int cmd_len(void)
+{
+    const char *diag = 0;
+    struct rl_stats st, base;
+    unsigned int i, n;
+    int k;
+    static char line[300];
+
+    /* Literals: byte length of the decoded runtime string. */
+    sub_val("len(\"\")", "0", "len-empty");
+    sub_val("len(\"a\")", "1", "len-one");
+    sub_val("len(\"abc\")", "3", "len-three");
+    /* Escapes count decoded bytes, never source spelling. */
+    sub_val("len(\"a\\nb\")", "3", "len-esc-n");
+    sub_val("len(\"a\\tb\")", "3", "len-esc-t");
+    sub_val("len(\"a\\\"b\")", "3", "len-esc-q");
+    sub_val("len(\"a\\\\b\")", "3", "len-esc-bs");
+    /* Long literal (200 decoded bytes; keyboard could never type
+     * scale inputs inside a boot). */
+    n = 0;
+    line[n++] = 'l';
+    line[n++] = 'e';
+    line[n++] = 'n';
+    line[n++] = '(';
+    line[n++] = '"';
+    for (i = 0; i < 200u; ++i) line[n++] = 'x';
+    line[n++] = '"';
+    line[n++] = ')';
+    line[n] = 0;
+    sub_val(line, "200", "len-long");
+
+    /* Variables: committed session values, not scratch. */
+    k = dosub("let s: str = \"hello\"", tlen("let s: str = \"hello\""),
+              &diag);
+    check(k == RL_SUB_OK, "len-let-s");
+    sub_val("len(s)", "5", "len-var");
+    k = dosub("let n: int = len(\"abcd\")",
+              tlen("let n: int = len(\"abcd\")"), &diag);
+    check(k == RL_SUB_OK, "len-let-n");
+    sub_val("n", "4", "len-let-n-read");
+    sub_val("len(\"abcd\") + 1000", "1004", "len-arith");
+    sub_val("100 * len(\"abcde\")", "500", "len-mul");
+    sub_val("len(s) == 5", "true", "len-cmp");
+    ebuf_used = 0;
+    k = dosub("print(len(\"abc\"))", tlen("print(len(\"abc\"))"),
+              &diag);
+    check(k == RL_SUB_OK && ebuf_used == 1 && ebuf[0] == '3',
+          "len-print");
+
+    /* Rejections: existing families, full rollback, zero bytes. */
+    sub_rej("len(\"a\", \"b\")", RL_SUB_REJECT, RL_D_SEM_ARITY,
+            "len-arity2");
+    sub_rej("len(1)", RL_SUB_REJECT, RL_D_SEM_TYPE, "len-type-int");
+    sub_rej("len(true)", RL_SUB_REJECT, RL_D_SEM_TYPE,
+            "len-type-bool");
+    sub_rej("len(len(\"x\"))", RL_SUB_REJECT, RL_D_SEM_TYPE,
+            "len-nested");
+    sub_rej("let n: bool = len(\"abc\")", RL_SUB_REJECT,
+            RL_D_SEM_TYPE, "len-let-bool");
+    sub_rej("length(\"ab\")", RL_SUB_REJECT, RL_D_SEM_UNKNOWN_FN,
+            "len-prefix-word");
+    sub_rej("banana(\"x\")", RL_SUB_REJECT, RL_D_SEM_UNKNOWN_FN,
+            "len-unknown-intact");
+
+    /* Depth: the call group charges exactly like every call
+     * (63 parens + len = 64 OK; 64 parens + len = 65 reject). */
+    n = 0;
+    for (i = 0; i < 63u; ++i) line[n++] = '(';
+    line[n++] = 'l';
+    line[n++] = 'e';
+    line[n++] = 'n';
+    line[n++] = '(';
+    line[n++] = '"';
+    line[n++] = 'a';
+    line[n++] = '"';
+    line[n++] = ')';
+    for (i = 0; i < 63u; ++i) line[n++] = ')';
+    line[n] = 0;
+    ebuf_used = 0;
+    k = dosub(line, n, &diag);
+    check(k == RL_SUB_OK && ebuf_used == 1 && ebuf[0] == '1',
+          "len-depth-64");
+    n = 0;
+    for (i = 0; i < 64u; ++i) line[n++] = '(';
+    line[n++] = 'l';
+    line[n++] = 'e';
+    line[n++] = 'n';
+    line[n++] = '(';
+    line[n++] = '"';
+    line[n++] = 'a';
+    line[n++] = '"';
+    line[n++] = ')';
+    for (i = 0; i < 64u; ++i) line[n++] = ')';
+    line[n] = 0;
+    k = dosub(line, n, &diag);
+    check(k == RL_SUB_SYNTAX, "len-depth-65");
+
+    /* Ownership: 50 mixed resets (len hits, len misses, plain
+     * failures) keep the committed string byte-exact. */
+    rstats(&base);
+    for (i = 0; i < 50u; ++i) {
+        if (i % 5u == 0u) {
+            ebuf_used = 0;
+            k = dosub("len(s)", 6, &diag);
+            if (k != RL_SUB_OK || ebuf_used != 1 || ebuf[0] != '5') {
+                check(0, "len-own-hit");
+                return 1;
+            }
+        } else if (i % 5u == 1u) {
+            k = dosub("len(1)", 6, &diag);
+            if (k != RL_SUB_REJECT ||
+                !diag_is(diag, RL_D_SEM_TYPE)) {
+                check(0, "len-own-miss");
+                return 1;
+            }
+        } else if (i % 5u == 2u) {
+            k = dosub("nosuchvar + 1", 13, &diag);
+            if (k != RL_SUB_REJECT) {
+                check(0, "len-own-undecl");
+                return 1;
+            }
+        } else if (i % 5u == 3u) {
+            k = dosub("len(\"a\", \"b\")", 13, &diag);
+            if (k != RL_SUB_REJECT ||
+                !diag_is(diag, RL_D_SEM_ARITY)) {
+                check(0, "len-own-arity");
+                return 1;
+            }
+        } else {
+            ebuf_used = 0;
+            k = dosub("40 + 2", 6, &diag);
+            if (k != RL_SUB_OK) {
+                check(0, "len-own-plain");
+                return 1;
+            }
+        }
+        rstats(&st);
+        if (st.srclen != base.srclen || st.nsyms != base.nsyms ||
+            st.sess_live != base.sess_live || st.sub_live != 0u) {
+            check(0, "len-own-drift");
+            return 1;
+        }
+    }
+    check(1, "len-own-50x");
+    ebuf_used = 0;
+    k = dosub("s", 1, &diag);
+    check(k == RL_SUB_OK, "len-own-read");
+    check(ebuf_used == 5 && streq_n(ebuf, "hello", 5),
+          "len-own-bytes");
+    sub_val("len(s)", "5", "len-own-final");
+
+    /* Heavy len-error leak loop: five 99-term sums ending in a
+     * mistyped len (parse OK, analysis rejects); every round must
+     * keep its class and leave zero residue. */
+    for (i = 0; i < 5u; ++i) {
+        unsigned int m = 0, j;
+        for (j = 0; j < 99u; ++j) {
+            line[m++] = '1';
+            line[m++] = '+';
+        }
+        line[m++] = 'l';
+        line[m++] = 'e';
+        line[m++] = 'n';
+        line[m++] = '(';
+        line[m++] = '1';
+        line[m++] = ')';
+        line[m] = 0;
+        ebuf_used = 0;
+        k = dosub(line, m, &diag);
+        if (k != RL_SUB_REJECT ||
+            !diag_is(diag, RL_D_SEM_TYPE)) {
+            check(0, "len-leak-class");
+            return 1;
+        }
+        rstats(&st);
+        if (st.srclen != base.srclen || st.nsyms != base.nsyms ||
+            st.sess_live != base.sess_live || st.sub_live != 0u ||
+            ebuf_used != 0u) {
+            check(0, "len-leak-walk");
+            return 1;
+        }
+    }
+    check(1, "len-leak-5x");
+    return 0;
+}
+
 int rt_main(int argc, char **argv)
 {
     int rc = 1;
@@ -504,6 +752,8 @@ int rt_main(int argc, char **argv)
         rc = cmd_depth();
     else if (streq2(argv[1], "leak"))
         rc = cmd_leak();
+    else if (streq2(argv[1], "len"))
+        rc = cmd_len();
     else {
         emit_row("[RLT] check unknown-cmd FAIL\n");
         rt_exit(2);
