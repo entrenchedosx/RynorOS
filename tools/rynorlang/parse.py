@@ -262,7 +262,16 @@ class _Parser:
         token = self.current()
         if token.kind in _TYPE_TOKENS:
             self.take()
-            return ParseNode("Type", token.span, text=token.lexeme)
+            base = token.lexeme
+            span = token.span
+            if self.at("COLON_COLON"):
+                # Stage 19c: a type word heading a qualification
+                # (`str::Name` when a module is aliased `str`).
+                self.take()
+                member = self.identifier()
+                span = _cover(span, member.span)
+                base = base + "::" + member.text
+            return ParseNode("Type", span, text=base)
         if token.kind == "IDENTIFIER":
             self.take()
             base = token.lexeme
@@ -735,6 +744,17 @@ class _Parser:
         token = self.current()
         if token.kind == "IDENTIFIER":
             return self.identifier()
+        if token.kind in ("INT_TYPE", "BOOL_TYPE", "STR_TYPE"):
+            # Stage 19c: a type word heading a qualification (`str::f`).
+            # Bare type words stay expression errors (unchanged).
+            nxt = self.tokens[self.index + 1] if self.index + 1 < len(self.tokens) else None
+            if nxt is not None and nxt.kind == "COLON_COLON":
+                self.take()
+                self.take()
+                member = self.identifier()
+                text = token.lexeme + "::" + member.text
+                return ParseNode("Identifier", _cover(token.span, member.span), text=text)
+            self.fail("PAR_UNEXPECTED_TOKEN", "expected expression", ("IDENTIFIER", "INTEGER", "STRING", "TRUE", "FALSE", "LEFT_PAREN", "LEFT_BRACKET", "LEFT_BRACE"))
         if token.kind == "INTEGER":
             self.take()
             return ParseNode("IntegerLiteral", token.span, text=token.lexeme, value=token.value)

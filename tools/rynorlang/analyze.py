@@ -520,10 +520,35 @@ class Analyzer:
         elif err is not None:
             self._error(C_TYPE_MISMATCH, f"invalid type: {err}", tnode.span,
                         expected="valid type", context="type")
+        shape = self._mangle_shape(shape, tnode.span)
         canon = _agtypes.canonical(shape)
         if check_size:
             self._check_type_bounded(canon, tnode.span)
         return canon
+
+    def _mangle_shape(self, node: tuple, span: Span):
+        # Rewrite nominal leaves through the file's alias map (own bare
+        # names mangle; qualified alias::Name resolves; already-mangled
+        # foreign names pass through). Keeps nested positions (elements,
+        # payloads) consistent: canonical strings are always stored-form.
+        kind = node[0]
+        if kind == "scalar":
+            return node
+        if kind == "nominal":
+            name = node[1]
+            qualified = self._split_qualified(name)
+            if qualified is not None:
+                alias, base = qualified
+                return ("nominal", self._qualify(alias, base, span))
+            return ("nominal", self._top(name))
+        base, args = node[1], node[2]
+        out = []
+        for arg in args:
+            if isinstance(arg, tuple) and arg and arg[0] == "cap":
+                out.append(arg)
+            else:
+                out.append(self._mangle_shape(arg, span))
+        return ("generic", base, tuple(out))
 
     def _check_type_bounded(self, canon: str, span: Span) -> None:
         node = _agtypes.parse_type(canon)
