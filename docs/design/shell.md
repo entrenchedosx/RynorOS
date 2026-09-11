@@ -28,7 +28,10 @@ Stage 11 adds a verified **ring-0 kernel monitor** that exercises the existing k
 
 Synthetic evidence (always): `tokenizer, bounds and empty line` → `exec version/help/echo/upper/count/digest/clear/bogus/empty` → extra-arg rejections (`too many`, `invalid`, `echo/upper/count/digest/version/help` extra) → `count` `30` (`1`*30, shell line) + `300` (`1`*300 via direct `krst_call` proving full 64-bit decode) → recovery `bogus→version` → `dispatch verified`. Interactive session: 4 commands `upper hello`→`HELLO`, `count a1b2`→`2`, `digest ab`→`0x6A9845B507449C08`, `bogus`→`error: unknown command`, each key with `scan/ ascii/line` echo, `keys=39 received_scan_bytes=78`.
 
-**Not implemented:** filesystem, pipes, globbing, scripting, `user/shell`, RynorLang evaluation — `user/shell` remains empty.
+**Not implemented in the ring-0 monitor (scope frozen; unchanged by 18d):**
+filesystem, pipes, globbing, scripting, RynorLang evaluation. Those live
+in the CPL3 native shell (`user/shell/`, see `docs/reports/stage18d.md`);
+the monitor never gains evaluation and `user/shell` is no longer empty.
 
 ## Tests
 

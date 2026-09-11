@@ -160,7 +160,7 @@ REQUIRED_FILES = (
     "tests/integration/test_userspace.py",
     "docs/design/userspace.md", "docs/reports/stage18a.md",
     "docs/design/executable-format.md", "docs/design/syscall-abi.md",
-    "docs/reports/stage18b.md",
+    "docs/reports/stage18b.md", "docs/reports/stage18d.md",
     # Stage 18c native runtime library: CPL3 library, toolchain rebind,
     # conformance driver/validator/tests, and design docs.
     "kernel/include/rttest.h", "kernel/core/rt-test.c",
