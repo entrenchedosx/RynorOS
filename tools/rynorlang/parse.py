@@ -66,7 +66,7 @@ class _Abort(Exception):
 _TYPE_TOKENS = {"INT_TYPE", "BOOL_TYPE", "STR_TYPE"}
 # Stage 19a contextual type constructors (IDENTIFIER text, never keywords:
 # a record may not be declared under these names, enforced by analyze).
-_TYPE_CTORS = {"list", "map", "status"}
+_TYPE_CTORS = {"list", "map", "status", "result"}
 # Stage 19a record declaration word (IDENTIFIER text in top-level position).
 _RECORD_WORD = "record"
 _SHELL_EDITIONS = ("shell", "shell-preview")
@@ -265,8 +265,8 @@ class _Parser:
                 self.type_angle_depth += 1
                 try:
                     args: list[ParseNode] = [self.parse_type()]
-                    if base in ("list", "map"):
-                        need = 2 if base == "list" else 3
+                    if base in ("list", "map", "result"):
+                        need = 2 if base in ("list", "result") else 3
                         while len(args) < need:
                             self.expect("COMMA", "between type arguments")
                             if self.at("GREATER") or self.at("SHIFT_RIGHT"):
@@ -321,6 +321,12 @@ class _Parser:
             return self.parse_if()
         if self.at("WHILE"):
             return self.parse_while()
+        if self.at("IDENTIFIER") and self.current().lexeme in ("break", "continue"):
+            return self.parse_loop_jump()
+        if self.at("IDENTIFIER") and self.current().lexeme == "match":
+            node = self.parse_match_stmt()
+            if node is not None:
+                return node
         if self.at("LEFT_BRACE"):
             return self.parse_block()
         expression = self.parse_pipeline()
@@ -363,6 +369,79 @@ class _Parser:
         condition = self.parse_pipeline()
         body = self.parse_block()
         return ParseNode("WhileStmt", _cover(start.span, body.span), (condition, body))
+
+    def parse_loop_jump(self) -> ParseNode:
+        # Stage 19b break/continue (reserved words; exactly `break;`).
+        word = self.take()
+        end = self.expect("SEMICOLON", "after loop jump")
+        kind = "BreakStmt" if word.lexeme == "break" else "ContinueStmt"
+        return ParseNode(kind, _cover(word.span, end.span), ())
+
+    def parse_match_stmt(self) -> ParseNode | None:
+        # Stage 19b match (contextual word). Any failure before the first
+        # arm restores and yields None so the caller falls back to an
+        # ordinary expression-statement (a bare `match;` stays a Var).
+        saved = self.index
+        try:
+            start = self.take()
+            scrutinee = self.parse_pipeline()
+            self.expect("LEFT_BRACE", "to begin match arms")
+            arms = [self.parse_match_arm()]
+            while self.match("COMMA"):
+                if self.at("RIGHT_BRACE"):
+                    self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in match arms", ("IDENTIFIER", "INTEGER", "STRING"))
+                arms.append(self.parse_match_arm())
+            right = self.expect("RIGHT_BRACE", "after match arms")
+            return ParseNode("MatchStmt", _cover(start.span, right.span), (scrutinee, *arms))
+        except _Abort:
+            self.index = saved
+            return None
+
+    def parse_match_arm(self) -> ParseNode:
+        pattern = self.parse_pattern()
+        eq = self.expect("EQUAL", "between match pattern and arm body")
+        if not (self.at("GREATER") and self.current().span.offset == eq.span.offset + 1):
+            self.fail("PAR_EXPECTED_TOKEN", "match arms use => (adjacent)", ("GREATER",))
+        self.take()
+        body = self.parse_block()
+        return ParseNode("MatchArm", _cover(pattern.span, body.span), (pattern, body))
+
+    def parse_pattern(self) -> ParseNode:
+        token = self.current()
+        if token.kind == "IDENTIFIER" and token.lexeme == "_":
+            self.take()
+            return ParseNode("WildPat", token.span, text="_")
+        if token.kind in ("INTEGER", "STRING", "TRUE", "FALSE"):
+            self.take()
+            return ParseNode("LitPat", token.span, text=token.lexeme, value=token.value)
+        if token.kind == "IDENTIFIER":
+            if token.lexeme in ("ok", "err"):
+                nxt = self.tokens[self.index + 1] if self.index + 1 < len(self.tokens) else None
+                if nxt is not None and nxt.kind == "LEFT_PAREN":
+                    return self.parse_ctor_pattern()
+            self.take()
+            return ParseNode("BindPat", token.span, text=token.lexeme)
+        self.fail("PAR_UNEXPECTED_TOKEN", "expected a match pattern", ("IDENTIFIER", "INTEGER", "STRING"))
+        raise AssertionError("unreachable")
+
+    def parse_ctor_pattern(self) -> ParseNode:
+        which = self.take()
+        self.expect("LEFT_PAREN", "after ok/err in pattern")
+        token = self.current()
+        if token.kind == "IDENTIFIER" and token.lexeme == "_":
+            self.take()
+            sub = ParseNode("WildPat", token.span, text="_")
+        elif token.kind in ("INTEGER", "STRING", "TRUE", "FALSE"):
+            self.take()
+            sub = ParseNode("LitPat", token.span, text=token.lexeme, value=token.value)
+        elif token.kind == "IDENTIFIER":
+            self.take()
+            sub = ParseNode("BindPat", token.span, text=token.lexeme)
+        else:
+            self.fail("PAR_UNEXPECTED_TOKEN", "expected _, a literal, or a binding in ok/err pattern", ("IDENTIFIER", "INTEGER", "STRING"))
+            raise AssertionError("unreachable")
+        right = self.expect("RIGHT_PAREN", "after ok/err pattern payload")
+        return ParseNode("CtorPat", _cover(which.span, right.span), (sub,), text=which.lexeme)
 
     def parse_pipeline(self) -> ParseNode:
         # Stage 15b shell surface: precedence-0 left-associative pipeline.

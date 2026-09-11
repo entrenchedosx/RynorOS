@@ -47,8 +47,14 @@ MAX_STR_LEN = 4096
 # Single source of truth lives in agtypes (rir.py must agree exactly).
 AGG_BUILTINS = _agtypes.AGG_BUILTINS
 # Names a record declaration may not claim (type constructors, builtins,
-# and print share the top-level namespace with functions).
-RESERVED_TYPE_NAMES = ("list", "map", "status", "print") + AGG_BUILTINS
+# print, and control words share the top-level namespace with functions;
+# a record named `match` would be indistinguishable from a match
+# statement at statement position).
+RESERVED_TYPE_NAMES = ("list", "map", "status", "result", "print",
+                       "match", "break", "continue") + AGG_BUILTINS
+# Words no function may claim (reserved builtins plus control words;
+# `match` keeps working as a variable via statement backtracking).
+RESERVED_FN_NAMES = ("print", "match", "break", "continue") + AGG_BUILTINS
 
 # Stage 15b shell-edition codes (additive-only; the six SEM_* above are frozen).
 S_UNKNOWN_COMMAND = "SHELL_UNKNOWN_COMMAND"
@@ -104,6 +110,9 @@ class Analyzer:
                  edition: str = "v1", commands: dict | None = None):
         self.program = program
         self.depth = 0
+        # Stage 19b loop nesting for break/continue targeting (separate
+        # from the depth budget: unbounded nesting is finite source).
+        self._loop_depth = 0
         self.edition = _normalize_edition(edition)
         # Host-side stub registry: name -> ([param types], ret or None).
         # None means no command is known (every Cmd is SHELL_UNKNOWN_COMMAND).
@@ -189,11 +198,8 @@ class Analyzer:
                 if name in self.global_funcs:
                     self._error(C_DUPLICATE, f"duplicate function '{name}'", span,
                                 expected="unique function", got=name, name=name, context="function")
-                if name == "print":
-                    self._error(C_DUPLICATE, "'print' is a reserved builtin", span,
-                                expected="non-reserved function name", got=name, name=name, context="function")
-                if name in AGG_BUILTINS:
-                    self._error(C_DUPLICATE, f"'{name}' is a reserved builtin", span,
+                if name in RESERVED_FN_NAMES:
+                    self._error(C_DUPLICATE, f"'{name}' is reserved", span,
                                 expected="non-reserved function name", got=name, name=name, context="function")
                 # extract params and ret_type (raw type nodes; resolved to
                 # canonical strings after record collection, so parametric
@@ -221,6 +227,9 @@ class Analyzer:
                     if pname in seen:
                         self._error(C_DUPLICATE, f"duplicate parameter '{pname}'", span,
                                     expected="unique parameter", got=pname, name=pname, context="parameter")
+                    if pname in ("break", "continue"):
+                        self._error(C_DUPLICATE, f"'{pname}' is a reserved control word", span,
+                                    expected="non-reserved name", got=pname, name=pname, context="parameter")
                     seen.add(pname)
                 symbol = None  # assigned below: functions take 0..n-1 so the
                 # frozen RIR symbol==index rule holds with records present
@@ -327,11 +336,14 @@ class Analyzer:
             for generator in reversed(pending):
                 generator.close()
 
-    def _lower_block(self, block: ParseNode, scope_stack: list, ret_type) -> dict:
+    def _lower_block(self, block: ParseNode, scope_stack: list, ret_type, predeclared: list | None = None) -> dict:
         self._enter()
         try:
             # new scope for this block
             scope_stack.append({})
+            if predeclared:
+                for pname, ptype, psym in predeclared:
+                    scope_stack[-1][pname] = (psym, ptype, block.span)
             stmts = []
             for stmt in block.children:
                 stable = yield self._lower_stmt(stmt, scope_stack, ret_type)
@@ -538,6 +550,9 @@ class Analyzer:
 
     def _declare(self, name: str, typ: str, span: Span, scope_stack: list):
         # check no shadowing anywhere in scope chain + global funcs
+        if name in ("break", "continue"):
+            self._error(C_DUPLICATE, f"'{name}' is a reserved control word", span,
+                        expected="non-reserved name", got=name, name=name, context="let")
         if name in self.global_funcs:
             self._error(C_DUPLICATE, f"duplicate declaration '{name}' shadows function", span,
                         expected="name distinct from functions", got=name, name=name, context="let")
@@ -622,8 +637,20 @@ class Analyzer:
                 if ctype != "bool":
                     self._error(C_TYPE_MISMATCH, f"while condition expects bool got {ctype}", cond_node.span,
                                 expected="bool", got=ctype, context="while condition")
-                body = yield self._lower_block(body_node, scope_stack, ret_type)
+                self._loop_depth += 1
+                try:
+                    body = yield self._lower_block(body_node, scope_stack, ret_type)
+                finally:
+                    self._loop_depth -= 1
                 return {"kind": "While", "span": self._node_span(stmt), "cond": cond, "body": body}
+            elif stmt.kind in ("BreakStmt", "ContinueStmt"):
+                word = "break" if stmt.kind == "BreakStmt" else "continue"
+                if self._loop_depth <= 0:
+                    self._error(C_TYPE_MISMATCH, f"'{word}' outside loop", stmt.span,
+                                expected="enclosing loop", got=word, context="loop jump")
+                return {"kind": "Break" if word == "break" else "Continue", "span": self._node_span(stmt)}
+            elif stmt.kind == "MatchStmt":
+                return (yield self._lower_match(stmt, scope_stack, ret_type))
             elif stmt.kind == "ExprStmt":
                 expr_node = stmt.children[0]
                 # for ExprStmt, allow unit
@@ -891,7 +918,7 @@ class Analyzer:
             fields.append({"name": fname, "value": stable})
         return ({"kind": "RecLit", "span": self._node_span(node), "record": callee_name, "fields": fields, "type": callee_name}, callee_name)
 
-    def _lower_builtin(self, callee_name: str, arg_nodes: list, node: ParseNode, scope_stack: list):
+    def _lower_builtin(self, callee_name: str, arg_nodes: list, node: ParseNode, scope_stack: list, expected: str | None = None):
         def operand(index: int, expected: str | None = None):
             if index >= len(arg_nodes):
                 self._error(C_ARITY_MISMATCH, f"arity mismatch for '{callee_name}'", node.span,
@@ -997,8 +1024,174 @@ class Analyzer:
                 self._error(C_TYPE_MISMATCH, f"'byte_at' index expects int got {itype}", arg_nodes[1].span,
                             expected="int", got=itype, callee=callee_name, context="call argument")
             return call_node([arg, index], "status<int>")
+        if callee_name == "ok" or callee_name == "err":
+            # Stage 19b result constructors: the expected result type
+            # elaborates the payload (no inference anywhere in the
+            # language, so an unannotated ok()/err() is an error).
+            expect_arity(1)
+            shape = _agtypes.parse_type(expected) if expected is not None else None
+            if shape is None or shape[0] != "generic" or shape[1] != "result":
+                self._error(C_TYPE_MISMATCH, f"'{callee_name}' needs an annotated result type", node.span,
+                            expected="result<T,E>", got=expected, callee=callee_name, context="call")
+            payload_t = _agtypes.canonical(shape[2][0 if callee_name == "ok" else 1])
+            val, vtype = yield operand(0, payload_t)
+            if vtype != payload_t:
+                self._error(C_TYPE_MISMATCH, f"'{callee_name}' payload expects {payload_t} got {vtype}", arg_nodes[0].span,
+                            expected=payload_t, got=vtype, callee=callee_name, context="call argument")
+            return call_node([val], expected)
         self._error(C_UNKNOWN_FUNCTION, f"unknown builtin '{callee_name}'", node.span,
                     expected="known builtin", got=callee_name, callee=callee_name, context="call")
+
+    def _lower_match(self, stmt: ParseNode, scope_stack: list, ret_type):
+        # children: (scrutinee, MatchArm...). Arms are blocks; bindings are
+        # narrowed into each arm's scope. Exhaustiveness is enforced by
+        # scrutinee type (status/result need ok+err or _; bool needs
+        # true+false or _; int/str need _).
+        scrut_node = stmt.children[0]
+        scrut, stype = yield self._lower_expr(scrut_node, scope_stack, False)
+        shape = _agtypes.parse_type(stype)
+        scalar = stype in ("int", "bool", "str")
+        is_status = shape is not None and shape[0] == "generic" and shape[1] == "status"
+        is_result = shape is not None and shape[0] == "generic" and shape[1] == "result"
+        if not (scalar or is_status or is_result):
+            self._error(C_TYPE_MISMATCH, f"cannot match on {stype}", scrut_node.span,
+                        expected="status, result, int, bool, or str", got=stype, context="match")
+        if is_status:
+            payload_t = _agtypes.canonical(shape[2][0])
+            ok_t, err_t = payload_t, "int"
+        elif is_result:
+            ok_t = _agtypes.canonical(shape[2][0])
+            err_t = _agtypes.canonical(shape[2][1])
+        else:
+            ok_t = err_t = stype
+        arms = []
+        covered_ok = covered_err = covered_wild = False
+        covered_lits: set = set()
+        for arm_node in stmt.children[1:]:
+            pat_node, body_node = arm_node.children[0], arm_node.children[1]
+            if covered_wild:
+                self._error(C_TYPE_MISMATCH, "unreachable match arm", arm_node.span,
+                            expected="reachable pattern", context="match arm")
+            bindings, kind = self._lower_pattern(pat_node, stype, ok_t, err_t, scope_stack)
+            if kind == "wild" or kind == "bind":
+                covered_wild = True
+            elif kind in ("ok", "err"):
+                if (kind == "ok" and covered_ok) or (kind == "err" and covered_err):
+                    self._error(C_DUPLICATE, f"duplicate '{kind}' arm", arm_node.span,
+                                expected="unique variant arm", got=kind, context="match arm")
+                if kind == "ok":
+                    covered_ok = True
+                else:
+                    covered_err = True
+            elif kind == "lit":
+                key = self._pattern_key(pat_node, stype)
+                if key in covered_lits:
+                    self._error(C_DUPLICATE, "duplicate match literal", arm_node.span,
+                                expected="unique literal", context="match arm")
+                covered_lits.add(key)
+            for bname, _btype, _bsym in bindings:
+                if self._lookup(bname, scope_stack) is not None or bname in self.global_funcs:
+                    self._error(C_DUPLICATE, f"duplicate declaration '{bname}'", pat_node.span,
+                                expected="unique binding", got=bname, name=bname, context="match binding")
+            bound = []
+            sym_of = {}
+            for bname, btype, _ignore in bindings:
+                sym = self.sym_counter
+                self.sym_counter += 1
+                bound.append((bname, btype, sym))
+                sym_of[bname] = sym
+            body = yield self._lower_block(body_node, scope_stack, ret_type, bound)
+            arms.append({"pattern": self._pattern_json(pat_node, kind, sym_of), "body": body})
+        if is_status or is_result:
+            covered = (covered_ok and covered_err) or covered_wild
+        elif stype == "bool":
+            covered = covered_wild or (("lit", "true") in covered_lits and ("lit", "false") in covered_lits)
+        else:
+            covered = covered_wild
+        if not covered:
+            self._error(C_TYPE_MISMATCH, "non-exhaustive match", stmt.span,
+                        expected="covering arms", got=stype, context="match")
+        return {"kind": "Match", "span": self._node_span(stmt), "scrut": scrut, "arms": arms}
+
+    def _pattern_key(self, pat_node: ParseNode, stype: str):
+        if pat_node.kind == "LitPat":
+            return ("lit", pat_node.text)
+        return ("other", pat_node.kind, pat_node.text)
+
+    def _pattern_json(self, pat_node: ParseNode, kind: str, sym_of: dict) -> dict:
+        base = {"kind": {"wild": "WildPat", "bind": "BindPat", "lit": "LitPat",
+                         "ok": "OkPat", "err": "ErrPat"}[kind],
+                "span": self._node_span(pat_node)}
+        if kind == "bind":
+            base["name"] = pat_node.text
+            base["symbol"] = sym_of[pat_node.text]
+        elif kind == "lit":
+            # Decoded value for strings (quotes + escapes resolved like
+            # StringLiteral); raw lexemes otherwise.
+            text = pat_node.text or ""
+            if len(text) >= 2 and text[0] == '"' and isinstance(pat_node.value, str):
+                base["value"] = pat_node.value
+            else:
+                base["value"] = text
+        elif kind in ("ok", "err"):
+            sub = pat_node.children[0]
+            if sub.kind == "BindPat":
+                base["binding"] = sub.text
+                base["symbol"] = sym_of[sub.text]
+            elif sub.kind == "LitPat":
+                base["literal"] = sub.text
+        return base
+
+    def _lit_pat_type(self, node: ParseNode) -> str | None:
+        # LitPat carries the raw lexeme; the lexer invariants make the
+        # type decidable: true/false, quoted strings, digit runs.
+        text = node.text or ""
+        if text == "true" or text == "false":
+            return "bool"
+        if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+            return "str"
+        if text and all(ch.isdigit() for ch in text):
+            return "int"
+        return None
+
+    def _lower_pattern(self, pat_node: ParseNode, stype: str, ok_t: str, err_t: str, scope_stack: list):
+        # Returns (bindings, kind) where kind in wild/bind/lit/ok/err.
+        # Bindings are (name, type, span-or-None) validated for shadowing
+        # by the caller, which mints symbols.
+        kind = pat_node.kind
+        if kind == "WildPat":
+            return ([], "wild")
+        if kind == "Identifier":
+            # Bare-word pattern from hand-built trees (parser emits BindPat).
+            return ([(pat_node.text, stype, None)], "bind")
+        if kind == "BindPat":
+            return ([(pat_node.text, stype, None)], "bind")
+        if kind == "LitPat":
+            want = self._lit_pat_type(pat_node)
+            if want is None or want != stype:
+                self._error(C_TYPE_MISMATCH, "match literal mistyped", pat_node.span,
+                            expected=stype, got=want, context="match pattern")
+            return ([], "lit")
+        if kind == "CtorPat":
+            which = pat_node.text
+            sub = pat_node.children[0]
+            shape = _agtypes.parse_type(stype)
+            if shape is None or shape[0] != "generic" or shape[1] not in ("status", "result"):
+                self._error(C_TYPE_MISMATCH, f"'{which}' pattern needs a status or result", pat_node.span,
+                            expected="status or result", got=stype, context="match pattern")
+            payload_t = ok_t if which == "ok" else err_t
+            if sub.kind == "WildPat":
+                return ([], which)
+            if sub.kind == "BindPat":
+                return ([(sub.text, payload_t, None)], which)
+            # Literal payload: must match the payload type exactly.
+            want = self._lit_pat_type(sub)
+            if want is None or want != payload_t:
+                self._error(C_TYPE_MISMATCH, f"'{which}' payload mistyped", sub.span,
+                            expected=payload_t, got=want, context="match pattern")
+            return ([], which)
+        self._error(C_TYPE_MISMATCH, f"unknown pattern {kind}", pat_node.span,
+                    expected="supported pattern", got=kind, context="match pattern")
 
     def _lower_pipeline(self, node: ParseNode, scope_stack: list, allow_unit: bool):
         # MVP: every non-final stage is str; a unit final stage makes a unit
@@ -1277,7 +1470,7 @@ class Analyzer:
                     # RIR ops; first-error order = source order of checks).
                     if callee_name in AGG_BUILTINS:
                         arg_nodes = list(arglist_node.children) if arglist_node is not None else []
-                        return (yield self._lower_builtin(callee_name, arg_nodes, node, scope_stack))
+                        return (yield self._lower_builtin(callee_name, arg_nodes, node, scope_stack, expected))
                     # Stage 19a record construction through the empty call
                     # shape `Point()` (named fields route via RecLit in the
                     # parser; positional args are never record construction).

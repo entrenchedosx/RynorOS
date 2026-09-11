@@ -86,6 +86,8 @@ def _zero_value(shape, rectypes: dict):
         return (0, tuple((0, None, None) for _ in range(cap)))
     if base == "status":
         return (1, 0, _zero_value(shape[2][0], rectypes))
+    if base == "result":
+        return (1, _zero_value(shape[2][1], rectypes), _zero_value(shape[2][0], rectypes))
     raise OracleRefused(f"cannot zero type {shape!r}")
 
 
@@ -130,6 +132,11 @@ def _render(value: object, shape, rectypes: dict) -> str:
         if tag == 0:
             return f"ok({_render(payload, shape[2][0], rectypes)})"
         return f"err({code})"
+    if base == "result":
+        tag, err_v, ok_v = value
+        if tag == 0:
+            return f"ok({_render(ok_v, shape[2][0], rectypes)})"
+        return f"err({_render(err_v, shape[2][1], rectypes)})"
     raise OracleRefused(f"cannot render type {shape!r}")
 
 
@@ -180,6 +187,12 @@ def _values_equal(left: object, right: object, shape, rectypes: dict) -> bool:
         rtag, rcode, rpay = right
         return (ltag == rtag and lcode == rcode
                 and _values_equal(lpay, rpay, shape[2][0], rectypes))
+    if base == "result":
+        ltag, lerr, lok = left
+        rtag, rerr, rok = right
+        return (ltag == rtag
+                and _values_equal(lerr, rerr, shape[2][1], rectypes)
+                and _values_equal(lok, rok, shape[2][0], rectypes))
     raise OracleRefused(f"cannot compare type {shape!r}")
 
 
@@ -369,7 +382,7 @@ def _exec_instr(instr: dict, env: dict, funcs: dict, strtab: dict, emitted: list
     if op in ("make_record", "get_field", "make_list", "list_len", "list_idx", "list_push",
               "make_map", "map_get", "map_insert", "map_len",
               "str_len", "str_byte_at", "status_is_ok", "status_is_err",
-              "status_unwrap_or"):
+              "status_unwrap_or", "result_ok", "result_err", "unwrap_ok", "unwrap_err"):
         return _exec_agg(instr, env, rectypes, emitted, vtypes)
     if op == "call":
         name = instr["name"]
@@ -568,6 +581,32 @@ def _exec_agg(instr: dict, env: dict, rectypes: dict, emitted: list | None = Non
         tag, _code, payload = env[instr["v"]]
         env[instr["dst"]] = payload if tag == 0 else env[instr["default"]]
         return None
+    if op == "result_ok" or op == "result_err":
+        # Layout mirrors status structurally: (tag, E, T) with the
+        # unused variant zeroed (deterministic equality).
+        if op == "result_ok":
+            env[instr["dst"]] = (0, _zero_result_err(instr["type"], rectypes), env[instr["val"]])
+        else:
+            env[instr["dst"]] = (1, env[instr["val"]], _zero_result_ok(instr["type"], rectypes))
+        return None
+    if op == "unwrap_ok" or op == "unwrap_err":
+        # Path-validated extraction (builder emits on the taken arm only).
+        tag, err_v, ok_v = env[instr["v"]]
+        env[instr["dst"]] = ok_v if op == "unwrap_ok" else err_v
+        return None
+    if op == "result_ok" or op == "result_err":
+        # Layout mirrors status structurally: (tag, E, T) with the
+        # unused variant zeroed (deterministic equality).
+        if op == "result_ok":
+            env[instr["dst"]] = (0, _zero_result_err(instr["type"], rectypes), env[instr["val"]])
+        else:
+            env[instr["dst"]] = (1, env[instr["val"]], _zero_result_ok(instr["type"], rectypes))
+        return None
+    if op == "unwrap_ok" or op == "unwrap_err":
+        # Path-validated extraction (builder emits on the taken arm only).
+        tag, err_v, ok_v = env[instr["v"]]
+        env[instr["dst"]] = ok_v if op == "unwrap_ok" else err_v
+        return None
     if op == "print_agg":
         raise OracleRefused("print_agg renders in run_rir (see _render)")
     raise OracleRefused(f"unknown opcode {op!r}")  # pragma: no cover
@@ -581,6 +620,16 @@ def _inner_shape(typ: str, base: str):
     if node is None or node[0] != "generic" or node[1] != base:
         raise OracleRefused(f"expected {base} type, got {typ!r}")
     return node
+
+
+def _zero_result_err(typ: str, rectypes: dict):
+    node = _parse_ctype(typ)
+    return _zero_value(node[2][1], rectypes)
+
+
+def _zero_result_ok(typ: str, rectypes: dict):
+    node = _parse_ctype(typ)
+    return _zero_value(node[2][0], rectypes)
 
 
 def _list_cap(typ: str) -> int:
