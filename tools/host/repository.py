@@ -177,6 +177,8 @@ REQUIRED_FILES = (
     "docs/reports/stage18c.md",
     # Stage 18d frozen ABI (docs-only freeze pass, no code).
     "docs/design/stage18d-abi.md",
+    # P3 ABI/syscall growth policy (frozen framework, no features).
+    "docs/design/abi-growth.md",
     # Stage 18d Slices A/B: gated input driver, UAPI header, validator,
     # and tests. Later-slice layouts frozen in uapi.h carry no behavior.
     "kernel/include/uapi.h", "kernel/include/readtest.h",
