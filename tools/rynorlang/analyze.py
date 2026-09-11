@@ -43,10 +43,9 @@ C_LIMIT_EXCEEDED = "SEM_LIMIT_EXCEEDED"
 # literals fail here, never in the backend.
 MAX_STR_LEN = 4096
 
-# Stage 19a aggregate builtins (reserved names, `print` precedent: user
-# functions may not claim them; calls lower to dedicated RIR ops).
-AGG_BUILTINS = ("len", "push", "insert", "get", "is_ok", "is_err",
-                "unwrap_or", "byte_at")
+# Stage 19a aggregate builtins (reserved names, `print` precedent).
+# Single source of truth lives in agtypes (rir.py must agree exactly).
+AGG_BUILTINS = _agtypes.AGG_BUILTINS
 # Names a record declaration may not claim (type constructors, builtins,
 # and print share the top-level namespace with functions).
 RESERVED_TYPE_NAMES = ("list", "map", "status", "print") + AGG_BUILTINS
@@ -223,8 +222,8 @@ class Analyzer:
                         self._error(C_DUPLICATE, f"duplicate parameter '{pname}'", span,
                                     expected="unique parameter", got=pname, name=pname, context="parameter")
                     seen.add(pname)
-                symbol = self.sym_counter
-                self.sym_counter += 1
+                symbol = None  # assigned below: functions take 0..n-1 so the
+                # frozen RIR symbol==index rule holds with records present
                 self.global_funcs[name] = {"params": params, "ret_type": ret_type, "span": span, "symbol": symbol, "node": fn, "block": block}
                 function_params.append(params)
             for params in function_params:
@@ -232,6 +231,20 @@ class Analyzer:
                     if pname in self.global_funcs:
                         self._error(C_DUPLICATE, f"duplicate declaration '{pname}' shadows global function", pspan,
                                     expected="name distinct from functions", got=pname, name=pname, context="parameter")
+            # Symbol assignment: functions take 0..n-1 in source order (the
+            # frozen RIR symbol==index rule), records follow. Deterministic.
+            for fn in func_nodes:
+                if fn.kind == "FunctionDef":
+                    info = self.global_funcs[fn.text]
+                    if info["symbol"] is None:
+                        info["symbol"] = self.sym_counter
+                        self.sym_counter += 1
+            for fn in func_nodes:
+                if fn.kind == "RecordDecl":
+                    info = self.record_decls[fn.text]
+                    if info["symbol"] is None:
+                        info["symbol"] = self.sym_counter
+                        self.sym_counter += 1
             # Resolve record field types (all names known now) and compute
             # static sizes with occurs-check; bounds enforced here, once.
             self._resolve_record_fields()
@@ -370,8 +383,7 @@ class Analyzer:
                             expected="unique field", got=fname, name=fname, context="record field")
             seen.add(fname)
             raw.append((fname, child.children[1], child.span))
-        symbol = self.sym_counter
-        self.sym_counter += 1
+        symbol = None  # assigned with the functions: records follow them
         self.record_decls[name] = {"fields_raw": raw, "span": span, "symbol": symbol, "node": node}
 
     def _type_shape(self, tnode: ParseNode):
@@ -677,6 +689,28 @@ class Analyzer:
             return True
         return self._is_comparable(typ)
 
+    def _const_key(self, node: ParseNode):
+        # Constant map keys lower to comparable identities; anything else
+        # is dynamic (runtime update-or-insert keeps maps duplicate-free).
+        if node.kind == "IntegerLiteral":
+            return ("int", node.text)
+        if node.kind == "BooleanLiteral":
+            return ("bool", node.text)
+        if node.kind == "StringLiteral":
+            return ("str", node.value if node.value is not None else node.text[1:-1])
+        return None
+
+    def _check_dup_keys(self, kids: list) -> None:
+        seen: set = set()
+        for kid in kids:
+            identity = self._const_key(kid.children[0])
+            if identity is None:
+                continue
+            if identity in seen:
+                self._error(C_DUPLICATE, "duplicate map key", kid.children[0].span,
+                            expected="unique key", got=identity[1], context="map literal")
+            seen.add(identity)
+
     def _lower_list_lit(self, node: ParseNode, scope_stack: list, expected: str | None):
         # Parser charges one level per element group; lowering matches it.
         self._enter()
@@ -723,6 +757,7 @@ class Analyzer:
             self._leave()
 
     def _lower_map_lit(self, node: ParseNode, scope_stack: list, expected: str | None):
+        self._check_dup_keys(list(node.children))
         self._enter()
         try:
             kids = list(node.children)
