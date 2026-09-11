@@ -1508,13 +1508,13 @@ def emit_asm(module: dict) -> str:
     return _Emitter(module).emit_module()
 
 
-def compile_source(source: str, filename: str = "<input>"):
+def compile_source(source: str, filename: str = "<input>", profile: str = "default"):
     """Full pipeline: lex/parse/analyze -> RIR -> asm.
 
     Returns (asm_text, None) or (None, {"code","message"}) where code is a
     PAR_*/SEM_*/COMP_* diagnostic code. Never raises on bad input.
     """
-    result = _analyze.analyze(source, filename)
+    result = _analyze.analyze(source, filename, profile=profile)
     if not result.ok:
         diag = result.diagnostic
         return None, {"code": diag.code, "message": diag.message}
@@ -1552,6 +1552,8 @@ def main(argv=None) -> int:
     group.add_argument("--run", action="store_true",
                        help="build to a temp dir, run it, forward its stdout; "
                             "exit code is the program's (diagnostics stay on stderr)")
+    parser.add_argument("--profile", default="default", choices=("default", "strict"),
+                        help="build profile: default (current behavior) or strict (19d reproducible lock)")
     args = parser.parse_args(argv)
     if args.source is None:
         parser.print_usage(sys.stderr)
@@ -1571,7 +1573,7 @@ def main(argv=None) -> int:
         print(f"{args.source}:1:1:0: PAR_LEX_ERROR: "
               "RynorLang Stage 12 source is ASCII-only", file=sys.stderr)
         return 1
-    result = _analyze.analyze(source, str(args.source))
+    result = _analyze.analyze(source, str(args.source), profile=args.profile)
     if not result.ok:
         diag = result.diagnostic
         print(f"{diag.span.filename}:{diag.span.line}:{diag.span.column}:"

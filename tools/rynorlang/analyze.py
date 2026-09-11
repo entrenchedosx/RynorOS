@@ -38,6 +38,9 @@ C_ARITY_MISMATCH = "SEM_ARITY_MISMATCH"
 C_UNKNOWN_FUNCTION = "SEM_UNKNOWN_FUNCTION"
 # Statically known capacity overflow (string literals past MAX_STR_LEN).
 C_LIMIT_EXCEEDED = "SEM_LIMIT_EXCEEDED"
+# Stage 19d profile gate (additive: only fires under --profile=strict,
+# which no earlier input requests).
+C_PROFILE_EXCLUDED = "SEM_PROFILE_EXCLUDED"
 # Backend string cap, mirrored here (rir.py must stay standalone-importable,
 # so the constant is duplicated, not imported): statically known overlong
 # literals fail here, never in the backend.
@@ -81,6 +84,15 @@ def _normalize_edition(edition: str) -> str:
         return "shell"
     return "v1"
 
+
+VALID_PROFILES = ("default", "strict")
+
+
+def _normalize_profile(profile: str) -> str:
+    if profile in VALID_PROFILES:
+        return profile
+    return "default"
+
 @dataclass(frozen=True)
 class Diagnostic:
     code: str
@@ -110,13 +122,18 @@ class _AbortAnalysis(Exception):
 class Analyzer:
     def __init__(self, program: ParseNode, source: str | None = None, tokens: tuple[Token, ...] = (),
                  edition: str = "v1", commands: dict | None = None, external: dict | None = None,
-                 imports: dict | None = None, self_alias: str | None = None):
+                 imports: dict | None = None, self_alias: str | None = None,
+                 profile: str = "default"):
         self.program = program
         self.depth = 0
         # Stage 19b loop nesting for break/continue targeting (separate
         # from the depth budget: unbounded nesting is finite source).
         self._loop_depth = 0
         self.edition = _normalize_edition(edition)
+        # Stage 19d profile gate: strict excludes shell constructs even
+        # when the edition allows them (default is byte-identical: the
+        # check below never fires).
+        self.profile = _normalize_profile(profile)
         # Host-side stub registry: name -> ([param types], ret or None).
         # None means no command is known (every Cmd is SHELL_UNKNOWN_COMMAND).
         self.commands = commands
@@ -1520,6 +1537,9 @@ class Analyzer:
                 if self.edition != "shell":
                     self._error(CODE_UNEXP_TOKEN, f"shell syntax requires the shell edition (got {node.kind})", node.span,
                                 expected="v1 expression", got=node.kind, context="edition gate")
+                if self.profile == "strict":
+                    self._error(C_PROFILE_EXCLUDED, f"shell construct {node.kind} excluded by --profile=strict", node.span,
+                                expected="v1 expression", got=node.kind, context="profile gate")
                 if node.kind == "PipeExpr":
                     return (yield self._lower_pipeline(node, scope_stack, allow_unit))
                 elif node.kind == "CmdExpr":
@@ -1641,7 +1661,7 @@ class Analyzer:
                 self._error(C_TYPE_MISMATCH, f"unknown expr {node.kind}", node.span,
                             expected="supported expression", got=node.kind, context="lowering")
 
-def analyze(source: str, filename: str = "<input>", edition: str = "v1", commands: dict | None = None) -> AnalyzeResult:
+def analyze(source: str, filename: str = "<input>", edition: str = "v1", commands: dict | None = None, profile: str = "default") -> AnalyzeResult:
     if not isinstance(source, str) or not isinstance(filename, str):
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "source and filename must be strings", Span(filename if isinstance(filename,str) else "<input>",1,1,0,0)))
     # lex+parse
@@ -1656,10 +1676,10 @@ def analyze(source: str, filename: str = "<input>", edition: str = "v1", command
             got_lexeme=getattr(d, "got_lexeme", None),
         ))
     # lowering + semantics
-    analyzer = Analyzer(pres.root, source=source, edition=edition, commands=commands)
+    analyzer = Analyzer(pres.root, source=source, edition=edition, commands=commands, profile=profile)
     return analyzer.analyze()
 
-def analyze_bytes(data: bytes, filename: str = "<input>", edition: str = "v1", commands: dict | None = None) -> AnalyzeResult:
+def analyze_bytes(data: bytes, filename: str = "<input>", edition: str = "v1", commands: dict | None = None, profile: str = "default") -> AnalyzeResult:
     if not isinstance(data, bytes) or not isinstance(filename, str):
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "data must be bytes", Span(filename if isinstance(filename,str) else "<input>",1,1,0,0)))
     from tools.rynorlang.lex import lex_bytes
@@ -1667,9 +1687,9 @@ def analyze_bytes(data: bytes, filename: str = "<input>", edition: str = "v1", c
     if res.diagnostic:
         code = CODE_FILE if res.diagnostic.code=="LEX_FILE_TOO_LARGE" else CODE_LEX
         return AnalyzeResult(None, Diagnostic(code, res.diagnostic.message, res.diagnostic.span, got_kind=res.diagnostic.code))
-    return analyze_tokens(res.tokens, filename, source=data.decode("ascii"), edition=edition, commands=commands)
+    return analyze_tokens(res.tokens, filename, source=data.decode("ascii"), edition=edition, commands=commands, profile=profile)
 
-def analyze_file(path, edition: str = "v1", commands: dict | None = None) -> AnalyzeResult:
+def analyze_file(path, edition: str = "v1", commands: dict | None = None, profile: str = "default") -> AnalyzeResult:
     try:
         p = Path(path)
         # use lex_file for bounds
@@ -1678,11 +1698,11 @@ def analyze_file(path, edition: str = "v1", commands: dict | None = None) -> Ana
         if lres.diagnostic:
             code = CODE_FILE if lres.diagnostic.code=="LEX_FILE_TOO_LARGE" else CODE_LEX
             return AnalyzeResult(None, Diagnostic(code, lres.diagnostic.message, lres.diagnostic.span, got_kind=lres.diagnostic.code))
-        return analyze_tokens(lres.tokens, str(p), edition=edition, commands=commands)
+        return analyze_tokens(lres.tokens, str(p), edition=edition, commands=commands, profile=profile)
     except (OSError, TypeError, ValueError) as e:
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, str(e), Span(str(path),1,1,0,0)))
 
-def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None, edition: str = "v1", commands: dict | None = None) -> AnalyzeResult:
+def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None, edition: str = "v1", commands: dict | None = None, profile: str = "default") -> AnalyzeResult:
     if not isinstance(filename, str) or (source is not None and not isinstance(source, str)):
         return AnalyzeResult(None, Diagnostic(CODE_INVALID, "invalid filename or source", Span("<input>",1,1,0,0)))
     if not isinstance(tokens, tuple) or not tokens:
@@ -1709,7 +1729,7 @@ def analyze_tokens(tokens, filename: str = "<input>", source: str | None = None,
                                                   got_kind=lex_diag.code))
         if source_tokens.tokens != tokens:
             return AnalyzeResult(None, Diagnostic(CODE_INVALID, "source does not match tokens", Span(filename,1,1,0,0)))
-    analyzer = Analyzer(pres.root, source=source, tokens=tokens, edition=edition, commands=commands)
+    analyzer = Analyzer(pres.root, source=source, tokens=tokens, edition=edition, commands=commands, profile=profile)
     return analyzer.analyze()
 
 def iter_ast_json(ast):
@@ -1751,6 +1771,8 @@ def main(argv=None) -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--edition", default="v1",
                     help="language edition: v1 (default) or shell/shell-preview")
+    ap.add_argument("--profile", default="default", choices=list(VALID_PROFILES),
+                    help="build profile: default (current behavior) or strict (19d reproducible lock)")
     args = ap.parse_args(argv)
     if args.source is None:
         ap.print_usage(sys.stderr)
@@ -1760,7 +1782,7 @@ def main(argv=None) -> int:
         return 2
     from tools.rynorlang.shell import DEMO_COMMANDS
     commands = DEMO_COMMANDS if _normalize_edition(args.edition) == "shell" else None
-    res = analyze_file(args.source, args.edition, commands)
+    res = analyze_file(args.source, args.edition, commands, args.profile)
     if not res.ok:
         d = res.diagnostic
         # diagnostic line
