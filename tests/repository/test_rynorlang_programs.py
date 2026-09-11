@@ -153,7 +153,9 @@ class ProgramBuildTests(ProgramShared):
             "fn main(): str { let x: str = ls |> count; return x; }",
             "shell.rl", Path(self.tmpdir.name) / "g")
         self.assertIsNone(arts)
-        self.assertEqual(error["code"], "PAR_LEX_ERROR")
+        # Stage 19a: `|>` lexes as PIPE + GREATER, so the default-edition
+        # shell rejection surfaces at parse level, not lex level.
+        self.assertEqual(error["code"], "PAR_UNEXPECTED_TOKEN")
         arts, error = program.build_program("fn main(): int { return 1; }",
                                             "ok.rl", Path(self.tmpdir.name) / "g2")
         self.assertIsNone(error)
