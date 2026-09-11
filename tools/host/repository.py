@@ -26,6 +26,8 @@ REQUIRED_DIRECTORIES = (
     "tests/fixtures/rynorlang/programs/trap",
     "tests/fixtures/rynorlang/aggregates/good",
     "tests/fixtures/rynorlang/aggregates/bad",
+    "tests/fixtures/rynorlang/control/good",
+    "tests/fixtures/rynorlang/control/bad",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
     "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
@@ -184,6 +186,8 @@ REQUIRED_FILES = (
     "docs/design/rynorlang-aggregates.md",
     "docs/design/abi-growth.md",
     "tests/repository/test_rynorlang_aggregates.py",
+    "docs/design/rynorlang-control.md",
+    "tests/repository/test_rynorlang_control.py",
     "docs/reports/stage19a.md",
     # Stage 18d Slices A/B: gated input driver, UAPI header, validator,
     # and tests. Later-slice layouts frozen in uapi.h carry no behavior.

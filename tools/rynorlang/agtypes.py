@@ -146,11 +146,10 @@ def validate_type(node: tuple, depth: int = 0) -> str | None:
     for arg in body:
         if not isinstance(arg, tuple) or (arg[0] not in ("scalar", "nominal", "generic")):
             return "arity"
-        # No status/result directly inside status/result payloads or any
-        # collection element (single-level tags everywhere: indexing and
-        # matching always yield one level; 19c+ may revisit alongside
-        # richer error types).
-        if base in ("status", "result") and arg[0] == "generic" and arg[1] in ("status", "result"):
+        # No status/result inside any payload or element position
+        # (single-level tags everywhere: indexing and matching always
+        # yield one level; richer error types stay a future RFC).
+        if arg[0] == "generic" and arg[1] in ("status", "result"):
             return "nested-status"
         err = validate_type(arg, depth + 1)
         if err is not None:

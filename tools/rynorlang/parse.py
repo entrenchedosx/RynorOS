@@ -378,24 +378,26 @@ class _Parser:
         return ParseNode(kind, _cover(word.span, end.span), ())
 
     def parse_match_stmt(self) -> ParseNode | None:
-        # Stage 19b match (contextual word). Any failure before the first
-        # arm restores and yields None so the caller falls back to an
-        # ordinary expression-statement (a bare `match;` stays a Var).
+        # Stage 19b match (contextual word). Failure before the opening
+        # brace restores and yields None so the caller falls back to an
+        # ordinary expression-statement (a bare `match;` stays a Var, and
+        # `match(x);` stays a call when no fn match exists). Past the
+        # brace the match is committed: arm errors report directly.
         saved = self.index
+        start = self.take()
         try:
-            start = self.take()
             scrutinee = self.parse_pipeline()
             self.expect("LEFT_BRACE", "to begin match arms")
-            arms = [self.parse_match_arm()]
-            while self.match("COMMA"):
-                if self.at("RIGHT_BRACE"):
-                    self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in match arms", ("IDENTIFIER", "INTEGER", "STRING"))
-                arms.append(self.parse_match_arm())
-            right = self.expect("RIGHT_BRACE", "after match arms")
-            return ParseNode("MatchStmt", _cover(start.span, right.span), (scrutinee, *arms))
         except _Abort:
             self.index = saved
             return None
+        arms = [self.parse_match_arm()]
+        while self.match("COMMA"):
+            if self.at("RIGHT_BRACE"):
+                self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in match arms", ("IDENTIFIER", "INTEGER", "STRING"))
+            arms.append(self.parse_match_arm())
+        right = self.expect("RIGHT_BRACE", "after match arms")
+        return ParseNode("MatchStmt", _cover(start.span, right.span), (scrutinee, *arms))
 
     def parse_match_arm(self) -> ParseNode:
         pattern = self.parse_pattern()
