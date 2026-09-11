@@ -24,6 +24,8 @@ REQUIRED_DIRECTORIES = (
     "tests/fixtures/rynorlang/shell-edition/bad",
     "tests/fixtures/rynorlang/programs/good",
     "tests/fixtures/rynorlang/programs/trap",
+    "tests/fixtures/rynorlang/aggregates/good",
+    "tests/fixtures/rynorlang/aggregates/bad",
     "tests/kernel", "tests/rynorlang", "tests/integration", "docs", "docs/design",
     "docs/reports", "build", "kernel/arch/x86_64", "assets", "assets/branding",
 )
@@ -177,8 +179,11 @@ REQUIRED_FILES = (
     "docs/reports/stage18c.md",
     # Stage 18d frozen ABI (docs-only freeze pass, no code).
     "docs/design/stage18d-abi.md",
-    # P3 ABI/syscall growth policy (frozen framework, no features).
+    # Stage 19a aggregates: shared type algebra plus fixture trees.
+    "tools/rynorlang/agtypes.py",
+    "docs/design/rynorlang-aggregates.md",
     "docs/design/abi-growth.md",
+    "tests/repository/test_rynorlang_aggregates.py",
     # Stage 18d Slices A/B: gated input driver, UAPI header, validator,
     # and tests. Later-slice layouts frozen in uapi.h carry no behavior.
     "kernel/include/uapi.h", "kernel/include/readtest.h",

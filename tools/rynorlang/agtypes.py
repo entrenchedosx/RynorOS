@@ -144,8 +144,9 @@ def validate_type(node: tuple, depth: int = 0) -> str | None:
     for arg in body:
         if not isinstance(arg, tuple) or (arg[0] not in ("scalar", "nominal", "generic")):
             return "arity"
-        # Storable positions take any value type except status itself
-        # (single-level tags; uniform across list/map/status payloads).
+        # No status inside collections or status payloads (single-level
+        # tags everywhere: indexing a list yields status<T> directly, so
+        # T itself is never a status; 19b may revisit alongside Result).
         if arg[0] == "generic" and arg[1] == "status":
             return "nested-status"
         err = validate_type(arg, depth + 1)
