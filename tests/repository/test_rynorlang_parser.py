@@ -177,7 +177,13 @@ class Stage13ParserTests(unittest.TestCase):
         parse_bad("let x: int = 1;", "PAR_UNEXPECTED_TOKEN")
 
     def test_26_unknown_type_rejected(self):
-        parse_bad("fn f(a: custom) {}", "PAR_EXPECTED_TOKEN")
+        # Stage 19a: bare type names are nominal record references, so the
+        # parser accepts them; the analyzer rejects undeclared ones
+        # (SEM_UNDECLARED, covered by the aggregates suite). The parser
+        # still rejects non-name tokens in type position.
+        node = parser.parse("fn f(a: custom) {}")
+        self.assertTrue(node.ok)
+        parse_bad("fn f(a: 5) {}", "PAR_EXPECTED_TOKEN")
 
     def test_27_double_comma_rejected(self):
         parse_bad("fn f(a: int,, b: int) {}", "PAR_EXPECTED_TOKEN")
@@ -365,7 +371,7 @@ class Stage13ParserTests(unittest.TestCase):
             directory.cleanup()
 
     def test_51_mutation_precedence_is_detected(self):
-        directory, mutant = mutated('"PLUS": (5, "AdditiveExpr"),', '"PLUS": (7, "AdditiveExpr"),', "precedence")
+        directory, mutant = mutated('"PLUS": (9, "AdditiveExpr"),', '"PLUS": (11, "AdditiveExpr"),', "precedence")
         try:
             result = mutant.parse("fn f(){ 1 + 2 * 3; }")
             mutated_expr = next(node for node in walk(result.root) if node.kind == "ExprStmt").children[0]
@@ -386,7 +392,7 @@ class Stage13ParserTests(unittest.TestCase):
                 self.assertNotEqual("OrExpr", shape.kind)
         finally:
             directory.cleanup()
-        directory, mutant = mutated('"EQ_EQ": (3, "EqualityExpr"),', '"EQ_EQ": (4, "EqualityExpr"),', "eq-rel-swap")
+        directory, mutant = mutated('"EQ_EQ": (6, "EqualityExpr"),', '"EQ_EQ": (7, "EqualityExpr"),', "eq-rel-swap")
         try:
             self.assertEqual("EqualityExpr", expression("true == 1 < 2").kind)
             swapped = mutant.parse("fn f(){ true == 1 < 2; }")
@@ -397,7 +403,7 @@ class Stage13ParserTests(unittest.TestCase):
             directory.cleanup()
 
     def test_52_mutation_trailing_program_token_is_detected(self):
-        directory, mutant = mutated('if not self.at("EOF"):\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function definitions are allowed at top level", ("FN", "EOF"))', 'if False:\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function definitions are allowed at top level", ("FN", "EOF"))', "program_trailing")
+        directory, mutant = mutated('if not self.at("EOF"):\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function and record definitions are allowed at top level", ("FN", "EOF"))', 'if False:\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function and record definitions are allowed at top level", ("FN", "EOF"))', "program_trailing")
         try:
             self.assertTrue(mutant.parse("fn f() {} 1").ok)
             self.assertFalse(parser.parse("fn f() {} 1").ok)

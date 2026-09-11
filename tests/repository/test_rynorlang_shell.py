@@ -143,11 +143,13 @@ def _find_all(node, kind, out):
 
 class ShellLexerTests(unittest.TestCase):
     def test_01_v1_rejects_pipe_chars(self):
+        # Stage 19a: `|` lexes (bitops), so v1 rejects shell pipes at
+        # parse level instead of lex level. The rejection itself stays.
         for src in ("a |> b", "a | b", "a |"):
             with self.subTest(src=src):
-                res = lexmod.lex(f"fn main(): int {{ let x: int = 1; return x; }} {src}")
+                res = analyzemod.analyze(f"fn main(): int {{ let x: int = 1; return x; }} {src}", "t.rl")
                 self.assertFalse(res.ok)
-                self.assertEqual(res.diagnostic.code, "LEX_INVALID_CHAR")
+                self.assertEqual(res.diagnostic.code, "PAR_UNEXPECTED_TOKEN")
 
     def test_02_shell_lexes_pipe_gt_as_one_token(self):
         res = lexmod.lex('a |> b', 't.rl', edition='shell')
@@ -156,16 +158,24 @@ class ShellLexerTests(unittest.TestCase):
         self.assertIn(("PIPE_GT", "|>", 2, 2), kinds)
 
     def test_03_pipe_space_gt_stays_two_token_error(self):
+        # Stage 19a: spaced `|` `>` lex as PIPE + GREATER (no longer a lex
+        # error), but must still never fuse into PIPE_GT: whitespace safety
+        # now pinned positively at token level, with parse rejection.
         res = lexmod.lex('a | > b', 't.rl', edition='shell')
-        self.assertFalse(res.ok)
-        self.assertEqual(res.diagnostic.code, "LEX_INVALID_CHAR")
+        self.assertTrue(res.ok, res.diagnostic)
+        kinds = [t.kind for t in res.tokens]
+        self.assertIn("PIPE", kinds)
+        self.assertIn("GREATER", kinds)
+        self.assertNotIn("PIPE_GT", kinds)
+        bad = analyzemod.analyze('fn main(): str { a | > b; return "x"; }', 't.rl', edition='shell')
+        self.assertFalse(bad.ok)
 
     def test_04_frozen_operators_unchanged_both_editions(self):
         for edition in ("v1", "shell"):
             with self.subTest(edition=edition):
                 for src, want in (("a || b", "OR_OR"), ("a -> b", "ARROW"),
                                   ("a - b", "MINUS"), ("a > b", "GREATER"),
-                                  ("a >> b", "GREATER"), ("a ! b", "BANG")):
+                                  ("a >> b", "SHIFT_RIGHT"), ("a ! b", "BANG")):
                     res = lexmod.lex(src, 't.rl', edition=edition)
                     self.assertTrue(res.ok, (src, res.diagnostic))
                     self.assertIn(want, [t.kind for t in res.tokens])
@@ -278,7 +288,9 @@ class ShellEditionTests(unittest.TestCase):
         src = (GOOD / "pipe_basic.rl").read_text(encoding="utf-8")
         res = analyzemod.analyze(src, "pipe_basic.rl")
         self.assertFalse(res.ok)
-        self.assertEqual(res.diagnostic.code, "PAR_LEX_ERROR")
+        # Stage 19a: `|` lexes, so the pipe is rejected at parse level
+        # (PAR_UNEXPECTED_TOKEN), not lex level. Same rejection, new layer.
+        self.assertEqual(res.diagnostic.code, "PAR_UNEXPECTED_TOKEN")
         # hand-built shell tokens still fail in v1 with an old code
         toks = lexmod.lex(src, "pipe_basic.rl", edition="shell").tokens
         res = analyzemod.analyze_tokens(toks, "pipe_basic.rl", source=src)
@@ -587,11 +599,17 @@ class ShellMutationTests(unittest.TestCase):
         mutant = self._mutant(LEX_PATH,
                               'if self.edition == "shell" and pair in SHELL_DOUBLE_TOKENS:',
                               'if pair in SHELL_DOUBLE_TOKENS:')
+        # Stage 19a: `|>` lexes in v1 as PIPE + GREATER, so the gate is
+        # proven at token level now: removing it fuses one PIPE_GT where
+        # the real lexer keeps two tokens.
         res = mutant.lex('a |> b', 't.rl')
         self.assertTrue(res.ok, "mutant must accept |> in v1")
+        self.assertIn("PIPE_GT", [t.kind for t in res.tokens])
         real = lexmod.lex('a |> b', 't.rl')
-        self.assertFalse(real.ok)
-        self.assertEqual(real.diagnostic.code, "LEX_INVALID_CHAR")
+        self.assertTrue(real.ok)
+        self.assertNotIn("PIPE_GT", [t.kind for t in real.tokens])
+        self.assertEqual([t.kind for t in real.tokens],
+                         ["IDENTIFIER", "PIPE", "GREATER", "IDENTIFIER", "EOF"])
 
     def test_40_pipeline_check_removal_detected(self):
         mutant = self._mutant(ANALYZE_PATH,

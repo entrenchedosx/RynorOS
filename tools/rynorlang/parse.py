@@ -64,6 +64,11 @@ class _Abort(Exception):
 
 
 _TYPE_TOKENS = {"INT_TYPE", "BOOL_TYPE", "STR_TYPE"}
+# Stage 19a contextual type constructors (IDENTIFIER text, never keywords:
+# a record may not be declared under these names, enforced by analyze).
+_TYPE_CTORS = {"list", "map", "status"}
+# Stage 19a record declaration word (IDENTIFIER text in top-level position).
+_RECORD_WORD = "record"
 _SHELL_EDITIONS = ("shell", "shell-preview")
 
 
@@ -74,17 +79,23 @@ def _normalize_edition(edition: str) -> str:
 _BINARY = {
     "OR_OR": (1, "OrExpr"),
     "AND_AND": (2, "AndExpr"),
-    "EQ_EQ": (3, "EqualityExpr"),
-    "BANG_EQ": (3, "EqualityExpr"),
-    "LESS": (4, "RelationalExpr"),
-    "GREATER": (4, "RelationalExpr"),
-    "LESS_EQ": (4, "RelationalExpr"),
-    "GREATER_EQ": (4, "RelationalExpr"),
-    "PLUS": (5, "AdditiveExpr"),
-    "MINUS": (5, "AdditiveExpr"),
-    "STAR": (6, "MultiplicativeExpr"),
-    "SLASH": (6, "MultiplicativeExpr"),
-    "PERCENT": (6, "MultiplicativeExpr"),
+    # Stage 19a bitops (C order; frozen relative order of the old six kept).
+    "PIPE": (3, "BitOrExpr"),
+    "CARET": (4, "BitXorExpr"),
+    "AMP": (5, "BitAndExpr"),
+    "EQ_EQ": (6, "EqualityExpr"),
+    "BANG_EQ": (6, "EqualityExpr"),
+    "LESS": (7, "RelationalExpr"),
+    "GREATER": (7, "RelationalExpr"),
+    "LESS_EQ": (7, "RelationalExpr"),
+    "GREATER_EQ": (7, "RelationalExpr"),
+    "SHIFT_LEFT": (8, "ShiftExpr"),
+    "SHIFT_RIGHT": (8, "ShiftExpr"),
+    "PLUS": (9, "AdditiveExpr"),
+    "MINUS": (9, "AdditiveExpr"),
+    "STAR": (10, "MultiplicativeExpr"),
+    "SLASH": (10, "MultiplicativeExpr"),
+    "PERCENT": (10, "MultiplicativeExpr"),
 }
 
 
@@ -99,6 +110,11 @@ class _Parser:
         self.index = 0
         self.depth = 0
         self.edition = _normalize_edition(edition)
+        # Stage 19a `>>`-as-two-closers bookkeeping: banked closer spans
+        # tagged with the angle depth they belong to (stale banks can never
+        # close an unrelated later type). See take_gt.
+        self.gt_pending: list = []
+        self.type_angle_depth = 0
 
     def current(self) -> Token:
         return self.tokens[self.index]
@@ -148,15 +164,18 @@ class _Parser:
 
     def parse_program(self) -> ParseNode:
         start = self.current().span
-        functions: list[ParseNode] = []
-        while self.at("FN"):
-            functions.append(self.parse_function())
+        members: list[ParseNode] = []
+        while self.at("FN") or (self.at("IDENTIFIER") and self.current().lexeme == _RECORD_WORD):
+            if self.at("FN"):
+                members.append(self.parse_function())
+            else:
+                members.append(self.parse_record_decl())
         # MUTATION_POINT_PROGRAM_TRAILING
         if not self.at("EOF"):
-            self.fail("PAR_UNEXPECTED_TOKEN", "only function definitions are allowed at top level", ("FN", "EOF"))
+            self.fail("PAR_UNEXPECTED_TOKEN", "only function and record definitions are allowed at top level", ("FN", "EOF"))
         eof = self.current()
-        end = functions[-1].span if functions else eof.span
-        return ParseNode("Program", _cover(start, end), tuple(functions))
+        end = members[-1].span if members else eof.span
+        return ParseNode("Program", _cover(start, end), tuple(members))
 
     def parse_function(self) -> ParseNode:
         self.enter()
@@ -191,11 +210,93 @@ class _Parser:
         type_node = self.parse_type()
         return ParseNode("Param", _cover(name.span, type_node.span), (name, type_node), text=name.text)
 
+    def parse_record_decl(self) -> ParseNode:
+        self.enter()
+        try:
+            start = self.take()
+            name = self.identifier()
+            self.expect("LEFT_BRACE", "to begin record fields")
+            fields: list[ParseNode] = []
+            if not self.at("RIGHT_BRACE"):
+                fields.append(self.parse_field_decl())
+                while self.match("COMMA"):
+                    if self.at("RIGHT_BRACE"):
+                        self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in record declaration", ("IDENTIFIER",))
+                    fields.append(self.parse_field_decl())
+            right = self.expect("RIGHT_BRACE", "after record fields")
+            children: list[ParseNode] = [name]
+            children.extend(fields)
+            return ParseNode("RecordDecl", _cover(start.span, right.span), tuple(children), text=name.text)
+        finally:
+            self.leave()
+
+    def parse_field_decl(self) -> ParseNode:
+        name = self.identifier()
+        self.expect("COLON", "between field name and type")
+        type_node = self.parse_type()
+        return ParseNode("FieldDecl", _cover(name.span, type_node.span), (name, type_node), text=name.text)
+
+    def take_gt(self, context: str):
+        # One `>` closer. A `>>` token closes the current level and banks
+        # one closer for the enclosing level (C++11 rule); banks are tagged
+        # with the depth they belong to so a stale bank can never close an
+        # unrelated later type (equality-gated pop below), and banks die
+        # with the top-level type (see parse_type).
+        if self.at("GREATER"):
+            return self.take()
+        if self.at("SHIFT_RIGHT") and self.type_angle_depth > 0:
+            token = self.take()
+            self.gt_pending.append((self.type_angle_depth - 1, token))
+            return token
+        if self.gt_pending and self.gt_pending[-1][0] == self.type_angle_depth:
+            return self.gt_pending.pop()[1]
+        return self.expect("GREATER", context)
+
     def parse_type(self) -> ParseNode:
-        if self.current().kind not in _TYPE_TOKENS:
-            self.fail("PAR_EXPECTED_TOKEN", "expected type int, bool, or str", tuple(sorted(_TYPE_TOKENS)))
-        token = self.take()
-        return ParseNode("Type", token.span, text=token.lexeme)
+        token = self.current()
+        if token.kind in _TYPE_TOKENS:
+            self.take()
+            return ParseNode("Type", token.span, text=token.lexeme)
+        if token.kind == "IDENTIFIER":
+            self.take()
+            base = token.lexeme
+            if base in _TYPE_CTORS and self.at("LESS"):
+                self.take()
+                self.type_angle_depth += 1
+                try:
+                    args: list[ParseNode] = [self.parse_type()]
+                    if base in ("list", "map"):
+                        need = 2 if base == "list" else 3
+                        while len(args) < need:
+                            self.expect("COMMA", "between type arguments")
+                            if self.at("GREATER") or self.at("SHIFT_RIGHT"):
+                                self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in type arguments", ("IDENTIFIER", "INTEGER"))
+                            args.append(self.parse_type_or_cap(base, len(args)))
+                    closer = self.take_gt("to close type arguments")
+                    return ParseNode("Type", _cover(token.span, closer.span), tuple(args), text=base)
+                finally:
+                    self.type_angle_depth -= 1
+                    if self.type_angle_depth == 0:
+                        del self.gt_pending[:]
+            return ParseNode("Type", token.span, text=base)
+        self.fail("PAR_EXPECTED_TOKEN", "expected a type", tuple(sorted(_TYPE_TOKENS)))
+        raise AssertionError("unreachable")
+
+    def parse_type_or_cap(self, base: str, position: int) -> ParseNode:
+        # Capacity positions: list arg 1, map arg 2 (INTEGER literal only;
+        # capacities must be static). Anything else is a nested type.
+        if base == "list" and position == 1:
+            return self.parse_cap()
+        if base == "map" and position == 2:
+            return self.parse_cap()
+        return self.parse_type()
+
+    def parse_cap(self) -> ParseNode:
+        token = self.current()
+        if token.kind != "INTEGER":
+            self.fail("PAR_EXPECTED_TOKEN", "expected an integer capacity", ("INTEGER",))
+        self.take()
+        return ParseNode("Cap", token.span, text=token.lexeme, value=token.value)
 
     def parse_block(self) -> ParseNode:
         self.enter()
@@ -320,7 +421,7 @@ class _Parser:
         # are preserved; raises for malformed command text.
         name_tok = self.take()
         nxt = self.current()
-        if nxt.kind not in ("IDENTIFIER", "MINUS", "INTEGER", "STRING", "TRUE", "FALSE", "GREATER"):
+        if nxt.kind not in ("IDENTIFIER", "MINUS", "INTEGER", "STRING", "TRUE", "FALSE", "GREATER", "SHIFT_RIGHT"):
             return None
         if nxt.kind == "MINUS":
             after = self.tokens[self.index + 1] if self.index + 1 < len(self.tokens) else None
@@ -343,6 +444,12 @@ class _Parser:
                     and self.tokens[self.index + 2].kind == "STRING"):
                 pass
             else:
+                return None
+        if nxt.kind == "SHIFT_RIGHT":
+            # Stage 19a lexer emits `>>` as one token; same two-token
+            # lookahead shape (adjacent, quoted-string target).
+            after = self.tokens[self.index + 1] if self.index + 1 < len(self.tokens) else None
+            if after is None or after.kind != "STRING":
                 return None
         name_node = ParseNode("Identifier", name_tok.span, text=name_tok.lexeme)
         args: list[ParseNode] = []
@@ -370,7 +477,7 @@ class _Parser:
                                           text="-"))
                 else:
                     self.fail("PAR_EXPECTED_TOKEN", "command arguments use bare words, literals, or adjacent -flags", ("IDENTIFIER", "STRING", "INTEGER"))
-            elif tok.kind == "GREATER":
+            elif tok.kind == "GREATER" or tok.kind == "SHIFT_RIGHT":
                 redirects.append(self.parse_redirect())
             else:
                 break
@@ -390,12 +497,21 @@ class _Parser:
         # MVP bound: redirect targets are quoted strings only. A bare word
         # after `>` stays a comparison operand (`a > b` keeps its v1 meaning);
         # only `cmd > "file"` / `cmd >> "file"` form redirects.
-        first = self.expect("GREATER", "to begin a redirect")
-        op = ">"
-        nxt = self.current()
-        if nxt.kind == "GREATER" and nxt.span.offset == first.span.offset + 1:
+        # Stage 19a: the lexer may deliver `>>` as one SHIFT_RIGHT token.
+        first = self.current()
+        if first.kind == "SHIFT_RIGHT":
             self.take()
             op = ">>"
+        else:
+            first = self.expect("GREATER", "to begin a redirect")
+            op = ">"
+            nxt = self.current()
+            if nxt.kind == "GREATER" and nxt.span.offset == first.span.offset + 1:
+                self.take()
+                op = ">>"
+            elif nxt.kind == "SHIFT_RIGHT" and nxt.span.offset == first.span.offset + 1:
+                self.take()
+                op = ">>"
         target = self.current()
         if target.kind != "STRING":
             self.fail("PAR_EXPECTED_TOKEN", 'redirect target must be a quoted string (e.g. > "out")', ("STRING",))
@@ -416,7 +532,7 @@ class _Parser:
         return left
 
     def parse_unary(self) -> ParseNode:
-        operator = self.match("MINUS", "BANG")
+        operator = self.match("MINUS", "BANG", "TILDE")
         if operator is not None:
             self.enter()
             try:
@@ -428,23 +544,70 @@ class _Parser:
 
     def parse_postfix(self) -> ParseNode:
         expression = self.parse_primary()
-        while self.match("LEFT_PAREN"):
-            self.enter()
-            try:
-                arguments: list[ParseNode] = []
-                if not self.at("RIGHT_PAREN"):
+        while True:
+            if self.match("LEFT_PAREN"):
+                expression = self.finish_call(expression)
+            elif self.match("ARROW"):
+                # Stage 19a field access (existing token; expression-postfix
+                # position was always a parse error, so no valid v1 input
+                # changes shape). No depth charge (mirrors bare calls).
+                field = self.identifier()
+                expression = ParseNode("FieldExpr", _cover(expression.span, field.span), (expression, field))
+            elif self.match("LEFT_BRACKET"):
+                # Stage 19a index (new token; same no-charge rule).
+                index = self.parse_pipeline()
+                right = self.expect("RIGHT_BRACKET", "after index")
+                expression = ParseNode("IndexExpr", _cover(expression.span, right.span), (expression, index))
+            else:
+                return expression
+
+    def finish_call(self, expression: ParseNode) -> ParseNode:
+        # Shared `(` completion: call-shaped record construction when the
+        # callee is a bare identifier followed by `name:` pairs, else an
+        # ordinary call. Lookahead is exact (IDENTIFIER COLON) so `f(x)`
+        # never misroutes; empty `()` stays a call (the analyzer
+        # reinterprets record-named callees with zero fields).
+        if (expression.kind == "Identifier" and self.at("IDENTIFIER")
+                and self.index + 1 < len(self.tokens)
+                and self.tokens[self.index + 1].kind == "COLON"):
+            return self.finish_record_literal(expression)
+        self.enter()
+        try:
+            arguments: list[ParseNode] = []
+            if not self.at("RIGHT_PAREN"):
+                arguments.append(self.parse_pipeline())
+                while self.match("COMMA"):
+                    # MUTATION_POINT_CALL_TRAILING_COMMA
+                    if self.at("RIGHT_PAREN"):
+                        self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in argument list")
                     arguments.append(self.parse_pipeline())
-                    while self.match("COMMA"):
-                        # MUTATION_POINT_CALL_TRAILING_COMMA
-                        if self.at("RIGHT_PAREN"):
-                            self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in argument list")
-                        arguments.append(self.parse_pipeline())
-                right = self.expect("RIGHT_PAREN", "after arguments")
-                arg_node = ParseNode("ArgList", _cover(arguments[0].span, arguments[-1].span), tuple(arguments)) if arguments else ParseNode("ArgList", right.span)
-                expression = ParseNode("CallExpr", _cover(expression.span, right.span), (expression, arg_node))
-            finally:
-                self.leave()
-        return expression
+            right = self.expect("RIGHT_PAREN", "after arguments")
+            arg_node = ParseNode("ArgList", _cover(arguments[0].span, arguments[-1].span), tuple(arguments)) if arguments else ParseNode("ArgList", right.span)
+            return ParseNode("CallExpr", _cover(expression.span, right.span), (expression, arg_node))
+        finally:
+            self.leave()
+
+    def finish_record_literal(self, callee: ParseNode) -> ParseNode:
+        # Call-shaped record construction `Point(x: 1, y: 2)`: all fields
+        # named (first pair decides the mode), no trailing comma, one
+        # depth charge for the field group (call-arg-group parity).
+        self.enter()
+        try:
+            inits: list[ParseNode] = [self.parse_field_init()]
+            while self.match("COMMA"):
+                if self.at("RIGHT_PAREN"):
+                    self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in record construction")
+                inits.append(self.parse_field_init())
+            right = self.expect("RIGHT_PAREN", "after record fields")
+            return ParseNode("RecLit", _cover(callee.span, right.span), (callee, *inits))
+        finally:
+            self.leave()
+
+    def parse_field_init(self) -> ParseNode:
+        name = self.identifier()
+        self.expect("COLON", "between field name and value")
+        value = self.parse_pipeline()
+        return ParseNode("FieldInit", _cover(name.span, value.span), (name, value))
 
     def parse_primary(self) -> ParseNode:
         token = self.current()
@@ -468,7 +631,54 @@ class _Parser:
                 return ParseNode("GroupExpr", _cover(left.span, right.span), (expression,))
             finally:
                 self.leave()
-        self.fail("PAR_UNEXPECTED_TOKEN", "expected expression", ("IDENTIFIER", "INTEGER", "STRING", "TRUE", "FALSE", "LEFT_PAREN"))
+        if token.kind == "LEFT_BRACKET":
+            return self.parse_list_literal()
+        if token.kind == "LEFT_BRACE":
+            return self.parse_map_literal()
+        self.fail("PAR_UNEXPECTED_TOKEN", "expected expression", ("IDENTIFIER", "INTEGER", "STRING", "TRUE", "FALSE", "LEFT_PAREN", "LEFT_BRACKET", "LEFT_BRACE"))
+
+    def parse_list_literal(self) -> ParseNode:
+        # Stage 19a list literal (new token; one depth charge for the
+        # element group, mirroring call argument groups).
+        self.enter()
+        try:
+            left = self.take()
+            elements: list[ParseNode] = []
+            if not self.at("RIGHT_BRACKET"):
+                elements.append(self.parse_pipeline())
+                while self.match("COMMA"):
+                    if self.at("RIGHT_BRACKET"):
+                        self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in list literal")
+                    elements.append(self.parse_pipeline())
+            right = self.expect("RIGHT_BRACKET", "after list elements")
+            return ParseNode("ListLit", _cover(left.span, right.span), tuple(elements))
+        finally:
+            self.leave()
+
+    def parse_map_literal(self) -> ParseNode:
+        # Stage 19a map literal in expression position (blocks stay
+        # statement-position, so no valid v1 input changes shape).
+        # Empty `{}` is the empty map. One depth charge per literal.
+        self.enter()
+        try:
+            left = self.take()
+            entries: list[ParseNode] = []
+            if not self.at("RIGHT_BRACE"):
+                entries.append(self.parse_map_entry())
+                while self.match("COMMA"):
+                    if self.at("RIGHT_BRACE"):
+                        self.fail("PAR_EXPECTED_TOKEN", "trailing comma is not allowed in map literal")
+                    entries.append(self.parse_map_entry())
+            right = self.expect("RIGHT_BRACE", "after map entries")
+            return ParseNode("MapLit", _cover(left.span, right.span), tuple(entries))
+        finally:
+            self.leave()
+
+    def parse_map_entry(self) -> ParseNode:
+        key = self.parse_pipeline()
+        self.expect("COLON", "between map key and value")
+        value = self.parse_pipeline()
+        return ParseNode("MapEntry", _cover(key.span, value.span), (key, value))
 
     def identifier(self) -> ParseNode:
         token = self.expect("IDENTIFIER", "for name")

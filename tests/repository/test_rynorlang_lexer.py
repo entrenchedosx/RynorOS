@@ -155,13 +155,13 @@ class LexerTokenTests(unittest.TestCase):
         self.assertEqual(result.tokens[0].value, '\\"\n\t')
 
     def test_18_single_character_tokens(self):
-        source = "+ - * / % ! = < > ( ) { } ; , :"
+        source = "+ - * / % ! = < > ( ) { } ; , : [ ] & | ^ ~"
         self.assertEqual(lexer.SINGLE_TOKENS["!"], "BANG")
         expected = list(lexer.SINGLE_TOKENS.values()) + ["EOF"]
         self.assertEqual(kinds(source), expected)
 
     def test_19_double_character_tokens(self):
-        source = "== != <= >= && || ->"
+        source = "== != <= >= && || -> << >>"
         self.assertEqual(kinds(source), list(lexer.DOUBLE_TOKENS.values()) + ["EOF"])
 
     def test_20_equals_maximal_munch(self):
