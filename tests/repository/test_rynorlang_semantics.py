@@ -719,8 +719,8 @@ class SemanticsMutationTests(unittest.TestCase):
 
     def test_32_mutation_type_binop(self):
         self._assert_check_removal_changes_result(
-            'if ltype != "int" or rtype != "int":\n                        self._error(C_TYPE_MISMATCH, f"operator',
-            'if False and (ltype != "int" or rtype != "int"):\n                        self._error(C_TYPE_MISMATCH, f"operator',
+            '# op in + - * / %\n                    if ltype != "int" or rtype != "int":\n                        self._error(C_TYPE_MISMATCH, f"operator',
+            '# op in + - * / %\n                    if False and (ltype != "int" or rtype != "int"):\n                        self._error(C_TYPE_MISMATCH, f"operator',
             "fn main(): int { return 1 + true; }", "SEM_TYPE_MISMATCH")
 
     def test_33_mutation_arity(self):
@@ -767,8 +767,8 @@ class SemanticsMutationTests(unittest.TestCase):
 
     def test_49_mutation_equality_typing(self):
         self._assert_check_removal_changes_result(
-            'if ltype != rtype or ltype not in ("int","bool","str"):',
-            'if False and (ltype != rtype or ltype not in ("int","bool","str")):',
+            'if ltype != rtype or not self._is_comparable(ltype):',
+            'if False and (ltype != rtype or not self._is_comparable(ltype)):',
             'fn main(): bool { return 1 == "a"; }', "SEM_TYPE_MISMATCH")
 
     def test_50_mutation_relational_typing(self):
