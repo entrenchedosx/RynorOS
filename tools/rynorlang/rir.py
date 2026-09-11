@@ -21,6 +21,8 @@ own depth limit and lowered with plain recursion.
 
 from __future__ import annotations
 
+from tools.rynorlang import agtypes as _agtypes
+
 
 RIR_VERSION = 1
 MAX_FRAMESLOTS = 1024
@@ -29,16 +31,74 @@ MAX_STR_LEN = 4096
 VALUE_TYPES = ("int", "bool", "str")
 ALL_TYPES = ("int", "bool", "str", "unit")
 
+
+def _is_value_type(text: object, records: dict | None = None) -> bool:
+    """Aggregate-aware value-type gate (builder, verifier, emitter share
+    it so the three can never disagree on which type strings are legal).
+    Scalars as before; anything else must be a validated aggregate shape
+    (records resolve through the module's rectypes table)."""
+    if text in VALUE_TYPES:
+        return True
+    node = _agtypes.parse_type(text) if isinstance(text, str) else None
+    if node is None:
+        return False
+    if node[0] == "nominal":
+        return records is not None and node[1] in records
+    return _agtypes.validate_type(node) is None
+
+
+def _rec_names(rec: dict | None) -> set:
+    """Record names known to the verifier (empty when rec is absent)."""
+    if not isinstance(rec, dict):
+        return set()
+    fields = rec.get("fields")
+    return set(fields) if isinstance(fields, dict) else set()
+
+
+def _slot_width(text: object, records: dict | None = None,
+                record_sizes: dict | None = None) -> int:
+    """Home slots for a type string (str occupies two; aggregates their
+    static width; unknown types fall back to one slot so malformed IR
+    still flows into the verifier's type errors, never a crash)."""
+    if text == "str":
+        return 2
+    if not isinstance(text, str) or text in ("int", "bool", "unit"):
+        return 1
+    node = _agtypes.parse_type(text)
+    if node is None:
+        return 1
+    if node[0] == "nominal":
+        if record_sizes and node[1] in record_sizes:
+            return _agtypes.slot_width_for_size(record_sizes[node[1]])
+        return 1
+    size = _agtypes.size_of(node, record_sizes)
+    if size is None:
+        return 1
+    return _agtypes.slot_width_for_size(size)
+
 # Reserved for future dynamic-free shell values (Stage 19a). The v1 verifier
 # hard-rejects this type; the static fast path never boxes or checks tags.
 RESERVED_TYPES = ("value",)
 
 # Opcodes the v1 verifier rejects outright (reserved for later editions).
+# Stage 19a activates the collection constructors/projections it needs;
+# set_field stays reserved (functional update only), as do make_status,
+# match_br (19b), and the OS ops (later stages).
 RESERVED_OPS = (
-    "make_record", "get_field", "set_field",
-    "make_list", "list_idx", "list_len", "list_push",
+    "set_field",
     "make_status", "match_br",
     "spawn_pipe", "exec_cmd", "open_handle",
+)
+# Stage 19a aggregate opcodes (frozen semantics in
+# docs/design/rynorlang-aggregates.md). Projections returning status
+# keep the language total; no aggregate op traps.
+AGG_OPS = (
+    "make_record", "get_field",
+    "make_list", "list_len", "list_idx", "list_push",
+    "make_map", "map_get", "map_insert", "map_len",
+    "str_len", "str_byte_at",
+    "status_is_ok", "status_is_err", "status_unwrap_or",
+    "print_agg",
 )
 # AST kinds beyond the frozen 16 that must be rejected, never miscompiled.
 RESERVED_AST_KINDS = (
@@ -136,6 +196,10 @@ def _build(ast: dict, source_name: str) -> dict:
     functions = ast.get("functions")
     if not isinstance(functions, list):
         _fail(COMP_BAD_AST, "Program.functions must be a list")
+    # Stage 19a record table first: every later gate (signatures, widths,
+    # lowering) resolves nominal types through it.
+    rectypes, record_sizes = _build_rectypes(ast.get("records", []))
+    rec_names = set(rectypes)
     # First pass: collect callee signatures so calls validate independently.
     seen: set[str] = set()
     sigs: dict[str, tuple[list, object]] = {}
@@ -160,19 +224,19 @@ def _build(ast: dict, source_name: str) -> dict:
             ptype = param.get("type")
             if not _identifier(param.get("name")):
                 _fail(COMP_BAD_AST, "Param name must be an ASCII identifier")
-            if ptype not in VALUE_TYPES:
+            if ptype not in VALUE_TYPES and not _is_value_type(ptype, rec_names):
                 if ptype in RESERVED_TYPES:
                     _fail(COMP_V2_UNSUPPORTED,
                           f"param '{param.get('name')}' uses reserved type '{ptype}'")
                 _fail(COMP_BAD_AST, f"param '{param.get('name')}' has invalid type {ptype!r}")
             ptypes.append(ptype)
-        param_slots = sum(2 if ptype == "str" else 1 for ptype in ptypes)
+        param_slots = sum(_slot_width(p, rec_names, record_sizes) for p in ptypes)
         if param_slots > MAX_FRAMESLOTS:
             _fail(COMP_FRAME_TOO_BIG,
                   f"function '{name}' parameters need {param_slots} slots "
                   f"(max {MAX_FRAMESLOTS})")
         ret = fn.get("ret_type")
-        if ret is not None and ret not in VALUE_TYPES:
+        if ret is not None and not _is_value_type(ret, rec_names):
             if ret in RESERVED_TYPES:
                 _fail(COMP_V2_UNSUPPORTED, f"function '{name}' uses reserved type '{ret}'")
             _fail(COMP_BAD_AST, f"function '{name}' has invalid return type {ret!r}")
@@ -181,9 +245,109 @@ def _build(ast: dict, source_name: str) -> dict:
         sigs[helper] = (list(hsig[0]), hsig[1])
     strtab: list[dict] = []
     str_ids: dict[str, int] = {}
-    rir_funcs = [_lower_function(fn, sigs, strtab, str_ids) for fn in functions]
-    return {"rir_version": RIR_VERSION, "source": source_name,
-            "strtab": strtab, "funcs": rir_funcs}
+    rir_funcs = [_lower_function(fn, sigs, strtab, str_ids, rectypes, record_sizes) for fn in functions]
+    module = {"rir_version": RIR_VERSION, "source": source_name,
+              "strtab": strtab, "funcs": rir_funcs}
+    if rectypes:
+        # Absent (not empty) for v1 modules so frozen v1 RIR goldens stay
+        # byte-identical.
+        module["rectypes"] = [{"name": name, "fields": [{"name": fname, "type": ftype} for fname, ftype in rectypes[name]]} for name in rectypes]
+    return module
+
+
+def _build_rectypes(records: object) -> tuple:
+    """Validate the analyzer's record table into (rectypes, record_sizes).
+
+    rectypes maps name -> [(field, canonical_type)...] in declaration
+    order; record_sizes maps name -> static bytes. Independent of the
+    analyzer (recursion, dups, bounds all re-checked, fail closed).
+    """
+    if records is None:
+        records = []
+    if not isinstance(records, list):
+        _fail(COMP_BAD_AST, "Program.records must be a list")
+    rectypes: dict[str, list] = {}
+    for entry in records:
+        if not isinstance(entry, dict) or entry.get("kind") != "RecordDecl":
+            _fail(COMP_V2_UNSUPPORTED, "Program.records members must be RecordDecl nodes")
+        name = entry.get("name")
+        if not _identifier(name):
+            _fail(COMP_BAD_AST, "RecordDecl name must be an ASCII identifier")
+        if name in rectypes:
+            _fail(COMP_BAD_AST, f"duplicate record '{name}'")
+        fields = entry.get("fields")
+        if not isinstance(fields, list):
+            _fail(COMP_BAD_AST, f"record '{name}' fields must be a list")
+        seen: set[str] = set()
+        checked = []
+        for field in fields:
+            if not isinstance(field, dict):
+                _fail(COMP_BAD_AST, f"record '{name}' fields must be dicts")
+            fname = field.get("name")
+            ftype = field.get("type")
+            if not _identifier(fname):
+                _fail(COMP_BAD_AST, f"record '{name}' field name must be an ASCII identifier")
+            if fname in seen:
+                _fail(COMP_BAD_AST, f"record '{name}' duplicates field '{fname}'")
+            seen.add(fname)
+            node = _agtypes.parse_type(ftype)
+            if node is None or node[0] == "nominal":
+                # Nominal field types resolve after all names are known;
+                # shape errors fail here, existence in the size pass.
+                if node is None:
+                    _fail(COMP_BAD_AST, f"record '{name}' field '{fname}' has malformed type {ftype!r}")
+            elif _agtypes.validate_type(node) is not None:
+                _fail(COMP_BAD_AST, f"record '{name}' field '{fname}' has invalid type {ftype!r}")
+            checked.append((fname, ftype))
+        rectypes[name] = checked
+    # Sizes with occurs-check (hand-built tables may recurse).
+    sizes: dict[str, int] = {}
+    busy: set[str] = set()
+
+    def nominal_refs(ttext: str, into: set) -> None:
+        node = _agtypes.parse_type(ttext)
+        if node is None:
+            return
+        stack = [node]
+        while stack:
+            item = stack.pop()
+            if not isinstance(item, tuple) or not item:
+                continue
+            if item[0] == "nominal":
+                into.add(item[1])
+            elif item[0] == "generic":
+                stack.extend(a for a in item[2] if isinstance(a, tuple))
+
+    def rec_size(name: str) -> int:
+        if name in sizes:
+            return sizes[name]
+        if name in busy:
+            _fail(COMP_BAD_AST, f"recursive record '{name}'")
+        busy.add(name)
+        try:
+            total = 0
+            for _fname, ftype in rectypes[name]:
+                refs: set[str] = set()
+                nominal_refs(ftype, refs)
+                for ref in sorted(refs):
+                    if ref not in rectypes:
+                        _fail(COMP_BAD_AST, f"record '{name}' references unknown record '{ref}'")
+                    rec_size(ref)
+                node = _agtypes.parse_type(ftype)
+                size = _agtypes.size_of(node, sizes) if node is not None else None
+                if size is None:
+                    _fail(COMP_BAD_AST, f"record '{name}' has unresolvable type {ftype!r}")
+                total += size
+            if total > _agtypes.MAX_AGG_BYTES:
+                _fail(COMP_BAD_AST, f"record '{name}' exceeds {_agtypes.MAX_AGG_BYTES} bytes")
+            sizes[name] = total
+            return total
+        finally:
+            busy.discard(name)
+
+    for _name in rectypes:
+        rec_size(_name)
+    return rectypes, sizes
 
 
 def _intern_str(value: object, strtab: list, str_ids: dict) -> int:
@@ -218,10 +382,13 @@ class _FunctionLowering:
     whose name is already bound in any open scope is COMP_BAD_AST.
     """
 
-    def __init__(self, strtab: list, str_ids: dict, sigs: dict):
+    def __init__(self, strtab: list, str_ids: dict, sigs: dict,
+                 rectypes: dict | None = None, record_sizes: dict | None = None):
         self.strtab = strtab
         self.str_ids = str_ids
         self.sigs = sigs
+        self.rectypes = rectypes or {}
+        self.record_sizes = record_sizes or {}
         self.vreg_types: dict[str, str] = {}
         self.next_vreg = 0
         self.blocks: list[dict] = []
@@ -264,6 +431,24 @@ def _uses_of_instr(instr: dict) -> list:
     if op == "call":
         args = instr.get("args")
         return [a for a in args] if isinstance(args, list) else []
+    if op in ("make_record", "make_list", "make_map"):
+        args = instr.get("args")
+        return [a for a in args] if isinstance(args, list) else []
+    if op == "get_field":
+        return [instr["rec"]] if isinstance(instr.get("rec"), str) else []
+    if op in ("list_len", "map_len", "str_len", "status_is_ok",
+              "status_is_err", "print_agg"):
+        key = {"list_len": "seq", "map_len": "map", "str_len": "v",
+               "status_is_ok": "v", "status_is_err": "v",
+               "print_agg": "agg"}[op]
+        return [instr[key]] if isinstance(instr.get(key), str) else []
+    if op in ("list_idx", "list_push", "map_get", "map_insert",
+              "str_byte_at", "status_unwrap_or"):
+        keys = {"list_idx": ("seq", "index"), "list_push": ("seq", "val"),
+                "map_get": ("map", "key"), "map_insert": ("map", "key", "val"),
+                "str_byte_at": ("v", "index"),
+                "status_unwrap_or": ("v", "default")}[op]
+        return [instr[k] for k in keys if isinstance(instr.get(k), str)]
     return []
 
 
@@ -276,7 +461,7 @@ def _uses_of_term(term: dict) -> list:
     return []
 
 
-def assign_slots(blocks: list, vreg_types: dict, nparams: int) -> tuple:
+def assign_slots(blocks: list, vreg_types: dict, nparams: int, record_sizes: dict | None = None) -> tuple:
     """Greedy CFG-liveness home-slot assignment (deterministic).
 
     Returns (slot_of, frameslots). A backwards fixed point computes live-in
@@ -409,12 +594,12 @@ def assign_slots(blocks: list, vreg_types: dict, nparams: int) -> tuple:
     for vreg, at in sorted(defs, key=lambda item: (item[1], order_key(item[0]))):
         if vreg in slot_of:
             continue
-        need = 2 if vreg_types.get(vreg) == "str" else 1
+        need = _slot_width(vreg_types.get(vreg), None, record_sizes)
         used = set()
         for other in interference.get(vreg, set()):
             if other not in slot_of:
                 continue
-            width = 2 if vreg_types.get(other) == "str" else 1
+            width = _slot_width(vreg_types.get(other), None, record_sizes)
             used.update(range(slot_of[other], slot_of[other] + width))
         start = 0
         while any(s in used for s in range(start, start + need)):
@@ -424,7 +609,8 @@ def assign_slots(blocks: list, vreg_types: dict, nparams: int) -> tuple:
     return slot_of, top
 
 
-def _lower_function(fn: dict, sigs: dict, strtab: list, str_ids: dict) -> dict:
+def _lower_function(fn: dict, sigs: dict, strtab: list, str_ids: dict,
+                    rectypes: dict | None = None, record_sizes: dict | None = None) -> dict:
     if not isinstance(fn, dict):
         _fail(COMP_BAD_AST, "function must be a dict")
     name = fn.get("name")
@@ -437,7 +623,7 @@ def _lower_function(fn: dict, sigs: dict, strtab: list, str_ids: dict) -> dict:
     body = fn.get("body")
     if not isinstance(body, dict) or body.get("kind") != "Block":
         _fail(COMP_BAD_AST, f"function '{name}' body must be a Block")
-    low = _FunctionLowering(strtab, str_ids, sigs)
+    low = _FunctionLowering(strtab, str_ids, sigs, rectypes, record_sizes)
     rir_params = []
     # Incoming values occupy %0..%k-1 in order; named copies follow, so the
     # verifier's params-predefined rule and the emitter's ABI mapping agree.
@@ -446,7 +632,7 @@ def _lower_function(fn: dict, sigs: dict, strtab: list, str_ids: dict) -> dict:
         if not isinstance(param, dict):
             _fail(COMP_BAD_AST, f"function '{name}' params must be Param nodes")
         ptype = param.get("type")
-        if ptype not in VALUE_TYPES:
+        if not _is_value_type(ptype, set(low.rectypes)):
             if ptype in RESERVED_TYPES:
                 _fail(COMP_V2_UNSUPPORTED,
                       f"param '{param.get('name')}' uses reserved type '{ptype}'")
@@ -484,7 +670,7 @@ def _lower_function(fn: dict, sigs: dict, strtab: list, str_ids: dict) -> dict:
                 low.terminate(index, {"op": "ret"})
             else:
                 low.terminate(index, {"op": "unreachable"})
-    slot_of, frameslots = assign_slots(low.blocks, low.vreg_types, len(params))
+    slot_of, frameslots = assign_slots(low.blocks, low.vreg_types, len(params), low.record_sizes)
     if frameslots > MAX_FRAMESLOTS:
         _fail(COMP_FRAME_TOO_BIG,
               f"function '{name}' needs {frameslots} slots (max {MAX_FRAMESLOTS})")
@@ -718,14 +904,181 @@ def _lower_expr(low: _FunctionLowering, node: object, cur: int, fname: str) -> s
                     atype = low.vreg_types.get(arg_temps[0])
                     helper = _RT_PRINT_BY_TYPE.get(atype)
                     if helper is None:
+                        if atype is not None and _is_value_type(atype, set(low.rectypes)):
+                            low.emit(cur, {"op": "print_agg", "agg": arg_temps[0]})
+                            results[key] = ""
+                            continue
                         _fail(COMP_BAD_AST, f"print of {atype!r} needs int, bool, or str")
                     callee = helper
-                results[key] = _lower_call(low, item, callee, arg_temps, cur, fname)
+                if callee in _agtypes.AGG_BUILTINS:
+                    results[key] = _lower_builtin_call(low, item, callee, arg_temps, cur, fname)
+                else:
+                    results[key] = _lower_call(low, item, callee, arg_temps, cur, fname)
+        elif kind in ("RecLit", "ListLit", "MapLit", "Index", "Field"):
+            parts = _composite_parts(item)
+            if not built:
+                if id(item) in active_nodes:
+                    _fail(COMP_BAD_AST, "expression AST contains a cycle")
+                active_nodes.add(id(item))
+                keys = tuple(fresh() for _ in parts)
+                stack.append((item, True, key, keys))
+                for part, sub in zip(reversed(parts), reversed(keys)):
+                    stack.append((part, False, sub, ()))
+            else:
+                active_nodes.remove(id(item))
+                part_temps = [results.pop(sub) for sub in kids]
+                results[key] = _lower_composite(low, item, part_temps, cur, fname)
         elif kind in RESERVED_AST_KINDS:
             _fail(COMP_V2_UNSUPPORTED, f"expression kind '{kind}' is reserved for a later edition")
         else:
             _fail(COMP_V2_UNSUPPORTED, f"unknown expression kind {kind!r}")
     return results[0]
+
+
+def _composite_parts(item: dict) -> list:
+    """Ordered child expression nodes of an aggregate stable node."""
+    kind = item.get("kind")
+    if kind == "RecLit":
+        fields = item.get("fields")
+        if not isinstance(fields, list):
+            _fail(COMP_BAD_AST, "RecLit fields must be a list")
+        parts = []
+        for field in fields:
+            if not isinstance(field, dict) or not isinstance(field.get("value"), dict):
+                _fail(COMP_BAD_AST, "RecLit fields must carry value nodes")
+            parts.append(field["value"])
+        return parts
+    if kind == "ListLit":
+        elems = item.get("elems")
+        if not isinstance(elems, list):
+            _fail(COMP_BAD_AST, "ListLit elems must be a list")
+        for elem in elems:
+            if not isinstance(elem, dict):
+                _fail(COMP_BAD_AST, "ListLit elems must be expression nodes")
+        return list(elems)
+    if kind == "MapLit":
+        entries = item.get("entries")
+        if not isinstance(entries, list):
+            _fail(COMP_BAD_AST, "MapLit entries must be a list")
+        parts = []
+        for entry in entries:
+            if (not isinstance(entry, dict) or not isinstance(entry.get("key"), dict)
+                    or not isinstance(entry.get("value"), dict)):
+                _fail(COMP_BAD_AST, "MapLit entries must carry key/value nodes")
+            parts.append(entry["key"])
+            parts.append(entry["value"])
+        return parts
+    if kind == "Index":
+        obj, index = item.get("obj"), item.get("index")
+        if not isinstance(obj, dict) or not isinstance(index, dict):
+            _fail(COMP_BAD_AST, "Index needs obj/index expression nodes")
+        return [obj, index]
+    if kind == "Field":
+        obj = item.get("obj")
+        if not isinstance(obj, dict):
+            _fail(COMP_BAD_AST, "Field needs an obj expression node")
+        return [obj]
+    _fail(COMP_V2_UNSUPPORTED, f"unknown composite kind {kind!r}")
+
+
+def _agg_shape(low: _FunctionLowering, fname: str, temp: str, what: str):
+    """Parsed aggregate shape of a temp (fails closed on scalars)."""
+    typ = _vtype(low, temp, fname, what)
+    node = _agtypes.parse_type(typ)
+    if node is None or node[0] != "generic":
+        _fail(COMP_BAD_AST, f"function '{fname}' {what} needs an aggregate type, got {typ!r}")
+    return typ, node
+
+
+def _lower_composite(low: _FunctionLowering, item: dict, temps: list,
+                     cur: int, fname: str) -> str:
+    kind = item.get("kind")
+    want = item.get("type")
+    rec_names = set(low.rectypes)
+    if not _is_value_type(want, rec_names):
+        _fail(COMP_BAD_AST, f"composite result type must be a value type, got {want!r}")
+    if kind == "RecLit":
+        rec = item.get("record")
+        if rec not in low.rectypes:
+            _fail(COMP_BAD_AST, f"RecLit references unknown record '{rec}'")
+        if want != rec:
+            _fail(COMP_BAD_AST, f"RecLit type {want!r} != record '{rec}'")
+        fields = low.rectypes[rec]
+        entries = item.get("fields")
+        if not isinstance(entries, list) or len(entries) != len(fields):
+            _fail(COMP_BAD_AST, f"RecLit for '{rec}' needs {len(fields)} fields")
+        for temp, (fname_decl, ftype) in zip(temps, fields):
+            if _vtype(low, temp, fname, "record field") != ftype:
+                _fail(COMP_BAD_AST, f"RecLit field '{fname_decl}' mistyped")
+        got_names = [e.get("name") for e in entries]
+        if sorted(got_names) != sorted(f for f, _t in fields) or len(set(got_names)) != len(got_names):
+            _fail(COMP_BAD_AST, f"RecLit for '{rec}' has wrong field set")
+        ordered = []
+        for fname_decl, _ftype in fields:
+            ordered.append(temps[got_names.index(fname_decl)])
+        dst = low.new_vreg(rec)
+        low.emit(cur, {"op": "make_record", "dst": dst, "type": rec, "args": ordered})
+        return dst
+    if kind == "ListLit":
+        node = _agtypes.parse_type(want)
+        if node is None or node[0] != "generic" or node[1] != "list":
+            _fail(COMP_BAD_AST, f"ListLit needs a list type, got {want!r}")
+        elem_t = _agtypes.canonical(node[2][0])
+        cap = node[2][1][1]
+        if len(temps) > cap:
+            _fail(COMP_BAD_AST, f"ListLit of {len(temps)} exceeds capacity {cap}")
+        for temp in temps:
+            if _vtype(low, temp, fname, "list element") != elem_t:
+                _fail(COMP_BAD_AST, "ListLit elements must share one type")
+        dst = low.new_vreg(want)
+        low.emit(cur, {"op": "make_list", "dst": dst, "type": want, "args": list(temps)})
+        return dst
+    if kind == "MapLit":
+        typ, node = (want, _agtypes.parse_type(want))
+        if node is None or node[0] != "generic" or node[1] != "map":
+            _fail(COMP_BAD_AST, f"MapLit needs a map type, got {want!r}")
+        key_t = _agtypes.canonical(node[2][0])
+        val_t = _agtypes.canonical(node[2][1])
+        cap = node[2][2][1]
+        if len(temps) // 2 > cap:
+            _fail(COMP_BAD_AST, f"MapLit of {len(temps) // 2} exceeds capacity {cap}")
+        flat = []
+        for index in range(0, len(temps), 2):
+            if _vtype(low, temps[index], fname, "map key") != key_t:
+                _fail(COMP_BAD_AST, "MapLit keys must share one type")
+            if _vtype(low, temps[index + 1], fname, "map value") != val_t:
+                _fail(COMP_BAD_AST, "MapLit values must share one type")
+            flat.extend((temps[index], temps[index + 1]))
+        dst = low.new_vreg(want)
+        low.emit(cur, {"op": "make_map", "dst": dst, "type": want, "args": flat})
+        return dst
+    if kind == "Index":
+        otype = _vtype(low, temps[0], fname, "index object")
+        onode = _agtypes.parse_type(otype)
+        if onode is None or onode[0] != "generic" or onode[1] != "list":
+            _fail(COMP_BAD_AST, f"Index needs a list object, got {otype!r}")
+        if _vtype(low, temps[1], fname, "index") != "int":
+            _fail(COMP_BAD_AST, "Index needs an int index")
+        elem_t = _agtypes.canonical(onode[2][0])
+        if want != f"status<{elem_t}>":
+            _fail(COMP_BAD_AST, f"Index result must be status<{elem_t}>, got {want!r}")
+        dst = low.new_vreg(want)
+        low.emit(cur, {"op": "list_idx", "dst": dst, "type": want, "seq": temps[0], "index": temps[1]})
+        return dst
+    if kind == "Field":
+        otype = _vtype(low, temps[0], fname, "field object")
+        if otype not in low.rectypes:
+            _fail(COMP_BAD_AST, f"Field needs a record object, got {otype!r}")
+        field = item.get("field")
+        ftype = next((t for n, t in low.rectypes[otype] if n == field), None)
+        if ftype is None:
+            _fail(COMP_BAD_AST, f"record '{otype}' has no field '{field}'")
+        if want != ftype:
+            _fail(COMP_BAD_AST, f"Field result must be {ftype}, got {want!r}")
+        dst = low.new_vreg(want)
+        low.emit(cur, {"op": "get_field", "dst": dst, "type": want, "rec": temps[0], "field": field})
+        return dst
+    _fail(COMP_V2_UNSUPPORTED, f"unknown composite kind {kind!r}")
 
 
 def _lower_leaf(low: _FunctionLowering, node: dict, cur: int, fname: str) -> str:
@@ -768,6 +1121,10 @@ _BINOP_RULES = {
     "+": ("int", "int", "int"), "-": ("int", "int", "int"),
     "*": ("int", "int", "int"), "/": ("int", "int", "int"),
     "%": ("int", "int", "int"),
+    # Stage 19a bitops: closed two's-complement ints, total (shifts mask).
+    "&": ("int", "int", "int"), "|": ("int", "int", "int"),
+    "^": ("int", "int", "int"), "<<": ("int", "int", "int"),
+    ">>": ("int", "int", "int"),
     "==": ("any-eq", "any-eq", "bool"), "!=": ("any-eq", "any-eq", "bool"),
     "<": ("int", "int", "bool"), ">": ("int", "int", "bool"),
     "<=": ("int", "int", "bool"), ">=": ("int", "int", "bool"),
@@ -786,8 +1143,9 @@ def _lower_binop(low: _FunctionLowering, node: dict, left: str, right: str,
     rtype = _vtype(low, right, fname, "binary operand")
     req_l, req_r, result = rule
     if req_l == "any-eq":
-        if ltype != rtype or ltype not in VALUE_TYPES:
-            _fail(COMP_BAD_AST, f"equality '{op}' needs matching int/bool/str, got {ltype}/{rtype}")
+        # Stage 19a: identical value types (unit excluded by the gate).
+        if ltype != rtype or not _is_value_type(ltype, set(low.rectypes)):
+            _fail(COMP_BAD_AST, f"equality '{op}' needs matching value types, got {ltype}/{rtype}")
     elif ltype != req_l or rtype != req_r:
         _fail(COMP_BAD_AST, f"operator '{op}' needs {req_l}/{req_r}, got {ltype}/{rtype}")
     if want != result:
@@ -810,6 +1168,11 @@ def _lower_unop(low: _FunctionLowering, node: dict, operand: str, cur: int, fnam
         if otype != "bool" or want != "bool":
             _fail(COMP_BAD_AST, "unary '!' needs bool operand and bool result")
         result = "bool"
+    elif op == "~":
+        # Stage 19a bitwise complement (total, two's-complement).
+        if otype != "int" or want != "int":
+            _fail(COMP_BAD_AST, "unary '~' needs int operand and int result")
+        result = "int"
     else:
         _fail(COMP_V2_UNSUPPORTED, f"unknown unary operator {op!r}")
     dst = low.new_vreg(result)
@@ -817,18 +1180,125 @@ def _lower_unop(low: _FunctionLowering, node: dict, operand: str, cur: int, fnam
     return dst
 
 
+def _lower_builtin_call(low: _FunctionLowering, node: dict, callee: str,
+                        arg_temps: list, cur: int, fname: str) -> str:
+    """Lower an aggregate builtin call to its dedicated RIR op.
+
+    Operand types are re-derived and checked independently (the analyzer
+    guarantees the shape; hand-built trees fail here, never downstream).
+    """
+    want = node.get("type")
+    rec_names = set(low.rectypes)
+
+    def need_list(temp: str, what: str):
+        typ = _vtype(low, temp, fname, what)
+        shape = _agtypes.parse_type(typ)
+        if shape is None or shape[0] != "generic" or shape[1] != "list":
+            _fail(COMP_BAD_AST, f"function '{fname}' {what} needs a list, got {typ!r}")
+        return typ, shape
+
+    def need_map(temp: str, what: str):
+        typ = _vtype(low, temp, fname, what)
+        shape = _agtypes.parse_type(typ)
+        if shape is None or shape[0] != "generic" or shape[1] != "map":
+            _fail(COMP_BAD_AST, f"function '{fname}' {what} needs a map, got {typ!r}")
+        return typ, shape
+
+    def need_status(temp: str, what: str):
+        typ = _vtype(low, temp, fname, what)
+        shape = _agtypes.parse_type(typ)
+        if shape is None or shape[0] != "generic" or shape[1] != "status":
+            _fail(COMP_BAD_AST, f"function '{fname}' {what} needs a status, got {typ!r}")
+        return typ, shape
+
+    def emit(op: str, dst_type: str | None, **fields) -> str:
+        if want != dst_type and not (dst_type is None and want == "unit"):
+            _fail(COMP_BAD_AST, f"builtin '{callee}' result must be {dst_type}, got {want!r}")
+        if dst_type is None:
+            low.emit(cur, {"op": op, **fields})
+            return ""
+        dst = low.new_vreg(dst_type)
+        low.emit(cur, {"op": op, "dst": dst, "type": dst_type, **fields})
+        return dst
+
+    if callee == "len":
+        if len(arg_temps) != 1:
+            _fail(COMP_BAD_AST, "len needs exactly one argument")
+        typ = _vtype(low, arg_temps[0], fname, "len argument")
+        shape = _agtypes.parse_type(typ)
+        if typ == "str":
+            return emit("str_len", "int", v=arg_temps[0])
+        if shape is not None and shape[0] == "generic" and shape[1] == "list":
+            return emit("list_len", "int", seq=arg_temps[0])
+        if shape is not None and shape[0] == "generic" and shape[1] == "map":
+            return emit("map_len", "int", map=arg_temps[0])
+        _fail(COMP_BAD_AST, f"len needs list, map, or str, got {typ!r}")
+    if callee in ("is_ok", "is_err"):
+        if len(arg_temps) != 1:
+            _fail(COMP_BAD_AST, f"'{callee}' needs exactly one argument")
+        typ, _shape = need_status(arg_temps[0], f"'{callee}' argument")
+        op = "status_is_ok" if callee == "is_ok" else "status_is_err"
+        return emit(op, "bool", v=arg_temps[0])
+    if callee == "unwrap_or":
+        if len(arg_temps) != 2:
+            _fail(COMP_BAD_AST, "unwrap_or needs exactly two arguments")
+        typ, shape = need_status(arg_temps[0], "unwrap_or value")
+        payload_t = _agtypes.canonical(shape[2][0])
+        if _vtype(low, arg_temps[1], fname, "unwrap_or default") != payload_t:
+            _fail(COMP_BAD_AST, "unwrap_or default mistyped")
+        return emit("status_unwrap_or", payload_t, v=arg_temps[0], default=arg_temps[1])
+    if callee == "push":
+        if len(arg_temps) != 2:
+            _fail(COMP_BAD_AST, "push needs exactly two arguments")
+        typ, shape = need_list(arg_temps[0], "push target")
+        elem_t = _agtypes.canonical(shape[2][0])
+        if _vtype(low, arg_temps[1], fname, "push value") != elem_t:
+            _fail(COMP_BAD_AST, "push value mistyped")
+        return emit("list_push", f"status<{typ}>", seq=arg_temps[0], val=arg_temps[1])
+    if callee == "insert":
+        if len(arg_temps) != 3:
+            _fail(COMP_BAD_AST, "insert needs exactly three arguments")
+        typ, shape = need_map(arg_temps[0], "insert target")
+        key_t = _agtypes.canonical(shape[2][0])
+        val_t = _agtypes.canonical(shape[2][1])
+        if _vtype(low, arg_temps[1], fname, "insert key") != key_t:
+            _fail(COMP_BAD_AST, "insert key mistyped")
+        if _vtype(low, arg_temps[2], fname, "insert value") != val_t:
+            _fail(COMP_BAD_AST, "insert value mistyped")
+        return emit("map_insert", f"status<{typ}>", map=arg_temps[0], key=arg_temps[1], val=arg_temps[2])
+    if callee == "get":
+        if len(arg_temps) != 2:
+            _fail(COMP_BAD_AST, "get needs exactly two arguments")
+        typ, shape = need_map(arg_temps[0], "get target")
+        key_t = _agtypes.canonical(shape[2][0])
+        val_t = _agtypes.canonical(shape[2][1])
+        if _vtype(low, arg_temps[1], fname, "get key") != key_t:
+            _fail(COMP_BAD_AST, "get key mistyped")
+        return emit("map_get", f"status<{val_t}>", map=arg_temps[0], key=arg_temps[1])
+    if callee == "byte_at":
+        if len(arg_temps) != 2:
+            _fail(COMP_BAD_AST, "byte_at needs exactly two arguments")
+        if _vtype(low, arg_temps[0], fname, "byte_at target") != "str":
+            _fail(COMP_BAD_AST, "byte_at needs a str target")
+        if _vtype(low, arg_temps[1], fname, "byte_at index") != "int":
+            _fail(COMP_BAD_AST, "byte_at needs an int index")
+        return emit("str_byte_at", "status<int>", v=arg_temps[0], index=arg_temps[1])
+    _fail(COMP_V2_UNSUPPORTED, f"unknown builtin '{callee}'")
+
+
 def _lower_call(low: _FunctionLowering, node: dict, callee: object, arg_temps: list,
                 cur: int, fname: str) -> str:
     if not isinstance(callee, str) or not callee:
         _fail(COMP_BAD_AST, "call callee must be a non-empty name")
     want = node.get("type")
-    if want not in ALL_TYPES:
+    rec_names = set(low.rectypes)
+    if want != "unit" and not _is_value_type(want, rec_names):
         if want in RESERVED_TYPES:
             _fail(COMP_V2_UNSUPPORTED, f"call uses reserved type '{want}'")
-        _fail(COMP_BAD_AST, f"call result type must be int/bool/str/unit, got {want!r}")
+        _fail(COMP_BAD_AST, f"call result type must be a value type, got {want!r}")
     for temp in arg_temps:
-        if _vtype(low, temp, fname, "call argument") not in VALUE_TYPES:
-            _fail(COMP_BAD_AST, "call arguments must be int/bool/str values")
+        if not _is_value_type(_vtype(low, temp, fname, "call argument"), rec_names):
+            _fail(COMP_BAD_AST, "call arguments must be value types")
     sig = low.sigs.get(callee)
     if sig is None:
         _fail(COMP_BAD_AST, f"call references unknown function '{callee}'")
@@ -863,7 +1333,7 @@ def verify_module(module: object) -> list:
     if module.get("rir_version") != RIR_VERSION:
         return [f"envelope: rir_version must be {RIR_VERSION} "
                 f"(got {module.get('rir_version')!r})"]
-    if set(module) - {"rir_version", "source", "strtab", "funcs"}:
+    if set(module) - {"rir_version", "source", "strtab", "funcs", "rectypes"}:
         errors.append("envelope: module carries unknown fields")
     source = module.get("source")
     if not isinstance(source, str):
@@ -900,6 +1370,7 @@ def verify_module(module: object) -> list:
     if not isinstance(funcs, list):
         errors.append("envelope: funcs must be a list")
         return errors
+    rec = _verify_rectypes(module.get("rectypes"), errors)
     sigs: dict[str, tuple[list, object]] = {}
     names: set[str] = set()
     for func in funcs:
@@ -910,8 +1381,126 @@ def verify_module(module: object) -> list:
         if isinstance(func, dict) and (type(func.get("symbol")) is not int
                                       or func.get("symbol") != index):
             errors.append(f"func {index}: symbol must equal source index {index}")
-        _verify_function(func, names, sigs, len(strtab), errors)
+        _verify_function(func, names, sigs, len(strtab), errors, rec)
     return errors
+
+
+def _verify_rectypes(rectypes: object, errors: list) -> dict:
+    """Validate the record table; return {"fields":..., "sizes":...}.
+
+    Independent of the builder (recursion, dups, bounds re-checked).
+    Absent (None) means no records; any other malformed shape errors.
+    """
+    rec: dict = {"fields": {}, "sizes": {}}
+    if rectypes is None:
+        return rec
+    if not isinstance(rectypes, list):
+        errors.append("envelope: rectypes must be a list")
+        return rec
+    fields: dict[str, list] = {}
+    for index, entry in enumerate(rectypes):
+        if not isinstance(entry, dict):
+            errors.append(f"rectypes: entry {index} must be a dict")
+            continue
+        name = entry.get("name")
+        if not _identifier(name):
+            errors.append(f"rectypes: entry {index} name must be an ASCII identifier")
+            continue
+        if set(entry) - {"name", "fields"}:
+            errors.append(f"rectypes: record '{name}' carries unknown fields")
+            continue
+        if name in fields:
+            errors.append(f"rectypes: duplicate record '{name}'")
+            continue
+        fentries = entry.get("fields")
+        if not isinstance(fentries, list):
+            errors.append(f"rectypes: record '{name}' fields must be a list")
+            continue
+        seen: set[str] = set()
+        checked = []
+        bad = False
+        for findex, field in enumerate(fentries):
+            if not isinstance(field, dict):
+                errors.append(f"rectypes: record '{name}' field {findex} must be a dict")
+                bad = True
+                continue
+            fname = field.get("name")
+            ftype = field.get("type")
+            if not _identifier(fname):
+                errors.append(f"rectypes: record '{name}' field {findex} needs an identifier name")
+                bad = True
+                continue
+            if set(field) - {"name", "type"}:
+                errors.append(f"rectypes: record '{name}' field '{fname}' carries unknown fields")
+                bad = True
+                continue
+            if fname in seen:
+                errors.append(f"rectypes: record '{name}' duplicates field '{fname}'")
+                bad = True
+                continue
+            seen.add(fname)
+            node = _agtypes.parse_type(ftype)
+            if node is None:
+                errors.append(f"rectypes: record '{name}' field '{fname}' has malformed type {ftype!r}")
+                bad = True
+                continue
+            if node[0] == "nominal":
+                checked.append((fname, ftype))
+            elif _agtypes.validate_type(node) is not None:
+                errors.append(f"rectypes: record '{name}' field '{fname}' has invalid type {ftype!r}")
+                bad = True
+                continue
+            else:
+                checked.append((fname, ftype))
+        if not bad:
+            fields[name] = checked
+    sizes: dict[str, int] = {}
+    busy: set[str] = set()
+
+    def refs_of(ttext: str, into: set) -> None:
+        node = _agtypes.parse_type(ttext)
+        stack = [node] if node is not None else []
+        while stack:
+            item = stack.pop()
+            if not isinstance(item, tuple) or not item:
+                continue
+            if item[0] == "nominal":
+                into.add(item[1])
+            elif item[0] == "generic":
+                stack.extend(a for a in item[2] if isinstance(a, tuple))
+
+    def rec_size(name: str) -> None:
+        if name in sizes or name in busy:
+            if name in busy:
+                errors.append(f"rectypes: recursive record '{name}'")
+            return
+        busy.add(name)
+        total = 0
+        for _fname, ftype in fields[name]:
+            refs: set[str] = set()
+            refs_of(ftype, refs)
+            for ref in sorted(refs):
+                if ref not in fields:
+                    errors.append(f"rectypes: record '{name}' references unknown record '{ref}'")
+                else:
+                    rec_size(ref)
+            node = _agtypes.parse_type(ftype)
+            size = _agtypes.size_of(node, sizes) if node is not None else None
+            if size is None:
+                errors.append(f"rectypes: record '{name}' has unresolvable type {ftype!r}")
+            else:
+                total += size
+        busy.discard(name)
+        if total > _agtypes.MAX_AGG_BYTES:
+            errors.append(f"rectypes: record '{name}' exceeds {_agtypes.MAX_AGG_BYTES} bytes")
+        else:
+            sizes[name] = total
+
+    for _name in fields:
+        rec_size(_name)
+    rec["fields"] = {name: fields[name] for name in fields if name in sizes}
+    rec["sizes"] = sizes
+    return rec
 
 
 def _collect_sig(func: object, names: set, sigs: dict, errors: list) -> None:
@@ -935,7 +1524,11 @@ def _collect_sig(func: object, names: set, sigs: dict, errors: list) -> None:
 
 
 def _verify_function(func: object, names: set, sigs: dict, strtab_len: int,
-                     errors: list) -> None:
+                     errors: list, rec: dict | None = None) -> None:
+    if rec is None:
+        rec = {"fields": {}, "sizes": {}}
+    rec_names = _rec_names(rec)
+    rec_sizes = rec.get("sizes", {}) if isinstance(rec, dict) else {}
     if not isinstance(func, dict):
         errors.append("func: each function must be a dict")
         return
@@ -950,8 +1543,8 @@ def _verify_function(func: object, names: set, sigs: dict, strtab_len: int,
         errors.append(f"func '{name}': params must be a list")
         params = []
     ret = func.get("ret")
-    if ret is not None and ret not in VALUE_TYPES:
-        errors.append(f"func '{name}': ret must be int/bool/str/null")
+    if ret is not None and not _is_value_type(ret, rec_names):
+        errors.append(f"func '{name}': ret must be a value type or null")
         ret = None
     vregs: dict[str, str] = {}
     seen_psyms: set[int] = set()
@@ -964,19 +1557,19 @@ def _verify_function(func: object, names: set, sigs: dict, strtab_len: int,
         if not _identifier(param.get("name")):
             errors.append(f"func '{name}': param {index} name must be an ASCII identifier")
         ptype = param.get("type")
-        if ptype not in VALUE_TYPES:
+        if not _is_value_type(ptype, rec_names):
             errors.append(f"func '{name}': param {index} has invalid type {ptype!r}")
         psym = param.get("symbol")
         if type(psym) is not int or psym in seen_psyms:
             errors.append(f"func '{name}': param {index} has a duplicate or non-int symbol")
         else:
             seen_psyms.add(psym)
-        vregs[f"%{index}"] = ptype if ptype in VALUE_TYPES else "int"
+        vregs[f"%{index}"] = ptype if _is_value_type(ptype, rec_names) else "int"
     blocks = func.get("blocks")
     if not isinstance(blocks, list) or not blocks:
         errors.append(f"func '{name}': blocks must be a non-empty list")
         return
-    param_slots = sum(2 if p.get("type") == "str" else 1
+    param_slots = sum(_slot_width(p.get("type"), rec_names, rec_sizes)
                       for p in params if isinstance(p, dict))
     if param_slots > MAX_FRAMESLOTS:
         errors.append(f"func '{name}': parameter slots {param_slots} exceeds "
@@ -1004,7 +1597,7 @@ def _verify_function(func: object, names: set, sigs: dict, strtab_len: int,
             _typ = _instr.get("type")
             if _instr.get("op") == "call" and _dst is None and _typ is None:
                 continue
-            if isinstance(_dst, str) and _dst not in g_vregs and _typ in VALUE_TYPES and _vreg(_dst):
+            if isinstance(_dst, str) and _dst not in g_vregs and _is_value_type(_typ, rec_names) and _vreg(_dst):
                 g_vregs[_dst] = _typ
                 g_defpos[_dst] = (_bi, _pos)
     # defpos maps each vreg to its definition point; params dominate every
@@ -1014,11 +1607,11 @@ def _verify_function(func: object, names: set, sigs: dict, strtab_len: int,
     defpos: dict[str, tuple] = {f"%{index}": (-1, -1) for index in range(len(params))}
     for bindex, block in enumerate(blocks):
         _verify_block(func, name, bindex, block, vregs, idset, strtab_len, ret,
-                      sigs, errors, defpos, dom, reachable, g_vregs, g_defpos)
+                      sigs, errors, defpos, dom, reachable, g_vregs, g_defpos, rec)
     # frameslots must equal the shared allocator's recomputation exactly, so
     # builder, verifier, and emitter can never disagree on homes.
     try:
-        _slot_of, want_slots = assign_slots(blocks, vregs, len(params))
+        _slot_of, want_slots = assign_slots(blocks, vregs, len(params), rec_sizes)
     except Exception:
         errors.append(f"func '{name}': slot assignment failed on malformed blocks")
         return
@@ -1114,7 +1707,7 @@ def _verify_block(func: dict, name: str, bindex: int, block: object, vregs: dict
                    idset: set, strtab_len: int, ret: object, sigs: dict,
                    errors: list, defpos: dict, dom: dict, reachable: set,
                    g_vregs: dict | None = None,
-                   g_defpos: dict | None = None) -> None:
+                   g_defpos: dict | None = None, rec: dict | None = None) -> None:
     if not isinstance(block, dict):
         errors.append(f"func '{name}': block {bindex} must be a dict")
         return
@@ -1131,21 +1724,22 @@ def _verify_block(func: dict, name: str, bindex: int, block: object, vregs: dict
     for pos, instr in enumerate(instrs):
         _verify_instr(func, name, block.get("id"), pos, instr, vregs, defpos,
                       dom, reachable, bindex, strtab_len, sigs, errors,
-                      g_vregs, g_defpos)
+                      g_vregs, g_defpos, rec)
     _verify_term(func, name, block.get("id"), term, vregs, defpos, dom,
                  reachable, bindex, len(instrs), idset, ret, errors,
                  g_vregs, g_defpos)
 
 
 def _fresh(errors: list, func: str, where: str, dst: object, typ: object,
-           vregs: dict, defpos: dict, bindex: int, pos: int) -> None:
+           vregs: dict, defpos: dict, bindex: int, pos: int, rec: dict | None = None) -> None:
     if not _vreg(dst):
         errors.append(f"func '{func}': {where} dst must be a numeric vreg")
         return
     if dst in vregs:
         errors.append(f"func '{func}': {where} redefines vreg {dst}")
         return
-    if typ not in VALUE_TYPES:
+    rec_names = _rec_names(rec)
+    if not _is_value_type(typ, rec_names):
         errors.append(f"func '{func}': {where} has invalid type {typ!r}")
         return
     vregs[dst] = typ
@@ -1157,7 +1751,7 @@ def _verify_instr(func: dict, name: str, bid: object, pos: int, instr: object,
                    bindex: int, strtab_len: int,
                    sigs: dict, errors: list,
                    g_vregs: dict | None = None,
-                   g_defpos: dict | None = None) -> None:
+                   g_defpos: dict | None = None, rec: dict | None = None) -> None:
     where = f"block {bid} instr {pos}"
     if not isinstance(instr, dict):
         errors.append(f"func '{name}': {where} must be a dict")
@@ -1195,7 +1789,7 @@ def _verify_instr(func: dict, name: str, bid: object, pos: int, instr: object,
         else:
             errors.append(f"func '{name}': {where} const has invalid type {typ!r}")
             return
-        _fresh(errors, name, where, instr.get("dst"), typ, vregs, defpos, bindex, pos)
+        _fresh(errors, name, where, instr.get("dst"), typ, vregs, defpos, bindex, pos, rec)
     elif op == "copy":
         if set(instr) - {"op", "dst", "type", "src"}:
             errors.append(f"func '{name}': {where} copy carries unknown fields")
@@ -1204,25 +1798,27 @@ def _verify_instr(func: dict, name: str, bid: object, pos: int, instr: object,
         stype = _use(errors, name, where, src, vregs, defpos, dom, reachable, bindex, pos, g_vregs, g_defpos)
         if typ != stype:
             errors.append(f"func '{name}': {where} copy type {typ!r} != src type {stype!r}")
-        _fresh(errors, name, where, instr.get("dst"), typ, vregs, defpos, bindex, pos)
+        _fresh(errors, name, where, instr.get("dst"), typ, vregs, defpos, bindex, pos, rec)
     elif op == "binop":
         if set(instr) - {"op", "operator", "dst", "type", "l", "r"}:
             errors.append(f"func '{name}': {where} binop carries unknown fields")
-        _verify_binop(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs, g_defpos)
+        _verify_binop(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs, g_defpos, rec)
     elif op == "unop":
         if set(instr) - {"op", "operator", "dst", "type", "v"}:
             errors.append(f"func '{name}': {where} unop carries unknown fields")
-        _verify_unop(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs, g_defpos)
+        _verify_unop(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs, g_defpos, rec)
     elif op == "call":
         allowed = {"op", "name", "args", "dst", "type"}
         if set(instr) - allowed:
             errors.append(f"func '{name}': {where} call carries unknown fields")
-        _verify_call(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, sigs, errors, g_vregs, g_defpos)
+        _verify_call(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, sigs, errors, g_vregs, g_defpos, rec)
+    elif op in AGG_OPS:
+        _verify_agg(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs, g_defpos, rec)
     else:
         errors.append(f"func '{name}': {where} has unknown opcode {op!r}")
 
 
-def _verify_binop(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs=None, g_defpos=None) -> None:
+def _verify_binop(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs=None, g_defpos=None, rec=None) -> None:
     operator = instr.get("operator")
     typ = instr.get("type")
     ltype = _use(errors, name, where, instr.get("l"), vregs, defpos, dom, reachable, bindex, pos, g_vregs, g_defpos)
@@ -1230,18 +1826,20 @@ def _verify_binop(func, name, where, instr, vregs, defpos, dom, reachable, binde
     good = False
     if operator in ("+", "-", "*", "/", "%"):
         good = ltype == "int" and rtype == "int" and typ == "int"
+    elif operator in ("&", "|", "^", "<<", ">>"):
+        good = ltype == "int" and rtype == "int" and typ == "int"
     elif operator in ("==", "!="):
-        good = ltype == rtype and ltype in VALUE_TYPES and typ == "bool"
+        good = ltype == rtype and _is_value_type(ltype, _rec_names(rec)) and typ == "bool"
     elif operator in ("<", ">", "<=", ">="):
         good = ltype == "int" and rtype == "int" and typ == "bool"
     elif operator in ("&&", "||"):
         good = ltype == "bool" and rtype == "bool" and typ == "bool"
     if not good:
         errors.append(f"func '{name}': {where} binop '{operator}' mistyped ({ltype},{rtype})->{typ!r}")
-    _fresh(errors, name, where, instr.get("dst"), typ, vregs, defpos, bindex, pos)
+    _fresh(errors, name, where, instr.get("dst"), typ, vregs, defpos, bindex, pos, rec)
 
 
-def _verify_unop(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs=None, g_defpos=None) -> None:
+def _verify_unop(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, errors, g_vregs=None, g_defpos=None, rec=None) -> None:
     operator = instr.get("operator")
     typ = instr.get("type")
     vtype = _use(errors, name, where, instr.get("v"), vregs, defpos, dom, reachable, bindex, pos, g_vregs, g_defpos)
@@ -1249,14 +1847,16 @@ def _verify_unop(func, name, where, instr, vregs, defpos, dom, reachable, bindex
         good = vtype == "int" and typ == "int"
     elif operator == "!":
         good = vtype == "bool" and typ == "bool"
+    elif operator == "~":
+        good = vtype == "int" and typ == "int"
     else:
         good = False
     if not good:
         errors.append(f"func '{name}': {where} unop '{operator}' mistyped ({vtype})->{typ!r}")
-    _fresh(errors, name, where, instr.get("dst"), typ, vregs, defpos, bindex, pos)
+    _fresh(errors, name, where, instr.get("dst"), typ, vregs, defpos, bindex, pos, rec)
 
 
-def _verify_call(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, sigs, errors, g_vregs=None, g_defpos=None) -> None:
+def _verify_call(func, name, where, instr, vregs, defpos, dom, reachable, bindex, pos, sigs, errors, g_vregs=None, g_defpos=None, rec=None) -> None:
     callee = instr.get("name")
     args = instr.get("args")
     if not isinstance(callee, str) or not callee:
@@ -1290,7 +1890,262 @@ def _verify_call(func, name, where, instr, vregs, defpos, dom, reachable, bindex
         elif dst is None or typ != want_ret:
             errors.append(f"func '{name}': {where} call result must be {want_ret}")
     if dst is not None:
-        _fresh(errors, name, where, dst, typ, vregs, defpos, bindex, pos)
+        _fresh(errors, name, where, dst, typ, vregs, defpos, bindex, pos, rec)
+
+
+def _verify_agg(func: dict, name: str, where: str, instr: dict, vregs: dict,
+                defpos: dict, dom: dict, reachable: set, bindex: int, pos: int,
+                errors: list, g_vregs: dict | None = None,
+                g_defpos: dict | None = None, rec: dict | None = None) -> None:
+    """Verify one Stage 19a aggregate instruction (frozen semantics).
+
+    Every operand type is re-derived via _use (dominance-checked); every
+    result type is re-derived from the operand shapes, never trusted.
+    """
+    op = instr.get("op")
+    fields = (rec or {}).get("fields", {}) if isinstance(rec, dict) else {}
+    if not isinstance(fields, dict):
+        fields = {}
+
+    def use(vreg: object, what: str):
+        return _use(errors, name, where, vreg, vregs, defpos, dom,
+                    reachable, bindex, pos, g_vregs, g_defpos)
+
+    def shape_of(typ: object, what: str):
+        node = _agtypes.parse_type(typ)
+        if node is None or node[0] != "generic":
+            errors.append(f"func '{name}': {where} {what} needs an aggregate type, got {typ!r}")
+            return None
+        return node
+
+    def fresh(dst: object, typ: object) -> None:
+        _fresh(errors, name, where, dst, typ, vregs, defpos, bindex, pos, rec)
+
+    if op == "make_record":
+        allowed = {"op", "dst", "type", "args"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} make_record carries unknown fields")
+        typ = instr.get("type")
+        args = instr.get("args")
+        if not isinstance(typ, str) or typ not in fields:
+            errors.append(f"func '{name}': {where} make_record needs a declared record, got {typ!r}")
+            fresh(instr.get("dst"), typ)
+            return
+        want = [t for _n, t in fields[typ]]
+        if not isinstance(args, list) or len(args) != len(want):
+            errors.append(f"func '{name}': {where} make_record for '{typ}' needs {len(want)} values")
+            fresh(instr.get("dst"), typ)
+            return
+        for arg, ftype in zip(args, want):
+            if use(arg, "record field") != ftype:
+                errors.append(f"func '{name}': {where} make_record field mistyped")
+        fresh(instr.get("dst"), typ)
+    elif op == "get_field":
+        allowed = {"op", "dst", "type", "rec", "field"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} get_field carries unknown fields")
+        rtype = use(instr.get("rec"), "field object")
+        field = instr.get("field")
+        ftype = next((t for n, t in fields.get(rtype, []) if n == field), None)
+        if ftype is None:
+            errors.append(f"func '{name}': {where} get_field '{field}' not in {rtype!r}")
+            fresh(instr.get("dst"), instr.get("type"))
+            return
+        if instr.get("type") != ftype:
+            errors.append(f"func '{name}': {where} get_field result must be {ftype}")
+        fresh(instr.get("dst"), ftype)
+    elif op == "make_list":
+        allowed = {"op", "dst", "type", "args"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} make_list carries unknown fields")
+        typ = instr.get("type")
+        node = shape_of(typ, "make_list result")
+        args = instr.get("args")
+        if node is None or node[1] != "list" or not isinstance(args, list):
+            errors.append(f"func '{name}': {where} make_list needs a list type and arg list")
+            fresh(instr.get("dst"), typ)
+            return
+        elem_t = _agtypes.canonical(node[2][0])
+        cap = node[2][1][1]
+        if len(args) > cap:
+            errors.append(f"func '{name}': {where} make_list of {len(args)} exceeds capacity {cap}")
+        for arg in args:
+            if use(arg, "list element") != elem_t:
+                errors.append(f"func '{name}': {where} make_list elements must share one type")
+        fresh(instr.get("dst"), typ)
+    elif op == "list_len":
+        allowed = {"op", "dst", "type", "seq"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} list_len carries unknown fields")
+        stype = use(instr.get("seq"), "list_len object")
+        node = _agtypes.parse_type(stype)
+        if node is None or node[0] != "generic" or node[1] != "list":
+            errors.append(f"func '{name}': {where} list_len needs a list, got {stype!r}")
+        if instr.get("type") != "int":
+            errors.append(f"func '{name}': {where} list_len result must be int")
+        fresh(instr.get("dst"), "int")
+    elif op == "list_idx":
+        allowed = {"op", "dst", "type", "seq", "index"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} list_idx carries unknown fields")
+        stype = use(instr.get("seq"), "index object")
+        node = _agtypes.parse_type(stype)
+        if node is None or node[0] != "generic" or node[1] != "list":
+            errors.append(f"func '{name}': {where} list_idx needs a list, got {stype!r}")
+            fresh(instr.get("dst"), instr.get("type"))
+            return
+        if use(instr.get("index"), "index") != "int":
+            errors.append(f"func '{name}': {where} list_idx needs an int index")
+        elem_t = _agtypes.canonical(node[2][0])
+        if instr.get("type") != f"status<{elem_t}>":
+            errors.append(f"func '{name}': {where} list_idx result must be status<{elem_t}>")
+        fresh(instr.get("dst"), f"status<{elem_t}>")
+    elif op == "list_push":
+        allowed = {"op", "dst", "type", "seq", "val"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} list_push carries unknown fields")
+        stype = use(instr.get("seq"), "push target")
+        node = _agtypes.parse_type(stype)
+        if node is None or node[0] != "generic" or node[1] != "list":
+            errors.append(f"func '{name}': {where} list_push needs a list, got {stype!r}")
+            fresh(instr.get("dst"), instr.get("type"))
+            return
+        elem_t = _agtypes.canonical(node[2][0])
+        if use(instr.get("val"), "push value") != elem_t:
+            errors.append(f"func '{name}': {where} list_push value mistyped")
+        if instr.get("type") != f"status<{stype}>":
+            errors.append(f"func '{name}': {where} list_push result must be status<{stype}>")
+        fresh(instr.get("dst"), f"status<{stype}>")
+    elif op == "make_map":
+        allowed = {"op", "dst", "type", "args"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} make_map carries unknown fields")
+        typ = instr.get("type")
+        node = shape_of(typ, "make_map result")
+        args = instr.get("args")
+        if node is None or node[1] != "map" or not isinstance(args, list) or len(args) % 2:
+            errors.append(f"func '{name}': {where} make_map needs a map type and key/value pairs")
+            fresh(instr.get("dst"), typ)
+            return
+        key_t = _agtypes.canonical(node[2][0])
+        val_t = _agtypes.canonical(node[2][1])
+        cap = node[2][2][1]
+        if len(args) // 2 > cap:
+            errors.append(f"func '{name}': {where} make_map of {len(args) // 2} exceeds capacity {cap}")
+        for index in range(0, len(args), 2):
+            if use(args[index], "map key") != key_t:
+                errors.append(f"func '{name}': {where} make_map keys must share one type")
+            if use(args[index + 1], "map value") != val_t:
+                errors.append(f"func '{name}': {where} make_map values must share one type")
+        fresh(instr.get("dst"), typ)
+    elif op == "map_get":
+        allowed = {"op", "dst", "type", "map", "key"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} map_get carries unknown fields")
+        mtype = use(instr.get("map"), "get target")
+        node = _agtypes.parse_type(mtype)
+        if node is None or node[0] != "generic" or node[1] != "map":
+            errors.append(f"func '{name}': {where} map_get needs a map, got {mtype!r}")
+            fresh(instr.get("dst"), instr.get("type"))
+            return
+        key_t = _agtypes.canonical(node[2][0])
+        val_t = _agtypes.canonical(node[2][1])
+        if use(instr.get("key"), "get key") != key_t:
+            errors.append(f"func '{name}': {where} map_get key mistyped")
+        if instr.get("type") != f"status<{val_t}>":
+            errors.append(f"func '{name}': {where} map_get result must be status<{val_t}>")
+        fresh(instr.get("dst"), f"status<{val_t}>")
+    elif op == "map_insert":
+        allowed = {"op", "dst", "type", "map", "key", "val"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} map_insert carries unknown fields")
+        mtype = use(instr.get("map"), "insert target")
+        node = _agtypes.parse_type(mtype)
+        if node is None or node[0] != "generic" or node[1] != "map":
+            errors.append(f"func '{name}': {where} map_insert needs a map, got {mtype!r}")
+            fresh(instr.get("dst"), instr.get("type"))
+            return
+        key_t = _agtypes.canonical(node[2][0])
+        val_t = _agtypes.canonical(node[2][1])
+        if use(instr.get("key"), "insert key") != key_t:
+            errors.append(f"func '{name}': {where} map_insert key mistyped")
+        if use(instr.get("val"), "insert value") != val_t:
+            errors.append(f"func '{name}': {where} map_insert value mistyped")
+        if instr.get("type") != f"status<{mtype}>":
+            errors.append(f"func '{name}': {where} map_insert result must be status<{mtype}>")
+        fresh(instr.get("dst"), f"status<{mtype}>")
+    elif op == "map_len":
+        allowed = {"op", "dst", "type", "map"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} map_len carries unknown fields")
+        mtype = use(instr.get("map"), "map_len object")
+        node = _agtypes.parse_type(mtype)
+        if node is None or node[0] != "generic" or node[1] != "map":
+            errors.append(f"func '{name}': {where} map_len needs a map, got {mtype!r}")
+        if instr.get("type") != "int":
+            errors.append(f"func '{name}': {where} map_len result must be int")
+        fresh(instr.get("dst"), "int")
+    elif op == "str_len":
+        allowed = {"op", "dst", "type", "v"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} str_len carries unknown fields")
+        if use(instr.get("v"), "str_len object") != "str":
+            errors.append(f"func '{name}': {where} str_len needs a str")
+        if instr.get("type") != "int":
+            errors.append(f"func '{name}': {where} str_len result must be int")
+        fresh(instr.get("dst"), "int")
+    elif op == "str_byte_at":
+        allowed = {"op", "dst", "type", "v", "index"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} str_byte_at carries unknown fields")
+        if use(instr.get("v"), "byte_at target") != "str":
+            errors.append(f"func '{name}': {where} str_byte_at needs a str target")
+        if use(instr.get("index"), "byte_at index") != "int":
+            errors.append(f"func '{name}': {where} str_byte_at needs an int index")
+        if instr.get("type") != "status<int>":
+            errors.append(f"func '{name}': {where} str_byte_at result must be status<int>")
+        fresh(instr.get("dst"), "status<int>")
+    elif op == "status_is_ok" or op == "status_is_err":
+        allowed = {"op", "dst", "type", "v"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} {op} carries unknown fields")
+        vtype = use(instr.get("v"), f"{op} object")
+        node = _agtypes.parse_type(vtype)
+        if node is None or node[0] != "generic" or node[1] != "status":
+            errors.append(f"func '{name}': {where} {op} needs a status, got {vtype!r}")
+        if instr.get("type") != "bool":
+            errors.append(f"func '{name}': {where} {op} result must be bool")
+        fresh(instr.get("dst"), "bool")
+    elif op == "status_unwrap_or":
+        allowed = {"op", "dst", "type", "v", "default"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} status_unwrap_or carries unknown fields")
+        vtype = use(instr.get("v"), "unwrap_or value")
+        node = _agtypes.parse_type(vtype)
+        if node is None or node[0] != "generic" or node[1] != "status":
+            errors.append(f"func '{name}': {where} status_unwrap_or needs a status, got {vtype!r}")
+            fresh(instr.get("dst"), instr.get("type"))
+            return
+        payload_t = _agtypes.canonical(node[2][0])
+        if use(instr.get("default"), "unwrap_or default") != payload_t:
+            errors.append(f"func '{name}': {where} status_unwrap_or default mistyped")
+        if instr.get("type") != payload_t:
+            errors.append(f"func '{name}': {where} status_unwrap_or result must be {payload_t}")
+        fresh(instr.get("dst"), payload_t)
+    elif op == "print_agg":
+        allowed = {"op", "agg"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} print_agg carries unknown fields")
+        atype = use(instr.get("agg"), "print_agg object")
+        node = _agtypes.parse_type(atype)
+        if node is None or node[0] not in ("generic", "nominal"):
+            errors.append(f"func '{name}': {where} print_agg needs an aggregate, got {atype!r}")
+        elif node[0] == "nominal" and atype not in fields:
+            errors.append(f"func '{name}': {where} print_agg needs a declared record, got {atype!r}")
+        elif node[0] == "generic" and _agtypes.validate_type(node) is not None:
+            errors.append(f"func '{name}': {where} print_agg has invalid type {atype!r}")
+    else:
+        errors.append(f"func '{name}': {where} has unknown aggregate opcode {op!r}")
 
 
 def _verify_term(func, name, bid, term, vregs, defpos, dom, reachable, bindex, npos, idset, ret, errors, g_vregs=None, g_defpos=None) -> None:
@@ -1364,6 +2219,9 @@ def dumps(module: dict) -> str:
     for entry in module.get("strtab", []):
         lines.append(f'.strtab #{entry["id"]} len={entry["len"]} '
                      f'bytes="{_escape_str_bytes(entry["bytes"])}"')
+    for entry in module.get("rectypes", []):
+        fields = ", ".join(f'{f["name"]}: {f["type"]}' for f in entry.get("fields", []))
+        lines.append(f'.rectype {entry.get("name")} : ({fields})')
     for func in module.get("funcs", []):
         params = ", ".join(f'{p["name"]}: {p["type"]}' for p in func.get("params", []))
         ret = func.get("ret")
@@ -1400,6 +2258,42 @@ def _dump_instr(instr: dict) -> str:
         if "dst" in instr:
             return f'{instr.get("dst")} = call {instr.get("type")} {instr.get("name")}({args})'
         return f'call {instr.get("name")}({args})'
+    if op == "make_record":
+        args = ", ".join(instr.get("args", []))
+        return f'{instr.get("dst")} = make_record {instr.get("type")}({args})'
+    if op == "get_field":
+        return f'{instr.get("dst")} = get_field {instr.get("type")} {instr.get("rec")}.{instr.get("field")}'
+    if op == "make_list":
+        args = ", ".join(instr.get("args", []))
+        return f'{instr.get("dst")} = make_list {instr.get("type")}({args})'
+    if op == "list_len":
+        return f'{instr.get("dst")} = list_len {instr.get("seq")}'
+    if op == "list_idx":
+        return f'{instr.get("dst")} = list_idx {instr.get("type")} {instr.get("seq")}[{instr.get("index")}]'
+    if op == "list_push":
+        return f'{instr.get("dst")} = list_push {instr.get("type")} {instr.get("seq")} {instr.get("val")}'
+    if op == "make_map":
+        args = ", ".join(instr.get("args", []))
+        return f'{instr.get("dst")} = make_map {instr.get("type")}({args})'
+    if op == "map_get":
+        return f'{instr.get("dst")} = map_get {instr.get("type")} {instr.get("map")}[{instr.get("key")}]'
+    if op == "map_insert":
+        return (f'{instr.get("dst")} = map_insert {instr.get("type")} '
+                f'{instr.get("map")}[{instr.get("key")}] = {instr.get("val")}')
+    if op == "map_len":
+        return f'{instr.get("dst")} = map_len {instr.get("map")}'
+    if op == "str_len":
+        return f'{instr.get("dst")} = str_len {instr.get("v")}'
+    if op == "str_byte_at":
+        return f'{instr.get("dst")} = str_byte_at {instr.get("v")}[{instr.get("index")}]'
+    if op == "status_is_ok":
+        return f'{instr.get("dst")} = status_is_ok {instr.get("v")}'
+    if op == "status_is_err":
+        return f'{instr.get("dst")} = status_is_err {instr.get("v")}'
+    if op == "status_unwrap_or":
+        return f'{instr.get("dst")} = status_unwrap_or {instr.get("v")} {instr.get("default")}'
+    if op == "print_agg":
+        return f'print_agg {instr.get("agg")}'
     return f"<bad-op {op!r}>"
 
 
