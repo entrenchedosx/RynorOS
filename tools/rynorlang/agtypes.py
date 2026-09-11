@@ -19,7 +19,8 @@ SCALAR_TYPES = ("int", "bool", "str")
 SCALAR_SIZES = {"int": 8, "bool": 8, "str": 16}
 
 # Parametric builtins: name -> (n_type_args, last_arg_is_capacity).
-PARAMETRIC = {"list": (2, True), "map": (3, True), "status": (1, False)}
+PARAMETRIC = {"list": (2, True), "map": (3, True), "status": (1, False),
+              "result": (2, False)}
 
 # Storable positions (list elements, map values, record fields, status
 # payloads) accept any value type except status itself (single-level
@@ -32,9 +33,10 @@ MAX_TYPE_NESTING = 8
 
 # Stage 19a aggregate builtins (reserved names, `print` precedent: user
 # functions may not claim them; analyzer lowers calls to dedicated RIR
-# ops). Single source: analyze.py and rir.py both import this tuple.
+# ops). Stage 19b adds ok/err constructors. Single source: analyze.py
+# and rir.py both import this tuple.
 AGG_BUILTINS = ("len", "push", "insert", "get", "is_ok", "is_err",
-                "unwrap_or", "byte_at")
+                "unwrap_or", "byte_at", "ok", "err")
 
 # Frozen 19a err codes (int payload of err statuses).
 ERR_FULL = 1
@@ -144,10 +146,11 @@ def validate_type(node: tuple, depth: int = 0) -> str | None:
     for arg in body:
         if not isinstance(arg, tuple) or (arg[0] not in ("scalar", "nominal", "generic")):
             return "arity"
-        # No status inside collections or status payloads (single-level
-        # tags everywhere: indexing a list yields status<T> directly, so
-        # T itself is never a status; 19b may revisit alongside Result).
-        if arg[0] == "generic" and arg[1] == "status":
+        # No status/result directly inside status/result payloads or any
+        # collection element (single-level tags everywhere: indexing and
+        # matching always yield one level; 19c+ may revisit alongside
+        # richer error types).
+        if base in ("status", "result") and arg[0] == "generic" and arg[1] in ("status", "result"):
             return "nested-status"
         err = validate_type(arg, depth + 1)
         if err is not None:
@@ -191,6 +194,13 @@ def size_of(node: tuple, record_sizes: dict | None = None) -> int | None:
         if pay is None:
             return None
         return 16 + pay
+    if base == "result":
+        # result<T,E>: tag @0, err payload E @8, ok payload T @8+size(E).
+        pay = size_of(args[0], record_sizes)
+        err = size_of(args[1], record_sizes)
+        if err is None or pay is None:
+            return None
+        return 8 + err + pay
     return None
 
 

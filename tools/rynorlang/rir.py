@@ -91,19 +91,23 @@ RESERVED_OPS = (
 )
 # Stage 19a aggregate opcodes (frozen semantics in
 # docs/design/rynorlang-aggregates.md). Projections returning status
-# keep the language total; no aggregate op traps.
+# keep the language total; no aggregate op traps. Stage 19b adds the
+# result family (docs/design/rynorlang-control.md).
 AGG_OPS = (
     "make_record", "get_field",
     "make_list", "list_len", "list_idx", "list_push",
     "make_map", "map_get", "map_insert", "map_len",
     "str_len", "str_byte_at",
     "status_is_ok", "status_is_err", "status_unwrap_or",
+    "result_ok", "result_err", "unwrap_ok", "unwrap_err",
     "print_agg",
 )
 # AST kinds beyond the frozen 16 that must be rejected, never miscompiled.
+# Stage 19a implemented RecLit/ListLit/MapLit/Index/Field (stable kinds,
+# not reserved); 19b implements Match/Break/Continue the same way.
 RESERVED_AST_KINDS = (
-    "Pipeline", "Cmd", "Member", "Record", "List", "Match",
-    "Break", "Continue", "Use", "Module",
+    "Pipeline", "Cmd", "Member", "Record", "List",
+    "Use", "Module",
 )
 # The 16 frozen stable-AST kinds (docs/design/rynorlang-ast.md).
 STABLE_KINDS = (
@@ -389,6 +393,9 @@ class _FunctionLowering:
         self.sigs = sigs
         self.rectypes = rectypes or {}
         self.record_sizes = record_sizes or {}
+        # Stage 19b loop context stack for break/continue: (header, exit)
+        # block indices, innermost last. Jumps target them directly.
+        self.loops: list[tuple] = []
         self.vreg_types: dict[str, str] = {}
         self.next_vreg = 0
         self.blocks: list[dict] = []
@@ -449,6 +456,10 @@ def _uses_of_instr(instr: dict) -> list:
                 "str_byte_at": ("v", "index"),
                 "status_unwrap_or": ("v", "default")}[op]
         return [instr[k] for k in keys if isinstance(instr.get(k), str)]
+    if op in ("result_ok", "result_err"):
+        return [instr["val"]] if isinstance(instr.get("val"), str) else []
+    if op in ("unwrap_ok", "unwrap_err"):
+        return [instr["v"]] if isinstance(instr.get("v"), str) else []
     return []
 
 
@@ -690,16 +701,30 @@ def _lower_function(fn: dict, sigs: dict, strtab: list, str_ids: dict,
 
 
 def _lower_block_contents(low: _FunctionLowering, stmts: object, cur: int,
-                          fname: str, ret: object) -> int:
+                          fname: str, ret: object, predeclared: list | None = None) -> int:
     """Lower a statement list into blocks starting at cur; return tail block.
 
     Each block pushes one lexical scope; declarations die with it, so a use
     after the block ends fails closed instead of resolving a stale binding.
+    Predeclared (symbol, name) pairs (match bindings) join the block scope.
     """
     if not isinstance(stmts, list):
         _fail(COMP_BAD_AST, f"function '{fname}' block stmts must be a list")
     low.scopes.append([])
     try:
+        if predeclared:
+            for sym, pname, temp in predeclared:
+                if not isinstance(sym, int):
+                    _fail(COMP_BAD_AST, "predeclared symbol must be an int")
+                if sym in low.symbols:
+                    _fail(COMP_BAD_AST, "predeclared symbol redefines an existing symbol")
+                if not isinstance(pname, str) or not pname or pname in low.names:
+                    _fail(COMP_BAD_AST, f"predeclared '{pname}' shadows an existing binding")
+                if not isinstance(temp, str):
+                    _fail(COMP_BAD_AST, "predeclared temp must be a vreg")
+                low.symbols[sym] = temp
+                low.names[pname] = sym
+                low.scopes[-1].append((sym, pname))
         for stmt in stmts:
             if not low.is_open(cur):
                 cur = low.new_block()
@@ -752,6 +777,20 @@ def _lower_stmt(low: _FunctionLowering, stmt: object, cur: int,
         return cur
     if kind == "If":
         return _lower_if(low, stmt, cur, fname, ret)
+    if kind == "Match":
+        return _lower_match(low, stmt, cur, fname, ret)
+    if kind == "Break":
+        if not low.loops:
+            _fail(COMP_BAD_AST, "break outside loop")
+        _header, exit_b = low.loops[-1]
+        low.terminate(cur, {"op": "jmp", "tgt": f"bb{exit_b}"})
+        return cur
+    if kind == "Continue":
+        if not low.loops:
+            _fail(COMP_BAD_AST, "continue outside loop")
+        header_b, _exit = low.loops[-1]
+        low.terminate(cur, {"op": "jmp", "tgt": f"bb{header_b}"})
+        return cur
     if kind == "While":
         header_b = low.new_block()
         body_b = low.new_block()
@@ -765,9 +804,13 @@ def _lower_stmt(low: _FunctionLowering, stmt: object, cur: int,
             _fail(COMP_BAD_AST, "while condition must be bool")
         low.terminate(header_b, {"op": "br", "cond": hcond,
                                  "then": f"bb{body_b}", "else": f"bb{exit_b}"})
-        body_tail = _lower_block_contents(
-            low, _need_block_stmts(low, stmt.get("body"), fname),
-            body_b, fname, ret)
+        low.loops.append((header_b, exit_b))
+        try:
+            body_tail = _lower_block_contents(
+                low, _need_block_stmts(low, stmt.get("body"), fname),
+                body_b, fname, ret)
+        finally:
+            low.loops.pop()
         if low.is_open(body_tail):
             low.terminate(body_tail, {"op": "jmp", "tgt": f"bb{header_b}"})
         return exit_b
@@ -786,6 +829,140 @@ def _need_block_stmts(low: _FunctionLowering, node: object, fname: str) -> objec
     if not isinstance(node, dict) or node.get("kind") != "Block":
         _fail(COMP_BAD_AST, f"function '{fname}' branch must be a Block")
     return node.get("stmts")
+
+
+def _lower_match(low: _FunctionLowering, stmt: dict, cur: int, fname: str, ret: object) -> int:
+    """Lower a Match statement to tag checks, branches, and arm blocks.
+
+    Dispatch is disjoint by construction (the analyzer guarantees
+    exhaustiveness and reachability): variant arms test the tag,
+    literal arms compare, bindings/wildcards fall through. Payloads
+    extract on the taken arm only.
+    """
+    scrut_node = stmt.get("scrut")
+    if not isinstance(scrut_node, dict):
+        _fail(COMP_BAD_AST, f"function '{fname}' match needs a scrutinee node")
+    scrut = _lower_expr(low, scrut_node, cur, fname)
+    stype = _vtype(low, scrut, fname, "match scrutinee")
+    arms = stmt.get("arms")
+    if not isinstance(arms, list) or not arms:
+        _fail(COMP_BAD_AST, f"function '{fname}' match needs a non-empty arm list")
+    join_b = low.new_block()
+    for arm in arms:
+        if not isinstance(arm, dict):
+            _fail(COMP_BAD_AST, f"function '{fname}' match arms must be dicts")
+        pat = arm.get("pattern")
+        body = arm.get("body")
+        if not isinstance(pat, dict) or not isinstance(body, dict) or body.get("kind") != "Block":
+            _fail(COMP_BAD_AST, f"function '{fname}' match arm needs a pattern and Block body")
+        arm_b = low.new_block()
+        next_b = low.new_block()
+        _emit_arm_test(low, pat, scrut, stype, cur, arm_b, next_b, fname)
+        predeclared = _bind_arm(low, pat, scrut, stype, arm_b, fname)
+        arm_tail = _lower_block_contents(low, _need_block_stmts(low, body, fname),
+                                        arm_b, fname, ret, predeclared)
+        if low.is_open(arm_tail):
+            low.terminate(arm_tail, {"op": "jmp", "tgt": f"bb{join_b}"})
+        cur = next_b
+    return join_b
+
+
+def _emit_arm_test(low: _FunctionLowering, pat: dict, scrut: str, stype: str,
+                   cur: int, arm_b: int, next_b: int, fname: str) -> None:
+    kind = pat.get("kind")
+    if kind in ("WildPat", "BindPat"):
+        low.terminate(cur, {"op": "jmp", "tgt": f"bb{arm_b}"})
+        return
+    if kind in ("OkPat", "ErrPat"):
+        tag = low.new_vreg("bool")
+        low.emit(cur, {"op": "status_is_ok", "dst": tag, "type": "bool", "v": scrut})
+        if kind == "ErrPat":
+            neg = low.new_vreg("bool")
+            low.emit(cur, {"op": "unop", "operator": "!", "dst": neg, "type": "bool", "v": tag})
+            tag = neg
+        low.terminate(cur, {"op": "br", "cond": tag, "then": f"bb{arm_b}", "else": f"bb{next_b}"})
+        return
+    if kind == "LitPat":
+        wid = low.new_vreg("bool")
+        lit = _lit_const_temp(low, pat, stype, cur, fname)
+        low.emit(cur, {"op": "binop", "operator": "==", "dst": wid, "type": "bool",
+                       "l": scrut, "r": lit})
+        low.terminate(cur, {"op": "br", "cond": wid, "then": f"bb{arm_b}", "else": f"bb{next_b}"})
+        return
+    _fail(COMP_V2_UNSUPPORTED, f"unknown pattern kind {kind!r}")
+
+
+def _lit_const_temp(low: _FunctionLowering, pat: dict, stype: str, cur: int, fname: str) -> str:
+    value = pat.get("value")
+    if stype == "int":
+        try:
+            number = int(value, 10)
+        except (TypeError, ValueError):
+            _fail(COMP_BAD_AST, f"function '{fname}' match literal is not an int")
+        if number < 0 or number > _I64_MAX:
+            _fail(COMP_BAD_AST, f"function '{fname}' match literal out of range")
+        dst = low.new_vreg("int")
+        low.emit(cur, {"op": "const", "dst": dst, "type": "int", "value": str(number)})
+        return dst
+    if stype == "bool":
+        if value is not True and value is not False and value not in ("true", "false"):
+            _fail(COMP_BAD_AST, f"function '{fname}' match literal is not a bool")
+        boolean = value is True or value == "true"
+        dst = low.new_vreg("bool")
+        low.emit(cur, {"op": "const", "dst": dst, "type": "bool", "value": boolean})
+        return dst
+    if stype == "str":
+        if not isinstance(value, str):
+            _fail(COMP_BAD_AST, f"function '{fname}' match literal is not a string")
+        sid = _intern_str(value, low.strtab, low.str_ids)
+        dst = low.new_vreg("str")
+        low.emit(cur, {"op": "const", "dst": dst, "type": "str", "value": sid})
+        return dst
+    _fail(COMP_BAD_AST, f"function '{fname}' cannot match literal against {stype!r}")
+
+
+def _bind_arm(low: _FunctionLowering, pat: dict, scrut: str, stype: str,
+              arm_b: int, fname: str) -> list:
+    """Emit arm payload extractions; return predeclared (symbol, name,
+    temp) triples for the arm scope.
+
+    Whole-scrutinee bindings alias the scrutinee temp; payload bindings
+    extract on the taken arm (valid by construction: the arm test
+    dominates the extraction). Nothing is registered here; the caller
+    installs the triples in the arm scope (popped after the arm).
+    """
+    kind = pat.get("kind")
+    if kind == "BindPat":
+        sym = pat.get("symbol")
+        name = pat.get("name")
+        if type(sym) is not int or not isinstance(name, str) or not name:
+            _fail(COMP_BAD_AST, f"function '{fname}' BindPat needs a symbol and name")
+        return [(sym, name, scrut)]
+    if kind in ("OkPat", "ErrPat"):
+        binding = pat.get("binding")
+        if binding is None:
+            return []
+        sym = pat.get("symbol")
+        if type(sym) is not int or not isinstance(binding, str) or not binding:
+            _fail(COMP_BAD_AST, f"function '{fname}' pattern binding needs a symbol and name")
+        op = "unwrap_ok" if kind == "OkPat" else "unwrap_err"
+        payload = _status_payload_type(low, scrut, stype, fname, kind)
+        dst = low.new_vreg(payload)
+        low.emit(arm_b, {"op": op, "dst": dst, "type": payload, "v": scrut})
+        return [(sym, binding, dst)]
+    if kind in ("WildPat", "LitPat"):
+        return []
+    _fail(COMP_V2_UNSUPPORTED, f"unknown pattern kind {kind!r}")
+
+
+def _status_payload_type(low: _FunctionLowering, scrut: str, stype: str, fname: str, kind: str) -> str:
+    node = _agtypes.parse_type(stype)
+    if node is None or node[0] != "generic" or node[1] not in ("status", "result"):
+        _fail(COMP_BAD_AST, f"function '{fname}' {kind} pattern needs a status or result")
+    if node[1] == "status":
+        return _agtypes.canonical(node[2][0])
+    payloads = (_agtypes.canonical(node[2][0]), _agtypes.canonical(node[2][1]))
+    return payloads[0] if kind == "OkPat" else payloads[1]
 
 
 def _lower_if(low: _FunctionLowering, stmt: dict, cur: int, fname: str, ret: object) -> int:
@@ -1292,6 +1469,19 @@ def _lower_builtin_call(low: _FunctionLowering, node: dict, callee: str,
         if _vtype(low, arg_temps[1], fname, "byte_at index") != "int":
             _fail(COMP_BAD_AST, "byte_at needs an int index")
         return emit("str_byte_at", "status<int>", v=arg_temps[0], index=arg_temps[1])
+    if callee == "ok" or callee == "err":
+        # Stage 19b result constructors (analyzer elaborated the payload
+        # against the annotated result type; re-checked here).
+        if len(arg_temps) != 1:
+            _fail(COMP_BAD_AST, f"'{callee}' needs exactly one argument")
+        want = node.get("type")
+        shape = _agtypes.parse_type(want)
+        if shape is None or shape[0] != "generic" or shape[1] != "result":
+            _fail(COMP_BAD_AST, f"'{callee}' needs a result type, got {want!r}")
+        payload_t = _agtypes.canonical(shape[2][0 if callee == "ok" else 1])
+        if _vtype(low, arg_temps[0], fname, f"{callee} payload") != payload_t:
+            _fail(COMP_BAD_AST, f"'{callee}' payload mistyped")
+        return emit(f"result_{callee}", want, val=arg_temps[0])
     _fail(COMP_V2_UNSUPPORTED, f"unknown builtin '{callee}'")
 
 
@@ -1902,6 +2092,17 @@ def _verify_call(func, name, where, instr, vregs, defpos, dom, reachable, bindex
         _fresh(errors, name, where, dst, typ, vregs, defpos, bindex, pos, rec)
 
 
+def _status_operand_shape(vtype: object):
+    """Parse a status/result operand shape (None when neither).
+
+    Stage 19b: the status op family accepts result<T,E> too (same tag
+    rule; layouts dispatch by operand type downstream)."""
+    node = _agtypes.parse_type(vtype)
+    if node is None or node[0] != "generic" or node[1] not in ("status", "result"):
+        return None
+    return node
+
+
 def _verify_agg(func: dict, name: str, where: str, instr: dict, vregs: dict,
                 defpos: dict, dom: dict, reachable: set, bindex: int, pos: int,
                 errors: list, g_vregs: dict | None = None,
@@ -2119,9 +2320,8 @@ def _verify_agg(func: dict, name: str, where: str, instr: dict, vregs: dict,
         if set(instr) - allowed:
             errors.append(f"func '{name}': {where} {op} carries unknown fields")
         vtype = use(instr.get("v"), f"{op} object")
-        node = _agtypes.parse_type(vtype)
-        if node is None or node[0] != "generic" or node[1] != "status":
-            errors.append(f"func '{name}': {where} {op} needs a status, got {vtype!r}")
+        if _status_operand_shape(vtype) is None:
+            errors.append(f"func '{name}': {where} {op} needs a status or result, got {vtype!r}")
         if instr.get("type") != "bool":
             errors.append(f"func '{name}': {where} {op} result must be bool")
         fresh(instr.get("dst"), "bool")
@@ -2130,9 +2330,9 @@ def _verify_agg(func: dict, name: str, where: str, instr: dict, vregs: dict,
         if set(instr) - allowed:
             errors.append(f"func '{name}': {where} status_unwrap_or carries unknown fields")
         vtype = use(instr.get("v"), "unwrap_or value")
-        node = _agtypes.parse_type(vtype)
-        if node is None or node[0] != "generic" or node[1] != "status":
-            errors.append(f"func '{name}': {where} status_unwrap_or needs a status, got {vtype!r}")
+        node = _status_operand_shape(vtype)
+        if node is None:
+            errors.append(f"func '{name}': {where} status_unwrap_or needs a status or result, got {vtype!r}")
             fresh(instr.get("dst"), instr.get("type"))
             return
         payload_t = _agtypes.canonical(node[2][0])
@@ -2140,6 +2340,37 @@ def _verify_agg(func: dict, name: str, where: str, instr: dict, vregs: dict,
             errors.append(f"func '{name}': {where} status_unwrap_or default mistyped")
         if instr.get("type") != payload_t:
             errors.append(f"func '{name}': {where} status_unwrap_or result must be {payload_t}")
+        fresh(instr.get("dst"), payload_t)
+    elif op == "result_ok" or op == "result_err":
+        allowed = {"op", "dst", "type", "val"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} {op} carries unknown fields")
+        typ = instr.get("type")
+        node = _agtypes.parse_type(typ)
+        if node is None or node[0] != "generic" or node[1] != "result":
+            errors.append(f"func '{name}': {where} {op} needs a result type, got {typ!r}")
+            fresh(instr.get("dst"), typ)
+            return
+        payload_t = _agtypes.canonical(node[2][0 if op == "result_ok" else 1])
+        if use(instr.get("val"), f"{op} payload") != payload_t:
+            errors.append(f"func '{name}': {where} {op} payload mistyped")
+        fresh(instr.get("dst"), typ)
+    elif op == "unwrap_ok" or op == "unwrap_err":
+        allowed = {"op", "dst", "type", "v"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} {op} carries unknown fields")
+        vtype = use(instr.get("v"), f"{op} object")
+        node = _status_operand_shape(vtype)
+        if node is None:
+            errors.append(f"func '{name}': {where} {op} needs a status or result, got {vtype!r}")
+            fresh(instr.get("dst"), instr.get("type"))
+            return
+        if node[1] == "status":
+            payload_t = _agtypes.canonical(node[2][0]) if op == "unwrap_ok" else "int"
+        else:
+            payload_t = _agtypes.canonical(node[2][0 if op == "unwrap_ok" else 1])
+        if instr.get("type") != payload_t:
+            errors.append(f"func '{name}': {where} {op} result must be {payload_t}")
         fresh(instr.get("dst"), payload_t)
     elif op == "print_agg":
         allowed = {"op", "agg"}
@@ -2301,6 +2532,14 @@ def _dump_instr(instr: dict) -> str:
         return f'{instr.get("dst")} = status_is_err {instr.get("v")}'
     if op == "status_unwrap_or":
         return f'{instr.get("dst")} = status_unwrap_or {instr.get("v")} {instr.get("default")}'
+    if op == "result_ok":
+        return f'{instr.get("dst")} = result_ok {instr.get("type")} {instr.get("val")}'
+    if op == "result_err":
+        return f'{instr.get("dst")} = result_err {instr.get("type")} {instr.get("val")}'
+    if op == "unwrap_ok":
+        return f'{instr.get("dst")} = unwrap_ok {instr.get("v")}'
+    if op == "unwrap_err":
+        return f'{instr.get("dst")} = unwrap_err {instr.get("v")}'
     if op == "print_agg":
         return f'print_agg {instr.get("agg")}'
     return f"<bad-op {op!r}>"

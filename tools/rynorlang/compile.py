@@ -366,6 +366,23 @@ class _Emitter:
             self._print_punct(8)  # )
             self.out(f"{done}:")
             return
+        if base == "result":
+            _err_t, pay_t, t_off = self._result_layout(typ)
+            is_ok = self._fresh("pok")
+            done = self._fresh("pdone")
+            self.out(f"    mov rax, {self.home_at(vreg, off)}")
+            self.out("    test rax, rax")
+            self.out(f"    jz {is_ok}")
+            self._print_punct(7)  # err(
+            self._print_value_at(_err_t, vreg, off + 1)
+            self._print_punct(8)  # )
+            self.out(f"    jmp {done}")
+            self.out(f"{is_ok}:")
+            self._print_punct(6)   # ok(
+            self._print_value_at(pay_t, vreg, off + t_off)
+            self._print_punct(8)  # )
+            self.out(f"{done}:")
+            return
         if base == "list":
             elem_t = _agtypes.canonical(node[2][0])
             cap = node[2][1][1]
@@ -546,6 +563,7 @@ class _Emitter:
                     "list_idx", "list_push", "make_map", "map_get",
                     "map_insert", "map_len", "str_len", "str_byte_at",
                     "status_is_ok", "status_is_err", "status_unwrap_or",
+                    "result_ok", "result_err", "unwrap_ok", "unwrap_err",
                     "print_agg"):
             self._emit_agg(func, instr)
         else:
@@ -757,10 +775,48 @@ class _Emitter:
             self.store_reg("rax", instr["dst"])
         elif op == "status_unwrap_or":
             self._emit_unwrap_or(instr)
+        elif op == "result_ok" or op == "result_err":
+            self._emit_result_make(instr)
+        elif op == "unwrap_ok" or op == "unwrap_err":
+            self._emit_unwrap_path(instr)
         elif op == "print_agg":
             self._emit_print_agg(instr)
         else:
             raise ValueError(f"emitter: unknown aggregate opcode {op!r}")
+
+    def _emit_result_make(self, instr: dict) -> None:
+        dst = instr["dst"]
+        typ = instr["type"]
+        err_t, pay_t, t_off = self._result_layout(typ)
+        width = self._type_width(typ)
+        self._emit_zero_range(self.home(dst), width)
+        if instr["op"] == "result_ok":
+            self._emit_copy_range(self.home_at(dst, t_off), self.home(instr["val"]), self._type_width(pay_t))
+        else:
+            self.out("    mov rax, 1")
+            self.out(f"    mov {self.home(dst)}, rax")
+            self._emit_copy_range(self.home_at(dst, 1), self.home(instr["val"]), self._type_width(err_t))
+
+    def _emit_unwrap_path(self, instr: dict) -> None:
+        # Path-validated extraction (the builder emits these only on the
+        # taken arm, dominated by the tag test): straight payload copy,
+        # no tag check, no trap.
+        dst = instr["dst"]
+        vtype = self.vreg_type[instr["v"]]
+        node = _agtypes.parse_type(vtype)
+        if node is not None and node[0] == "generic" and node[1] == "result":
+            err_t = _agtypes.canonical(node[2][1])
+            pay_t = _agtypes.canonical(node[2][0])
+            if instr["op"] == "unwrap_ok":
+                src_off, width = 1 + self._type_width(err_t), self._type_width(pay_t)
+            else:
+                src_off, width = 1, self._type_width(err_t)
+        elif instr["op"] == "unwrap_ok":
+            src_off = 2
+            width = self._type_width(_agtypes.canonical(node[2][0]))
+        else:
+            src_off, width = 1, 1
+        self._emit_copy_range(self.home(dst), self.home_at(instr["v"], src_off), width)
 
     def _status_ok(self, dst: str) -> None:
         # tag=0, code=0 at the status home (payload stored separately).
@@ -807,6 +863,13 @@ class _Emitter:
         for index, temp in enumerate(instr["args"]):
             self._emit_copy_range(self.home_at(dst, 1 + index * elem_w), self.home(temp), elem_w)
 
+    def _result_layout(self, typ: str):
+        # (E, T, T-offset-slots) for result<T,E>: tag @0, E @1, T after E.
+        node = _agtypes.parse_type(typ)
+        err_t = _agtypes.canonical(node[2][1])
+        pay_t = _agtypes.canonical(node[2][0])
+        return err_t, pay_t, 1 + self._type_width(err_t)
+
     def _emit_unwrap_or(self, instr: dict) -> None:
         dst = instr["dst"]
         typ = instr["type"]
@@ -819,7 +882,13 @@ class _Emitter:
         self._emit_copy_range(self.home(dst), self.home(instr["default"]), width)
         self.out(f"    jmp {done}")
         self.out(f"{is_ok}:")
-        self._emit_copy_range(self.home(dst), self.home_at(instr["v"], 2), width)
+        vtype = self.vreg_type[instr["v"]]
+        node = _agtypes.parse_type(vtype)
+        src_off = 2
+        if node is not None and node[0] == "generic" and node[1] == "result":
+            # Result ok-payload sits after the err payload.
+            src_off = 1 + self._type_width(_agtypes.canonical(node[2][1]))
+        self._emit_copy_range(self.home(dst), self.home_at(instr["v"], src_off), width)
         self.out(f"{done}:")
 
     def _emit_list_idx(self, instr: dict) -> None:
@@ -1214,6 +1283,14 @@ class _Emitter:
             self.out(f"    cmp rax, {self.home_at(vb, ob + 1)}")
             self.out(f"    jne {ne_label}")
             self._emit_eq_body(payload_t, va, oa + 2, vb, ob + 2, ne_label)
+            return
+        if base == "result":
+            err_t, pay_t, t_off = self._result_layout(typ)
+            self.out(f"    mov rax, {self.home_at(va, oa)}")
+            self.out(f"    cmp rax, {self.home_at(vb, ob)}")
+            self.out(f"    jne {ne_label}")
+            self._emit_eq_body(err_t, va, oa + 1, vb, ob + 1, ne_label)
+            self._emit_eq_body(pay_t, va, oa + t_off, vb, ob + t_off, ne_label)
             return
         if base == "list":
             elem_t = _agtypes.canonical(node[2][0])
