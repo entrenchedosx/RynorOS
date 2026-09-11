@@ -846,6 +846,22 @@ static unsigned char rl_an_sub(struct rl_node *pool, unsigned short root,
                     walk[wtop++] = (unsigned int)nd->k1;
                 }
                 break;
+            case RLN_LEN:
+                /* Slice G len(arg): same walk shape as CALL (single
+                 * argument subtree); the callee word is none. */
+                if (wtop + 2u > walkcap) {
+                    *diag = RL_D_ARENA_FULL;
+                    return RLV_UNKNOWN;
+                }
+                walk[wtop++] = (unsigned short)(((unsigned int)i) | (1u << 15));
+                if (nd->k1 != RL_NONODE) {
+                    if (nd->k1 >= RL_POOL_MAX) {
+                        *diag = RL_D_INTERNAL;
+                        return RLV_UNKNOWN;
+                    }
+                    walk[wtop++] = (unsigned int)nd->k1;
+                }
+                break;
             default:
                 *diag = RL_D_INTERNAL;
                 return RLV_UNKNOWN;
@@ -949,6 +965,31 @@ static unsigned char rl_an_sub(struct rl_node *pool, unsigned short root,
                     return RLV_UNKNOWN;
                 }
                 types[i] = RLV_UNIT;
+            } else if (nd->kind == RLN_LEN) {
+                /* Slice G len(arg): exactly one argument of type
+                 * str; result is int (decoded runtime byte length,
+                 * computed at evaluation). Arity uses the existing
+                 * arity class, mistypes the existing type class, so
+                 * no new diagnostic namespace is introduced. */
+                unsigned char at;
+                if (nd->aux != 1u) {
+                    *diag = RL_D_SEM_ARITY;
+                    return RLV_UNKNOWN;
+                }
+                if (nd->k1 == RL_NONODE || nd->k1 >= RL_POOL_MAX) {
+                    *diag = RL_D_INTERNAL;
+                    return RLV_UNKNOWN;
+                }
+                at = types[nd->k1];
+                if (at == RLV_UNKNOWN) {
+                    *diag = RL_D_INTERNAL;
+                    return RLV_UNKNOWN;
+                }
+                if (at != RLV_STR) {
+                    *diag = RL_D_SEM_TYPE;
+                    return RLV_UNKNOWN;
+                }
+                types[i] = RLV_INT;
             } else {
                 *diag = RL_D_INTERNAL;
                 return RLV_UNKNOWN;

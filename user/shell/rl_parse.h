@@ -7,11 +7,13 @@
  *
  * - precedence climbing 1..6 (||, &&, ==/!=, relational, additive,
  *   multiplicative), left associative, exactly like the host loop;
+ *   multiplicative), left associative, exactly like the host loop;
  * - precedence-0 left-associative |> pipelines, iterative, but at most
  *   TWO stages (a third |> is a parse error: Slice E parity, where
  *   three-stage lines are loud syntax errors with zero spawns);
  * - unary -/! (right associative), grouping parens (elided from the
- *   tree; depth still charged), print(...) calls;
+ *   tree; depth still charged), print(...) calls and the Slice G
+ *   len(...) builtin (same call shape, depth, and arity capture);
  * - top-level annotated let (no trailing semicolon inside a part);
  * - host-identical command disambiguation: lone bare words and
  *   juxtaposition commands become Cmd nodes at stage level only;
@@ -38,6 +40,7 @@
 #define RLN_UNOP 5
 #define RLN_BINOP 6
 #define RLN_CALL 7   /* print(...) only (checked in semantics) */
+#define RLN_LEN 12    /* len(...) builtin (Slice G; call-position only) */
 #define RLN_CMD 8    /* external command candidate */
 #define RLN_PIPE 9   /* two-stage |> */
 #define RLN_LET 10
@@ -97,6 +100,9 @@ struct rl_node {
  *   tiny marker? redirects need op >/>>: encode as WORD aux=3/4?
  *   Simpler: redirect target STR node aux = 2 (>) or 3 (>>).)
  * CALL: k1 = single argument node (arity checked in semantics).
+ * LEN:  k1 = single argument node, aux = call argc, k2 = none
+ *   (Slice G: callee text is exactly `len`; bare `len` stays a
+ *   variable/command word, never a builtin reference).
  * LET:  e1/e2 = name span; aux = declared type (RLV_*); k1 = init.
  * PIPE: k1/k2 = stages.
  */

@@ -209,6 +209,18 @@ static unsigned long long p_tou64(const char *src, unsigned int off,
     return v;
 }
 
+/* Slice G: exact `len` callee match (call position only). Bare
+ * `len` (variable/command word) never reaches here as a call; the
+ * length check is load-bearing (a prefix-only match would accept
+ * `length(...)` and friends: G-M9 tripwire). */
+static int p_is_len_call(const char *src, unsigned int off,
+                         unsigned int len)
+{
+    if (len != 3u) return 0;
+    return src[off] == 'l' && src[off + 1u] == 'e' &&
+        src[off + 2u] == 'n';
+}
+
 /* Flat atom: literals and bare words only (no parens, calls, or
  * operators: the shunting-yard driver owns all nesting, so C-stack
  * use stays O(1) regardless of expression depth). */
@@ -536,12 +548,30 @@ static unsigned short p_expr_yd(struct rlp *p, const char *src)
                         arg1 = vals[vused - argc];
                     vused -= argc;
                     callee = vals[--vused];
-                    id = p_mknode(p, RLN_CALL);
-                    if (p->err) return RLN_NONE;
-                    p->pool->nodes[id].k1 = arg1;
-                    p->pool->nodes[id].k2 = callee;
-                    p->pool->nodes[id].aux = (unsigned char)
-                        (argc > 255u ? 255u : argc);
+                    if (callee != RLN_NONE && callee < p->pool->cap &&
+                        p->pool->nodes[callee].kind == RLN_VAR &&
+                        p_is_len_call(src,
+                                      p->pool->nodes[callee].e1,
+                                      p->pool->nodes[callee].e2)) {
+                        /* Slice G len(...) builtin: same call shape,
+                         * depth charge, and argc capture as CALL; the
+                         * callee word stays an ordinary node (never
+                         * walked: k2 is none). Bare `len` and longer
+                         * words (`length`) keep their frozen meanings. */
+                        id = p_mknode(p, RLN_LEN);
+                        if (p->err) return RLN_NONE;
+                        p->pool->nodes[id].k1 = arg1;
+                        p->pool->nodes[id].k2 = RLN_NONE;
+                        p->pool->nodes[id].aux = (unsigned char)
+                            (argc > 255u ? 255u : argc);
+                    } else {
+                        id = p_mknode(p, RLN_CALL);
+                        if (p->err) return RLN_NONE;
+                        p->pool->nodes[id].k1 = arg1;
+                        p->pool->nodes[id].k2 = callee;
+                        p->pool->nodes[id].aux = (unsigned char)
+                            (argc > 255u ? 255u : argc);
+                    }
                     if (vused >= vcap) {
                         p->err = RLP_NOMEM;
                         return RLN_NONE;

@@ -228,6 +228,7 @@ REQUIRED_FILES = (
     "tests/repository/test_shell_abi.py",
     "tests/integration/test_cplshell.py",
     "tests/integration/test_rleval.py",
+    "tests/integration/test_rlen.py",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.
