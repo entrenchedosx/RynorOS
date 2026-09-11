@@ -518,7 +518,10 @@ class RirVerifierTests(unittest.TestCase):
     def test_47_reserved_rejected(self):
         module = self._valid()
         block = module["funcs"][0]["blocks"][0]
-        block["instrs"] = [{"op": "make_list", "dst": "%0", "type": "int"}]
+        # Stage 19a activated the collection words (make_list et al.); a
+        # still-reserved opcode proves the gate (set_field stays reserved
+        # under functional-update semantics).
+        block["instrs"] = [{"op": "set_field", "dst": "%0", "type": "int"}]
         block["term"] = {"op": "ret", "v": "%0"}
         self.assertTrue(any("reserved opcode" in e for e in rir.verify_module(module)))
         module = self._valid()

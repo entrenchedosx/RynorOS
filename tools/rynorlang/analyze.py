@@ -432,7 +432,7 @@ class Analyzer:
             self._error(C_TYPE_MISMATCH, "map keys must be int, bool, or str", tnode.span,
                         expected="int, bool, or str key", context="type")
         elif err == "nested-status":
-            self._error(C_TYPE_MISMATCH, "status cannot nest inside collections", tnode.span,
+            self._error(C_TYPE_MISMATCH, "status cannot nest inside other types", tnode.span,
                         expected="non-status payload", context="type")
         elif err == "too-deep":
             self._error(C_LIMIT_EXCEEDED, "type nesting exceeds 8", tnode.span,
@@ -474,6 +474,10 @@ class Analyzer:
             resolved = []
             for fname, ftnode, fspan in info["fields_raw"]:
                 canon = self._resolve_type(ftnode, check_size=False)
+                shape = _agtypes.parse_type(canon)
+                if shape is not None and shape[0] == "generic" and shape[1] == "status":
+                    self._error(C_TYPE_MISMATCH, f"record field '{fname}' cannot be a status value", fspan,
+                                expected="non-status field", got=canon, name=fname, context="record field")
                 resolved.append((fname, canon, fspan))
             info["fields"] = resolved
         busy: set[str] = set()
@@ -794,7 +798,6 @@ class Analyzer:
                 self._error(C_TYPE_MISMATCH, f"map keys must be int, bool, or str got {key_t}", kids[0].children[0].span,
                             expected="int, bool, or str key", got=key_t, context="map key")
             _vfirst, val_t = yield self._lower_expr(kids[0].children[1], scope_stack, False)
-            self._check_storable(val_t, kids[0].children[1].span, "map value")
             entries = [{"key": kfirst, "value": _vfirst}]
             for kid in kids[1:]:
                 kstable, ktype = yield self._lower_expr(kid.children[0], scope_stack, False)
@@ -811,12 +814,6 @@ class Analyzer:
             return ({"kind": "MapLit", "span": self._node_span(node), "entries": entries, "type": computed}, computed)
         finally:
             self._leave()
-
-    def _check_storable(self, typ: str, span: Span, context: str) -> None:
-        node = _agtypes.parse_type(typ)
-        if node is not None and node[0] == "generic" and node[1] == "status":
-            self._error(C_TYPE_MISMATCH, f"{context} cannot be a status value", span,
-                        expected="non-status value", got=typ, context=context)
 
     def _lower_index(self, node: ParseNode, scope_stack: list):
         obj_node, idx_node = node.children[0], node.children[1]

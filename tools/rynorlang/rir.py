@@ -651,16 +651,25 @@ def _lower_function(fn: dict, sigs: dict, strtab: list, str_ids: dict,
             _fail(COMP_BAD_AST, f"param '{pname}' shadows an existing binding")
         if pregs[index] != f"%{index}":
             _fail(COMP_BAD_AST, "internal error: param vreg numbering drifted")
-        vreg = low.new_vreg(ptype)
-        low.symbols[psym] = vreg
+        if ptype in VALUE_TYPES:
+            vreg = low.new_vreg(ptype)
+            low.symbols[psym] = vreg
+        else:
+            # Stage 19a: aggregate params alias their incoming vreg (no
+            # copy). Unobservable without mutation (the language has no
+            # assignment): same value, half the frame. Scalars keep the
+            # frozen copy shape so v1 RIR goldens stay byte-identical.
+            vreg = pregs[index]
+            low.symbols[psym] = vreg
         low.names[pname] = psym
         base_scope.append((psym, pname))
         rir_params.append({"name": pname, "symbol": psym, "type": ptype})
     low.scopes.append(base_scope)
     entry = low.new_block()
     for index, param in enumerate(params):
-        low.emit(entry, {"op": "copy", "dst": low.symbols[param["symbol"]],
-                         "type": param["type"], "src": f"%{index}"})
+        if param.get("type") in VALUE_TYPES:
+            low.emit(entry, {"op": "copy", "dst": low.symbols[param["symbol"]],
+                             "type": param["type"], "src": f"%{index}"})
     _lower_block_contents(low, body.get("stmts"), entry, name, ret)
     # Function epilogue: an open trailing block ends by rule -- bare `ret`
     # for unit functions, `unreachable` (fall-off trap) otherwise.

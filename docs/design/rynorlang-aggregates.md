@@ -93,9 +93,12 @@ keytype    ::= "int" | "bool" | "str"
 - Records are nominal (name matters). Fields: any storable type.
   Recursive records (direct or mutual) are `SEM_TYPE_MISMATCH`.
   Record/fn top-level names share one namespace (`SEM_DUPLICATE`).
-- Storable types (list elements, map values, record fields, status
-  payloads): any value type except `status` (single-level tags only;
-  19b may revisit). Map keys: exactly `int|bool|str`.
+- Storable types (list elements, map values, record fields): any value
+  type except `status` (single-level tags everywhere: indexing a list
+  yields `status<T>` directly, so `T` itself is never a status, and no
+  exception complicates lowering; 19b may revisit alongside `Result`).
+  A `status` payload is likewise never another `status`. Map keys:
+  exactly `int|bool|str`.
 - `N` (capacity): integer literal, `N ≥ 1` (`SEM_LIMIT_EXCEEDED`
   for 0). No other `N` bound is needed: the size cap subsumes it.
 - Static size: int/bool 8, str 16, record Σ fields, list 8+N·size(T),
@@ -134,11 +137,14 @@ keytype    ::= "int" | "bool" | "str"
   tag+code+payload.
 - `print(x)` accepts every value type; aggregates render in the frozen
   canonical format: records `{x: 1, y: 2}` (declaration order),
-  lists `[1, 2]`, maps `{"a": 1}` (entries sorted by key: ints
-  numeric, bools false<true, strs lexicographic), status `ok(...)` /
-  `err(1)`. The RIR builder desugars aggregate prints into `rt_print_*`
-  scalar calls + punctuation (no runtime-asm change); the oracle
-  renders the same format directly.
+  lists `[1, 2]`, maps `{"a": 1}` (SLOT order — the pure function of
+  the insert sequence under the frozen hash+probe rule; fixtures pin
+  insert sequences, so output stays deterministic with no O(N^2) sort
+  in emitted code), status `ok(...)` / `err(code)`. Prints lower to one
+  `print_agg` op per site; the emitter expands the format with shared
+  punctuation rodata and the oracle renders it directly. `err`
+  payloads are always zeroed at construction, so status equality stays
+  deterministic.
 - Bitops on `int`: `& | ^ ~` two's-complement wrap; `<<` wraps (low 64
   bits kept); `>>` arithmetic (sign-extending); dynamic shift amounts
   masked `& 63` (x86 rule, no trap); static amounts are always legal
@@ -160,15 +166,17 @@ keytype    ::= "int" | "bool" | "str"
 - Function ABI: aggregates pass by value in SysV slots (width =
   ceil(size/8); a value that does not fit the remaining registers
   moves wholly to the stack — never split, `str` precedent);
-  aggregate returns use a caller-provided hidden slot passed as the
-  first SysV slot (sret), shifting declared params right; scalar
-  returns unchanged (`rax`, `rax+rdx` for str).
+  aggregate returns use a caller-provided hidden slot passed as stack
+  slot 0 (sret) with user params shifted right by one stack slot and
+  registers undisturbed; scalar returns unchanged (`rax`, `rax+rdx`
+  for str). The shared module is `agtypes.py` (renamed from the draft
+  `types.py`, which shadowed the standard library).
 
 ## 7. Engines (all five host engines carry aggregates)
 
 - lex/parse: §2–§3. Depth parity: one charge per literal element-group
   (mirroring call arg-groups); none for field/index postfix.
-- analyze: canonicalize + validate + size (shared `types.py`);
+- analyze: canonicalize + validate + size (shared `agtypes.py`);
   `status`-typed flows; builtin signatures; print widening.
 - RIR: `rectypes` envelope table (validated; dumps extended);
   activate reserved `make_record/get_field/make_list/list_idx/
@@ -179,8 +187,9 @@ keytype    ::= "int" | "bool" | "str"
   builder re-checks every rule independently (never trusts type strings).
 - compile: multi-slot homes, bounded copy/zero loops (caller-saved
   regs only; string-ops stay forbidden), static-offset field/element
-  access, sret, per-kind `==`, print desugar needs no new helpers.
-  `check_asm` unchanged.
+  access, stack-slot-0 sret, per-kind `==`, one `print_agg` op per
+  print site expanded with shared punctuation (no new runtime
+  helpers). `check_asm` unchanged.
 - interp (oracle): Python structural values, same first-error order,
   same traps (div0/falloff only — aggregate ops never trap),
   per-op step cost 1, print renders §5 formats directly.

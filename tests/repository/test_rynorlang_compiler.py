@@ -580,8 +580,8 @@ class CompilerMutationTests(unittest.TestCase):
         # a backend that loads any other register visibly diverges.
         # Without native capability, prove structurally that the mutation
         # took effect (and any native run would diverge).
-        mutant = self._mutant('            self.load_reg("rax", value)',
-                              '            self.load_reg("rbx", value)')
+        mutant = self._mutant('                elif vtype in ("int", "bool"):\n                    self.load_reg("rax", value)',
+                              '                elif vtype in ("int", "bool"):\n                    self.load_reg("rbx", value)')
         probe = "fn main(): int { let good: int = 42; let junk: int = 7; return good; }"
         oracle, asm = self._differential(mutant, probe)
         self.assertEqual(oracle["exit"], 42)
@@ -622,8 +622,8 @@ class CompilerMutationTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         target = Path(directory.name) / COMPILE_PATH.name
         target.write_text(text.replace(
-            '            if value is not None:\n                self.load_reg("rax", value)',
-            '            if value is not None:\n                self.out("    mov rax, 42")',
+            '                elif vtype in ("int", "bool"):\n                    self.load_reg("rax", value)',
+            '                elif vtype in ("int", "bool"):\n                    self.out("    mov rax, 42")',
             1), encoding="utf-8")
         mutant = _load(f"compiler_mutant_{len(sys.modules)}", target)
         oracle, asm = self._differential(
@@ -725,13 +725,17 @@ class CompilerMutationTests(unittest.TestCase):
         self.assertEqual((kind, code), ("exit", 1))
 
     def test_60_atomic_string_stack_offset_mutation_detected(self):
+        # Stack-arg slots are load-bearing: shifting every stack argument
+        # by one slot must change the emitted code and diverge natively.
         mutant = self._mutant(
-            "            k = stack_index * 8",
-            "            k = (stack_index - len(_ARG_REGS)) * 8")
+            "        for arg, stack_index in stack:\n            self._emit_arg_to_stack(arg, stack_index)",
+            "        for arg, stack_index in stack:\n            self._emit_arg_to_stack(arg, stack_index + 1)")
         src = (GOOD / "strboundary.rl").read_text(encoding="utf-8")
         oracle, asm = self._differential(mutant, src, "strboundary-mut.rl")
         self.assertEqual(oracle["exit"], 42)
-        self.assertIn("mov [rsp + -48], rax", asm)
+        real_asm, error = compiler.compile_source(src, "strboundary.rl")
+        self.assertIsNone(error, error)
+        self.assertNotEqual(asm, real_asm)
         tools, _ = _native_capability()
         if tools is None:
             self.skipTest("native execution unavailable; structural evidence only")
