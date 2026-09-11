@@ -51,10 +51,12 @@ AGG_BUILTINS = _agtypes.AGG_BUILTINS
 # a record named `match` would be indistinguishable from a match
 # statement at statement position).
 RESERVED_TYPE_NAMES = ("list", "map", "status", "result", "print",
-                       "match", "break", "continue") + AGG_BUILTINS
+                       "match", "break", "continue", "use") + AGG_BUILTINS
 # Words no function may claim (reserved builtins plus control words;
 # `match` keeps working as a variable via statement backtracking).
-RESERVED_FN_NAMES = ("print", "match", "break", "continue") + AGG_BUILTINS
+# Stage 19c adds `use` (import directive): `fn use` is SEM_DUPLICATE
+# while `let use` keeps working through the same fallback.
+RESERVED_FN_NAMES = ("print", "match", "break", "continue", "use") + AGG_BUILTINS
 
 # Stage 15b shell-edition codes (additive-only; the six SEM_* above are frozen).
 S_UNKNOWN_COMMAND = "SHELL_UNKNOWN_COMMAND"

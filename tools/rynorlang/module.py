@@ -250,6 +250,9 @@ def analyze_entry(entry: str | Path):
     error = _check_pins(files, pins)
     if error is not None:
         return None, error
+    error = _check_mangle_collisions(files)
+    if error is not None:
+        return None, error
     order = sorted(files, key=lambda key: (files[key]["depth"], files[key]["rel"]), reverse=True)
     tables: dict[str, dict] = {}
     for key in order:
@@ -301,14 +304,8 @@ def _imports_for(info: dict) -> dict:
     return {alias: dep_key for alias, dep_key, _path_text in info["deps"]}
 
 
-def _merge_programs(files: dict, tables: dict):
-    """Concat stable ASTs: entry first, then depth-first use order.
-
-    Functions reindex 0..n-1 with Call symbols rewritten through the
-    merged name map; all other symbols remap with running offsets
-    (hygiene: no cross-file aliasing even where engines scope
-    per-function). Deterministic.
-    """
+def _merge_order(files: dict) -> list:
+    """Entry first, then depth-first use order (deterministic)."""
     entry_key = next(k for k, v in files.items() if v["alias"] is None)
     seen: set[str] = set()
     ordered: list[str] = []
@@ -325,6 +322,50 @@ def _merge_programs(files: dict, tables: dict):
     for key in files:
         if key not in seen:
             ordered.append(key)
+    return ordered
+
+
+def _declared_names(root) -> list:
+    """Top-level function/record names in source order."""
+    return [child.text for child in getattr(root, "children", ())
+            if getattr(child, "kind", None) in ("FunctionDef", "RecordDecl")]
+
+
+def _check_mangle_collisions(files: dict):
+    """Reject merged-namespace squats at load (MOD_DUPLICATE).
+
+    Every dep file exports {alias}__{bare} for each top-level name; a
+    user-declared bare name equal to any export (in any file, including
+    the exporter's own) would merge indistinguishably, so it fails
+    here — before analysis, in merge order. Same-file duplicates carry
+    no dunder export and stay the analyzer's SEM_DUPLICATE (v1-identical).
+    """
+    declared: dict[str, str] = {}
+    for key in _merge_order(files):
+        for name in _declared_names(files[key]["root"]):
+            declared.setdefault(name, files[key]["rel"])
+    for key in _merge_order(files):
+        info = files[key]
+        if info["alias"] is None:
+            continue
+        for name in _declared_names(info["root"]):
+            squat = f"{info['alias']}__{name}"
+            if squat in declared:
+                return {"code": MOD_DUPLICATE,
+                        "message": (f"mangled name {squat!r} from {info['rel']!r} "
+                                    f"collides with a declaration in {declared[squat]!r}")}
+    return None
+
+
+def _merge_programs(files: dict, tables: dict):
+    """Concat stable ASTs: entry first, then depth-first use order.
+
+    Functions reindex 0..n-1 with Call symbols rewritten through the
+    merged name map; all other symbols remap with running offsets
+    (hygiene: no cross-file aliasing even where engines scope
+    per-function). Deterministic.
+    """
+    ordered = _merge_order(files)
     merged_funcs: list = []
     merged_records: list = []
     name_to_index: dict[str, int] = {}
