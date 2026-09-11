@@ -184,6 +184,7 @@ REQUIRED_FILES = (
     "docs/design/rynorlang-aggregates.md",
     "docs/design/abi-growth.md",
     "tests/repository/test_rynorlang_aggregates.py",
+    "docs/reports/stage19a.md",
     # Stage 18d Slices A/B: gated input driver, UAPI header, validator,
     # and tests. Later-slice layouts frozen in uapi.h carry no behavior.
     "kernel/include/uapi.h", "kernel/include/readtest.h",
