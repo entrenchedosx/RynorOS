@@ -552,9 +552,9 @@ static cpu_u64 argv_lens_b[UAPI_MAX_ARGC];
 static cpu_u64 argv_ptrs[UAPI_MAX_ARGC];
 static cpu_u64 argv_lens[UAPI_MAX_ARGC];
 /* Image staging uses the kernel heap, not .bss: the largest v2 image
-   (28 + 32768 + 16384 = 49180 bytes) would overflow the linker's bounded
+   (28 + 65536 + 32768 = 98332 bytes) would overflow the linker's bounded
    BSS window. Allocated and freed within one spawn (balanced). */
-#define IMG_STAGE_MAX (28u + 32768u + 16384u)
+#define IMG_STAGE_MAX (28u + 65536u + 32768u)
 
 int sys_spawn(struct user_context *caller, cpu_u64 spec_ptr, cpu_u64 handle_out)
 {

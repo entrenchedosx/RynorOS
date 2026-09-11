@@ -1,23 +1,31 @@
-/* Stage 18d Slice E CPL3 shell (composition layer, no evaluation).
+/* Stage 18d Slice E CPL3 shell + Slice F resident evaluator.
  *
  * Boots from /bin/sh via the kernel shell driver (bootstrap thread,
  * stdin KBD, stdout SERIAL, optional argv[0] script path). Reads raw
  * scan bytes (syscall 3), decodes Set-1 in CPL3 (sh_key.c), edits one
- * bounded line, parses the frozen grammar (sh_parse.c; shared by
- * interactive and script input), and executes via spawn/wait/
+ * bounded line, and executes via spawn/wait/
  * terminate/spawn_pipe/fread only. No kernel policy calls exist.
  *
- * Execution model: one foreground submission at a time. Interactive
- * lines and script buffers feed the same statement pump (parse one
- * ';'/newline-delimited statement, execute, repeat when idle), so
- * parity holds by construction. The event loop always services
- * keyboard (Ctrl-C) and child polls together; idle iterations yield.
+ * Execution model: one foreground submission at a time. Script
+ * buffers feed the frozen Slice E statement pump (parse one
+ * ';'/newline-delimited statement, execute, repeat when idle).
+ * Interactive lines are split on top-level ';' (string-, brace-,
+ * and comment-aware) and each part is classified deterministically:
+ * E-command-shaped parts funnel verbatim into the proven Slice E
+ * machinery (identical rows/statuses by construction); RynorLang
+ * parts evaluate in the resident CPL3 evaluator (rl_*; whole-buffer
+ * re-analysis, transactional commit, dual arenas); fn/if/while/
+ * return/blocks reject loudly as NOTIMPL. The event loop always
+ * services keyboard (Ctrl-C) and child polls together.
  *
  * Status policy (CPL3-only, documented; kernel ABI unchanged):
  *   EXITED(c) -> c & 0xFF | FAULTED -> 129 | ABORTED -> 130
  *   NOTFOUND -> 127 | MALFORMED -> 126 | other spawn errors -> 125
  *   syntax/args/script-local errors -> 2 | initial -> 0
  *   pipelines report the right-hand (consumer) status.
+ * Slice F evaluator mapping (no new codes; rows distinguish):
+ *   language syntax -> 2 | semantic/bounds rejection -> 2
+ *   NOTIMPL -> 2 | evaluation trap (div0) -> 129 | success -> 0.
  * The cache changes only on defined final outcomes, never on RUNNING
  * polls. `status` prints the cache without changing it.
  *
@@ -27,12 +35,17 @@
  *   [SH] overlap 1 | [SH] abort line | [SH] abort child status=N
  *   [SH] abort pipeline status=N | [SH] error <class>
  *   [SH] script PATH | [SH] script done status=N
+ *   [RL] reject <class> | [RL] notimpl <kw> | [RL] trap div0
+ *   [RL] error <class> | [RL] ownership-fail
+ *   [RL] stats sess_live=N sess_high=N sub_live=N sub_high=N
+ *            syms=N src=N   (after evaluator submissions only)
  * Typed input is echoed; child output passes through raw.
  */
 #include "rt.h"
 #include "rt_pipe.h"
 #include "sh_key.h"
 #include "sh_parse.h"
+#include "rl_sem.h"
 
 /* Frozen value mirrors (kernel/include/uapi.h + syscall domain;
    pinned equal by test; user builds never include kernel headers). */
@@ -390,27 +403,11 @@ static void exec_parsed(struct shp_line *parsed)
     exec_pipe(&parsed->cmds[0], &parsed->cmds[1]);
 }
 
-/* Statement pump over the active source (submitted line or script).
- * Parses and starts at most one foreground action per call; empty
- * statements are skipped silently. Syntax errors finalize at once
- * with zero spawns (E-M2). Unsubmitted interactive lines never
- * execute (typing is not submission). */
-static void pump(void)
+/* Frozen Slice E statement step over an explicit span (shared by
+ * file scripts and interactive E-command parts alike). */
+static void pump_e_span(const char *base, unsigned long long len,
+                        unsigned long long *pos)
 {
-    const char *base;
-    unsigned long long len, *pos;
-    if (nfh != 0 || final_kind != 0) return;
-    if (!script_mode) {
-        if (!line_submitted) return;
-        base = line;
-        len = linelen;
-        pos = &line_pos;
-    } else {
-        if (script_aborted) return;
-        base = script;
-        len = script_len;
-        pos = &script_pos;
-    }
     for (;;) {
         struct shp_line parsed;
         unsigned long long used = 0;
@@ -443,6 +440,376 @@ static void pump(void)
             return;
         }
         exec_parsed(&parsed);
+        return;
+    }
+}
+
+/* Split one top-level ';' part (string-, brace-, and comment-aware;
+ * mirrors Slice E statement boundaries for command text). Comment
+ * rule matches shp_parse_stmt: `//` opens a comment where a token
+ * may begin (start/blank/separator); mid-word slashes stay literal
+ * here and Slice E re-parses the part verbatim anyway. Sets
+ * start/slen (trailing blanks trimmed), advances *pos past the part
+ * and one separator. Returns 0 when nothing remains. */
+static int split_part(const char *base, unsigned long long len,
+                      unsigned long long *pos, unsigned long long *start,
+                      unsigned long long *slen)
+{
+    unsigned long long i = *pos, st, depth = 0;
+    int in_str = 0, esc = 0;
+    while (i < len && (base[i] == ' ' || base[i] == '\t' ||
+                       base[i] == '\r' || base[i] == '\n'))
+        ++i;
+    if (i >= len) {
+        *pos = len;
+        return 0;
+    }
+    st = i;
+    while (i < len) {
+        char c = base[i];
+        if (in_str) {
+            if (esc) esc = 0;
+            else if (c == '\\') esc = 1;
+            else if (c == '"') in_str = 0;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = 1;
+            ++i;
+            continue;
+        }
+        if (c == '/' && i + 1 < len && base[i + 1] == '/') {
+            char p = (i == st) ? ' ' : base[i - 1];
+            if (p == ' ' || p == '\t' || p == '\r' || p == '\n' ||
+                p == ';') {
+                while (i < len && base[i] != '\n') ++i;
+                continue;
+            }
+            ++i;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+            ++i;
+            continue;
+        }
+        if (c == '}') {
+            if (depth) --depth;
+            ++i;
+            continue;
+        }
+        if (c == ';' && depth == 0) break;
+        ++i;
+    }
+    *start = st;
+    *slen = i > st ? i - st : 0;
+    while (*slen > 0) {
+        char t = base[st + *slen - 1];
+        if (t != ' ' && t != '\t' && t != '\r' && t != '\n') break;
+        (*slen)--;
+    }
+    *pos = (i < len && base[i] == ';') ? i + 1 : i;
+    return 1;
+}
+
+/* Part classification (interactive lines only; scripts stay Slice E).
+ * RLF_E funnels verbatim into the proven executor (identical
+ * rows/statuses by construction, never reinterpreted); RLF_LANG
+ * evaluates in the resident evaluator; RLF_NOTIMPL rejects blocked
+ * constructs loudly. Anything the language parser refuses falls
+ * back to RLF_E, so non-language text behaves exactly like Slice E.
+ */
+#define RLF_E 0
+#define RLF_LANG 1
+#define RLF_NOTIMPL 2
+#define RLF_EMPTY 3
+
+static int rl_classify(const char *pt, unsigned long long pn,
+                       unsigned int *kw)
+{
+    /* Classify via the language lexer/parser on submission scratch
+     * (reset before return on every path). */
+    struct rl_lex lx;
+    struct rl_strscratch ss;
+    struct rl_tok t0;
+    int lrc;
+    char sscratch[8];
+    struct rl_ppool pp;
+    struct rl_proot proot;
+    struct rl_node *pool;
+    char *strb;
+    unsigned short *args;
+    unsigned int *ops;
+    unsigned short *vals;
+    unsigned int argused = 0;
+    struct rl_node *root;
+    unsigned int haves;
+    *kw = 4;
+    if (!pt || pn == 0u || pn > 512u) return RLF_EMPTY;
+    /* Head-keyword scan (one token, kinds only). */
+    rl_lex_init(&lx, pt, (unsigned int)pn);
+    ss.base = sscratch;
+    ss.cap = sizeof(sscratch);
+    ss.used = 0;
+    rl_lex_next(&lx, &ss, &t0, &lrc);
+    if (lrc != RLL_OK) return RLF_E;
+    if (t0.kind == RLT_LET) return RLF_LANG;
+    if (t0.kind == RLT_FN || t0.kind == RLT_IF ||
+        t0.kind == RLT_WHILE || t0.kind == RLT_RETURN) {
+        *kw = (t0.kind == RLT_FN)       ? 0
+              : (t0.kind == RLT_IF)     ? 1
+              : (t0.kind == RLT_WHILE)  ? 2
+                                        : 3;
+        return RLF_NOTIMPL;
+    }
+    if (t0.kind == RLT_LBRACE) {
+        *kw = 4;
+        return RLF_NOTIMPL;
+    }
+    /* Full language parse on submission scratch. */
+    {
+        struct rl_carve cv;
+        if (!rl_carve(&cv)) {
+            rl_sub_reset();
+            return RLF_E;
+        }
+        pool = cv.pool;
+        strb = cv.strb;
+        args = cv.args;
+        ops = cv.ops;
+        vals = cv.vals;
+    }
+    pp.nodes = pool;
+    pp.cap = RL_SUB_POOL_NODES;
+    pp.used = 0;
+    {
+        struct rl_strscratch pss;
+        pss.base = strb;
+        pss.cap = RL_SUB_STRB;
+        pss.used = 0;
+        rl_parse_part(pt, (unsigned int)pn, &pp, &pss, args,
+                      RL_SUB_ARGS, &argused, ops, RL_SUB_OPS, vals,
+                      RL_SUB_PVALS, &proot);
+    }
+    haves = (proot.rc == RLP_OK && proot.root < RL_POOL_MAX);
+    if (haves) {
+        unsigned char k;
+        root = &pool[proot.root];
+        k = root->kind;
+        if (k == RLN_CMD) {
+            /* Lone declared word evaluates as a variable (rule a:
+             * lexical meaning first); every other command shape
+             * funnels verbatim into Slice E. */
+            int declared = 0;
+            if (root->aux == 0u) {
+                unsigned int off = root->e1 & 0xFFFFu;
+                unsigned int len = (root->e1 >> 16) & 0xFFFFu;
+                if (off < pn && len <= pn - off)
+                    declared = rl_declared(pt + off, len);
+            }
+            rl_sub_reset();
+            return declared ? RLF_LANG : RLF_E;
+        }
+        if (k == RLN_PIPE) {
+            struct rl_node *a = &pool[root->k1];
+            struct rl_node *b = &pool[root->k2];
+            int allcmd = 0, i;
+            /* All-command pipelines funnel to Slice E, unless a
+             * stage is a lone declared word (language meaning
+             * first, uniformly with the singleton rule). */
+            if (root->k1 < RL_POOL_MAX && root->k2 < RL_POOL_MAX &&
+                a->kind == RLN_CMD && b->kind == RLN_CMD) {
+                unsigned short stages[2];
+                allcmd = 1;
+                stages[0] = root->k1;
+                stages[1] = root->k2;
+                for (i = 0; i < 2; ++i) {
+                    struct rl_node *st = &pool[stages[i]];
+                    if (st->aux == 0u) {
+                        unsigned int off = st->e1 & 0xFFFFu;
+                        unsigned int len =
+                            (st->e1 >> 16) & 0xFFFFu;
+                        if (off < pn && len <= pn - off &&
+                            rl_declared(pt + off, len)) {
+                            allcmd = 0;
+                            break;
+                        }
+                    }
+                }
+            }
+            rl_sub_reset();
+            if (allcmd) return RLF_E;
+            return RLF_LANG;
+        }
+        if (k == RLN_LET) {
+            rl_sub_reset();
+            return RLF_LANG;
+        }
+        if (k == RLN_VAR) {
+            const char *nm;
+            int declared;
+            if (root->e1 >= pn || root->e2 > pn - root->e1) {
+                rl_sub_reset();
+                return RLF_E;
+            }
+            nm = pt + root->e1;
+            declared = rl_declared(nm, root->e2);
+            rl_sub_reset();
+            return declared ? RLF_LANG : RLF_E;
+        }
+        rl_sub_reset();
+        return RLF_LANG;
+    }
+    rl_sub_reset();
+    return RLF_E;
+}
+
+static void emit_rl_stats(void);
+
+/* Execute one language part (transactional submit + rows). */
+static void pump_lang(const char *pt, unsigned long long pn)
+{
+    struct rl_outcome o = rl_submit(pt, (unsigned int)pn);
+    switch (o.kind) {
+    case RL_SUB_OK:
+        last_status = 0;
+        final_status = 0;
+        final_kind = 1;
+        break;
+    case RL_SUB_SYNTAX:
+        sh_print("[SH] error syntax\r\n");
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        break;
+    case RL_SUB_REJECT:
+        row_begin();
+        row_str("[RL] reject ");
+        row_str(o.diag ? o.diag : RL_D_INTERNAL);
+        row_str("\r\n");
+        row_flush();
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        break;
+    case RL_SUB_NOTIMPL:
+        row_begin();
+        row_str("[RL] notimpl ");
+        row_str(o.diag ? o.diag : "block");
+        row_str("\r\n");
+        row_flush();
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        break;
+    case RL_SUB_TRAP:
+        row_simple("[RL] trap div0\r\n");
+        last_status = SH_ST_FAULT;
+        final_status = last_status;
+        final_kind = 1;
+        break;
+    case RL_SUB_ARENAFULL:
+        row_begin();
+        row_str("[RL] error ");
+        row_str(RL_D_ARENA_FULL);
+        row_str("\r\n");
+        row_flush();
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        break;
+    case RL_SUB_OWNFAIL:
+        row_simple("[RL] ownership-fail\r\n");
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        break;
+    default:
+        row_begin();
+        row_str("[RL] error ");
+        row_str(RL_D_INTERNAL);
+        row_str("\r\n");
+        row_flush();
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        break;
+    }
+    emit_rl_stats();
+}
+
+static void emit_rl_stats(void)
+{
+    struct rl_stats st;
+    rl_stats(&st);
+    row_begin();
+    row_str("[RL] stats sess_live=");
+    row_num(st.sess_live);
+    row_str(" sess_high=");
+    row_num(st.sess_high);
+    row_str(" sub_live=");
+    row_num(st.sub_live);
+    row_str(" sub_high=");
+    row_num(st.sub_high);
+    row_str(" syms=");
+    row_num(st.nsyms);
+    row_str(" src=");
+    row_num(st.srclen);
+    row_str("\r\n");
+    row_flush();
+}
+
+static void pump_notimpl(unsigned int kw)
+{
+    static const char *names[5] = {"fn", "if", "while", "return",
+                                   "block"};
+    row_begin();
+    row_str("[RL] notimpl ");
+    row_str(names[kw < 5u ? kw : 4u]);
+    row_str("\r\n");
+    row_flush();
+    last_status = SH_ST_SYNTAX;
+    final_status = last_status;
+    final_kind = 1;
+    /* Leak-walk observability for rejected submissions (E paths
+     * print no new rows, so Slice E transcripts stay identical). */
+    emit_rl_stats();
+}
+
+/* Statement pump: scripts feed the frozen Slice E span pump;
+ * interactive lines split into classified parts. Parses and starts
+ * at most one foreground action per call; empty statements are
+ * skipped silently. Unsubmitted interactive lines never execute. */
+static void pump(void)
+{
+    if (nfh != 0 || final_kind != 0) return;
+    if (script_mode) {
+        if (script_aborted) return;
+        pump_e_span(script, script_len, &script_pos);
+        return;
+    }
+    if (!line_submitted) return;
+    for (;;) {
+        unsigned long long start, slen;
+        int kind;
+        unsigned int kw = 4;
+        if (line_pos >= linelen) return;
+        if (!split_part(line, linelen, &line_pos, &start, &slen))
+            return;
+        if (slen == 0u) continue;
+        kind = rl_classify(line + start, slen, &kw);
+        if (kind == RLF_E) {
+            unsigned long long ppos = 0;
+            pump_e_span(line + start, slen, &ppos);
+            return;
+        }
+        if (kind == RLF_LANG) {
+            pump_lang(line + start, slen);
+            return;
+        }
+        if (kind == RLF_EMPTY) continue;
+        pump_notimpl(kw);
         return;
     }
 }
@@ -537,10 +904,19 @@ static void reap_children(void)
  * abort outcome only if some terminate actually killed (else the
  * natural result stands — the E-C4 race rule); the remainder of the
  * submitted line is always discarded. */
+static void rl_emit_wrap(const char *s, unsigned int n)
+{
+    sh_write(s, n);
+}
+
 static void ctrl_c(void)
 {
     unsigned int i, killed = 0;
     sh_print("^C\r\n");
+    /* Slice F: no candidate can be live here (language evaluation
+     * is synchronous, commands stage nothing), but every abort path
+     * resets submission scratch unconditionally. */
+    rl_sub_reset();
     if (nfh == 0) {
         clear_line();
         sh_print("[SH] abort line\r\n");
@@ -696,6 +1072,7 @@ int rt_main(int argc, char **argv)
     script_len = 0;
     script_pos = 0;
     clear_line();
+    rl_sess_init(rl_emit_wrap);
     if (argc == 1) {
         unsigned long long L = 0;
         script_mode = 1;

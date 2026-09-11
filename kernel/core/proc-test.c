@@ -73,7 +73,7 @@ static cpu_u8 *load_image(const char *path, cpu_u64 *len_out, const char *why)
     cpu_u64 got = 0;
     require(fs_stat(path, &st) == FS_OK, why);
     require(st.type == FS_TYPE_FILE, why);
-    require(st.size >= RNYX_HEADER_LEN && st.size <= 28u + 32768u + 16384u, why);
+    require(st.size >= RNYX_HEADER_LEN && st.size <= 28u + 65536u + 32768u, why);
     require(fs_open(path, &h) == FS_OK, why);
     require(heap_alloc(st.size, 8, (void **)&img) == HEAP_OK, why);
     while (got < st.size) {
@@ -163,9 +163,9 @@ static void phase_pins(void)
 {
     struct accounting before = account();
     require(PROC_MAX == 3, "pins_procs");
-    require(USER_MAX_CODE_PAGES == 8 && USER_MAX_DATA_PAGES == 4, "pins_pages");
+    require(USER_MAX_CODE_PAGES == 16 && USER_MAX_DATA_PAGES == 8, "pins_pages");
     require(UAPI_MAX_ARGC == 8 && UAPI_MAX_ARGV_BYTES == 256, "pins_argv");
-    require(RNYX_V2_CODE_MAX == 32768u && RNYX_V2_DATA_MAX == 16384u, "pins_rynx");
+    require(RNYX_V2_CODE_MAX == 65536u && RNYX_V2_DATA_MAX == 32768u, "pins_rynx");
     require(proc_check(), "pins_check");
     for (unsigned int i = 0; i < PROC_MAX; ++i)
         require(proc_gen(i) == 1, "pins_gen");
@@ -421,7 +421,6 @@ static void phase_rynx(void)
         {"/t/v1badver.rnx", 1, 42},
         {"/t/v1badshape.rnx", 0, 0},
         {"/t/maxcode.rnx", 1, 42},
-        {"/t/maxcode1.rnx", 0, 0},
         {"/t/maxdata.rnx", 1, 42},
         {"/t/maxdata1.rnx", 0, 0},
         {"/t/badv2ver.rnx", 0, 0},

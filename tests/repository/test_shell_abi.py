@@ -52,6 +52,13 @@ class ShellAbiTests(unittest.TestCase):
         self.assertIn("#define SHP_MAX_ARGBYTES 256", SH_PARSE_H)
         self.assertIn("#define SHP_MAX_WORD 64", SH_PARSE_H)
         self.assertIn("#define SHP_MAX_LINE 256", SH_PARSE_H)
+        # Slice F frozen evaluator bounds (session/symbols/depth).
+        rl_sem = (ROOT / "user/shell/rl_sem.h").read_text(encoding="utf-8")
+        self.assertIn("#define RL_SESS_MAX 8192u", rl_sem)
+        self.assertIn("#define RL_SYM_MAX 128u", rl_sem)
+        self.assertIn("#define RL_DEPTH_MAX 64u",
+                      (ROOT / "user/shell/rl_parse.h").read_text(
+                          encoding="utf-8"))
 
     def test_parser_limits_match_uapi(self):
         self.assertEqual(number(SH_PARSE_H, "SHP_MAX_ARGS"),
@@ -81,17 +88,39 @@ class ShellAbiTests(unittest.TestCase):
         self.assertNotIn("ascii", kbd)
         load = (ROOT / "kernel/core/load.c").read_text(encoding="utf-8")
         self.assertNotIn("ascii", load)
+        # Slice F: no evaluator placement in ring 0 either (structural
+        # rule over files and symbols, not exact filenames; `repl`
+        # matches whole words only so ordinary words like the
+        # pre-existing "replica" do not trip it).
+        for path in list((ROOT / "kernel").rglob("*.c")) + \
+                list((ROOT / "kernel").rglob("*.h")):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            self.assertNotIn("[RL] ", text, str(path))
+            for token in ("rl_lex", "rl_parse", "rl_sem", "rl_eval",
+                          "rl_submit", "lang_parse", "lang_check",
+                          "lang_value"):
+                self.assertNotIn(token, text, str(path))
+            self.assertIsNone(
+                re.search(r"(?<![A-Za-z0-9_])repl(?![A-Za-z0-9_])",
+                          text),
+                str(path))
 
     def test_shell_sources_present_and_evaluator_free(self):
         names = sorted(p.name for p in (ROOT / "user/shell").iterdir()
                        if p.name != ".gitkeep")
-        self.assertEqual(names, ["sh.c", "sh_key.c", "sh_key.h",
+        # Slice F evaluator lives here (CPL3 only, see placement test).
+        self.assertEqual(names, ["rl_eval.c", "rl_eval.h", "rl_lex.c",
+                                 "rl_lex.h", "rl_mem.h", "rl_parse.c",
+                                 "rl_parse.h", "rl_sem.c", "rl_sem.h",
+                                 "sh.c", "sh_key.c", "sh_key.h",
                                  "sh_parse.c", "sh_parse.h"])
         blob = "\n".join((ROOT / "user/shell" / n).read_text(encoding="utf-8")
                          for n in names)
         self.assertIn("CPL3", blob)
-        for token in ("session arena", "submission arena", "symbol table",
-                      "RIR", "analyze(", "compile.py", "eval("):
+        # Host compiler/analyzer must never leak into the guest image
+        # (parity by independent implementation, never code sharing).
+        for token in ("RIR", "analyze(", "compile.py",
+                      "tools/rynorlang"):
             self.assertNotIn(token, blob, token)
 
     def test_boot_markers_defined(self):

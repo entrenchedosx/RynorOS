@@ -43,12 +43,18 @@ class ProcAbiTests(unittest.TestCase):
             self.assertIn(fn, PROC_H)
 
     def test_rynx_v2_bounds_frozen(self):
+        # Slice F amendment: v2 tiles the reserved 64K code / 32K
+        # data windows (v1 byte-identical, all other bounds frozen).
         self.assertIn("#define RNYX_VERSION2 2u", LOAD_H)
-        self.assertIn("RNYX_V2_CODE_MAX (8u * 4096u)", LOAD_H)
-        self.assertIn("RNYX_V2_DATA_MAX (4u * 4096u)", LOAD_H)
-        self.assertIn("#define USER_MAX_CODE_PAGES 8u",
+        self.assertIn("RNYX_V2_CODE_MAX (16u * 4096u)", LOAD_H)
+        self.assertIn("RNYX_V2_DATA_MAX (8u * 4096u)", LOAD_H)
+        self.assertIn("#define USER_MAX_CODE_PAGES 16u",
                       (ROOT / "kernel/include/user.h").read_text())
-        self.assertIn("#define USER_MAX_DATA_PAGES 4u",
+        self.assertIn("#define USER_MAX_DATA_PAGES 8u",
+                      (ROOT / "kernel/include/user.h").read_text())
+        self.assertIn("#define USER_V2_CODE_MAX (16u * 4096u)",
+                      (ROOT / "kernel/include/user.h").read_text())
+        self.assertIn("#define USER_V2_DATA_MAX (8u * 4096u)",
                       (ROOT / "kernel/include/user.h").read_text())
 
     def test_argv_caps_frozen(self):
@@ -67,13 +73,13 @@ class ProcAbiTests(unittest.TestCase):
         code = bytes(100)
         v2 = rnyx.build_envelope(code, 0, 0, b"", version=2)
         self.assertEqual(v2[4:6], struct.pack("<H", 2))
-        big = bytes(32768)
+        big = bytes(65536)
         env = rnyx.build_envelope(big, 0, 0, b"", version=2)
-        self.assertEqual(len(env), 28 + 32768)
+        self.assertEqual(len(env), 28 + 65536)
         with self.assertRaises(ValueError):
-            rnyx.build_envelope(bytes(32769), 0, 0, b"", version=2)
+            rnyx.build_envelope(bytes(65537), 0, 0, b"", version=2)
         with self.assertRaises(ValueError):
-            rnyx.build_envelope(code, 0, 16385, b"", version=2)
+            rnyx.build_envelope(code, 0, 32769, b"", version=2)
         with self.assertRaises(ValueError):
             rnyx.build_envelope(code, 0, 0, b"", version=3)
         # v1 rejects v2 sizes.
@@ -81,8 +87,8 @@ class ProcAbiTests(unittest.TestCase):
             rnyx.build_envelope(bytes(4097), 0, 0, b"", version=1)
 
     def test_rnyx_converter_version_gate(self):
-        self.assertEqual(rnyx.CODE_MAX2, 32768)
-        self.assertEqual(rnyx.DATA_MAX2, 16384)
+        self.assertEqual(rnyx.CODE_MAX2, 65536)
+        self.assertEqual(rnyx.DATA_MAX2, 32768)
         with self.assertRaises(ValueError):
             rnyx.elf_to_rnyx(b"not an elf", version=2)
         with self.assertRaises(ValueError):

@@ -16,7 +16,7 @@
  *   u16 header_len (28), u16 reserved (0), u32 entry_off (0: entry is
  *   defined as USER_CODE_BASE; a variable entry needs an audited
  *   enter-at-offset path first), u32 code_size (v1: 1..4096;
- *   v2: 1..32768), u32 data_filesz (v1: 0..4096; v2: 0..16384),
+ *   v2: 1..65536), u32 data_filesz (v1: 0..4096; v2: 0..32768),
  *   u32 data_memsz (filesz..same class max),
  * then code_size code bytes, then data_filesz data bytes.
  */
@@ -25,8 +25,8 @@
 /* Stage 18d Slice C: bounded multi-page envelopes (same 28-byte layout,
  * version-gated size classes; v1 caps byte-identical). */
 #define RNYX_VERSION2 2u
-#define RNYX_V2_CODE_MAX (8u * 4096u)
-#define RNYX_V2_DATA_MAX (4u * 4096u)
+#define RNYX_V2_CODE_MAX (16u * 4096u)
+#define RNYX_V2_DATA_MAX (8u * 4096u)
 #define RNYX_ARCH_X86_64 1u
 #define RNYX_HEADER_LEN 28u
 

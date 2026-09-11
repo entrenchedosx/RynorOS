@@ -21,8 +21,10 @@ from sh_output import (validate_sh_section, collect_sh_rows,
                        collect_load_writes, collect_done_statuses)
 
 # Shell sources (one image) and helper programs.
-SHELL_SOURCES = ("sh.c", "sh_key.c", "sh_parse.c")
-SHELL_HEADERS = ("sh_key.h", "sh_parse.h")
+SHELL_SOURCES = ("sh.c", "sh_key.c", "sh_parse.c", "rl_lex.c",
+                 "rl_parse.c", "rl_sem.c", "rl_eval.c")
+SHELL_HEADERS = ("sh_key.h", "sh_parse.h", "rl_lex.h", "rl_parse.h",
+                 "rl_sem.h", "rl_eval.h", "rl_mem.h")
 HELPERS = ("sh_echo", "sh_cat", "sh_upper", "sh_exit", "sh_dcode",
            "sh_prod")
 # Reused proven programs (own sources, shell names; no-arg only —
@@ -310,8 +312,8 @@ class CplShellTests(unittest.TestCase):
         self.assertIn("[SH] overlap 1", rows)
         # Shell image bounds (frozen RYNX v2 caps).
         code, fsz, msz = struct.unpack("<III", self.blobs["sh"][16:28])
-        self.assertLessEqual(code, 32768)
-        self.assertLessEqual(msz, 16384)
+        self.assertLessEqual(code, 65536)
+        self.assertLessEqual(msz, 32768)
         # Big pipeline: the consumer (slot 2) is the only serial
         # writer while the shell waits, so its bytes are back-to-back
         # in its slot subsequence (no shell prints mid-transfer).
@@ -496,8 +498,8 @@ class CplShellTests(unittest.TestCase):
 
     def test_shell_image_sizes(self):
         code, fsz, msz = struct.unpack("<III", self.blobs["sh"][16:28])
-        self.assertLessEqual(code, 32768)
-        self.assertLessEqual(msz, 16384)
+        self.assertLessEqual(code, 65536)
+        self.assertLessEqual(msz, 32768)
         self.assertGreater(code, 0)
 
     def test_boot_missing_shell(self):

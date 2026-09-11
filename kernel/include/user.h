@@ -72,11 +72,13 @@
 enum user_state { USER_FREE, USER_ACTIVE, USER_EXITED, USER_FAULTED, USER_ABORTED };
 
 /* Stage 18d Slice C (RYNX v2): bounded multi-page code/data windows.
- * v1 images use exactly 1 code + 1 data page (behavior identical). */
-#define USER_MAX_CODE_PAGES 8u
-#define USER_MAX_DATA_PAGES 4u
-#define USER_V2_CODE_MAX (8u * 4096u)
-#define USER_V2_DATA_MAX (4u * 4096u)
+ * v1 images use exactly 1 code + 1 data page (behavior identical).
+ * Slice F amendment: windows tile the reserved 64K code / 32K data
+ * ranges (16 + 8 pages); v1 behavior unchanged. */
+#define USER_MAX_CODE_PAGES 16u
+#define USER_MAX_DATA_PAGES 8u
+#define USER_V2_CODE_MAX (16u * 4096u)
+#define USER_V2_DATA_MAX (8u * 4096u)
 
 /* Scheduler-visible link. kern_save is frame_valid-compatible by
    construction (resume label RIP, entry RSP in own stack, kernel

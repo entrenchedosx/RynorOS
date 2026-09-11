@@ -26,7 +26,7 @@ C_SOURCES = ("p_exit42", "p_argv", "p_fault", "p_spin", "p_big",
              "p_nest", "p_selfterm", "p_alias", "p_regprobe", "p_eof")
 
 EXIT_BLOB = bytes.fromhex("b800000000bb2a000000cd80")
-# maxdata verifier: exit 42 iff the first/last qword of all 4 data pages
+# maxdata verifier: exit 42 iff the first/last qword of all 8 data pages
 # are zero, else 43 (catches v2 page-offset tiling bugs in-guest).
 MAXDATA_ASM = """bits 64
     mov rax, [0x600000]
@@ -37,6 +37,14 @@ MAXDATA_ASM = """bits 64
     or rax, [0x602ff8]
     or rax, [0x603000]
     or rax, [0x603ff8]
+    or rax, [0x604000]
+    or rax, [0x604ff8]
+    or rax, [0x605000]
+    or rax, [0x605ff8]
+    or rax, [0x606000]
+    or rax, [0x606ff8]
+    or rax, [0x607000]
+    or rax, [0x607ff8]
     test rax, rax
     jnz .bad
     mov eax, 0
@@ -136,10 +144,14 @@ class ProcIntegrationTests(unittest.TestCase):
         bad = bytearray(blobs["p_exit42"])
         entries.append(("/t/v1badshape.rnx", bytes(bad[:-10])))
         # v2 exact boundaries (exit-blob code + pads).
+        # v2 boundaries under the amended caps: an 8-page code image
+        # stays accepted; data over the 8-page cap rejects. A code
+        # image past 64 KiB cannot stage (64 KiB kernel heap), so no
+        # spawn-path code-over-cap fixture exists (the cap itself is
+        # pinned by the converter repo tests instead).
         entries.append(("/t/maxcode.rnx", _envelope(EXIT_BLOB + bytes(32768 - 12), 0, 0, b"")))
-        entries.append(("/t/maxcode1.rnx", _envelope(EXIT_BLOB + bytes(32769 - 12), 0, 0, b"")))
-        entries.append(("/t/maxdata.rnx", _envelope(maxdata_code, 0, 16384, b"")))
-        entries.append(("/t/maxdata1.rnx", _envelope(maxdata_code, 0, 16385, b"")))
+        entries.append(("/t/maxdata.rnx", _envelope(maxdata_code, 0, 32768, b"")))
+        entries.append(("/t/maxdata1.rnx", _envelope(maxdata_code, 0, 32769, b"")))
         for iname, mutate in (("badv2ver", lambda b: struct.pack_into("<H", b, 4, 3)),
                               ("badv2rsv", lambda b: struct.pack_into("<H", b, 10, 1)),
                               ("badv2entry", lambda b: struct.pack_into("<I", b, 12, 8)),
@@ -309,10 +321,13 @@ class ProcIntegrationTests(unittest.TestCase):
             1)], ("[PROC] failure=",))
 
     def test_mutant_rynx_cap_removed_goes_red(self):
-        """C-M8: removing the v2 code cap admits oversized images past
-        validation (caught at the create backstop with the wrong code)."""
+        """C-M8: removing the v2 data cap admits an oversized image
+        past validation (caught at the create backstop when 9 data
+        pages exceed the 8-page window). Code-over-cap is untestable
+        via spawn (the 64 KiB staging heap preempts it), so the data
+        cap carries this tripwire under the amended envelope."""
         self._mutant("cap-removed", [(
             "kernel/core/load.c",
-            "        code_max = RNYX_V2_CODE_MAX;",
-            "        code_max = (cpu_u64)-1;",
+            "        data_max = RNYX_V2_DATA_MAX;",
+            "        data_max = (cpu_u64)-1;",
             1)], ("[PROC] failure=rynx_reject",))
