@@ -713,8 +713,8 @@ class SemanticsMutationTests(unittest.TestCase):
 
     def test_31_mutation_duplicate(self):
         self._assert_check_removal_changes_result(
-            'if name in self.global_funcs:\n                    self._error(C_DUPLICATE, f"duplicate function',
-            'if False and name in self.global_funcs:\n                    self._error(C_DUPLICATE, f"duplicate function',
+            'if stored in self.global_funcs or stored in self.record_decls:\n                    self._error(C_DUPLICATE, f"duplicate function',
+            'if False and (stored in self.global_funcs or stored in self.record_decls):\n                    self._error(C_DUPLICATE, f"duplicate function',
             "fn foo(): int { return 1; } fn foo(): int { return 2; }", "SEM_DUPLICATE")
 
     def test_32_mutation_type_binop(self):
@@ -828,15 +828,15 @@ class SemanticsMutationTests(unittest.TestCase):
 
     def test_59_mutation_parameter_shadows_function(self):
         self._assert_check_removal_changes_result(
-            'if pname in self.global_funcs:\n                        self._error(C_DUPLICATE, f"duplicate declaration',
-            'if False and pname in self.global_funcs:\n                        self._error(C_DUPLICATE, f"duplicate declaration',
+            'if self._top(pname) in self.global_funcs:\n                        self._error(C_DUPLICATE, f"duplicate declaration',
+            'if False and self._top(pname) in self.global_funcs:\n                        self._error(C_DUPLICATE, f"duplicate declaration',
             "fn first(later: int): int { return later; } fn later(): int { return 1; }",
             "SEM_DUPLICATE")
 
     def test_60_mutation_let_shadows_function(self):
         self._assert_check_removal_changes_result(
-            'if name in self.global_funcs:\n            self._error(C_DUPLICATE, f"duplicate declaration \'{name}\' shadows function',
-            'if False and name in self.global_funcs:\n            self._error(C_DUPLICATE, f"duplicate declaration \'{name}\' shadows function',
+            'if name in self.global_funcs or self._stored(name) in self.global_funcs:\n            self._error(C_DUPLICATE, f"duplicate declaration \'{name}\' shadows function',
+            'if False and (name in self.global_funcs or self._stored(name) in self.global_funcs):\n            self._error(C_DUPLICATE, f"duplicate declaration \'{name}\' shadows function',
             "fn foo(): int { return 1; } fn main(): int { let foo: int = 1; return foo; }",
             "SEM_DUPLICATE")
 

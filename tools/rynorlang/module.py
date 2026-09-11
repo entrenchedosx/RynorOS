@@ -146,9 +146,11 @@ def _resolve_graph(entry_path: Path, root: Path, std_dir: Path):
     def visit(abspath: Path, rel: str, alias: str | None, depth: int):
         key = str(abspath)
         if depth > MAX_IMPORT_DEPTH:
-            return {"code": MOD_CYCLE, "message": f"import depth exceeds {MAX_IMPORT_DEPTH}: {' -> '.join(stack + [rel])}"}
+            return {"code": MOD_CYCLE, "message": f"import depth exceeds {MAX_IMPORT_DEPTH}"}
         if key in stack:
-            chain = " -> ".join(stack[stack.index(key):] + [rel])
+            # Relative chain (project-rel paths keep messages hermetic:
+            # absolute paths would leak machine layout into diagnostics).
+            chain = " -> ".join([files[k]["rel"] for k in stack[stack.index(key):]] + [rel])
             return {"code": MOD_CYCLE, "message": f"import cycle: {chain}"}
         if key in files:
             return None
