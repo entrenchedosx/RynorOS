@@ -66,6 +66,93 @@ COMP_LINK_FAILED = "COMP_LINK_FAILED"
 COMP_NO_RUNTIME = "COMP_NO_RUNTIME"
 
 
+def _assemble_link(asm_text: str, workdir: Path, prog: str, nasm: str, linker) -> tuple:
+    """Assemble emitted text, assemble the host runtime, and link.
+
+    Returns ((asm_path, obj_path, rt_obj_path, exe_path), None) or
+    (None, {"code","message"}). Caller owns workdir creation,
+    _discard, and error-code mapping context.
+    """
+    workdir = Path(workdir)
+    asm_path = workdir / f"{prog}.asm"
+    obj_path = workdir / f"{prog}.o"
+    rt_obj_path = workdir / "rt_linux.o"
+    exe_path = workdir / prog
+    try:
+        asm_path.write_text(asm_text, encoding="utf-8")
+    except OSError as error:
+        return None, {"code": "PAR_INVALID_INPUT", "message": f"cannot write {asm_path}: {error}"}
+    try:
+        # Basenames with cwd=workdir: the workdir path must not leak into
+        # the object/executable (NASM records its input file name).
+        asm_proc = subprocess.run([nasm, "-f", "elf64", asm_path.name, "-o", obj_path.name],
+                                  capture_output=True, text=True, timeout=120,
+                                  cwd=str(workdir))
+        if asm_proc.returncode != 0:
+            return None, {"code": COMP_ASSEMBLE_FAILED,
+                          "message": (asm_proc.stderr or asm_proc.stdout).strip()[-2000:] or "nasm failed"}
+        # Assemble the runtime by basename too: NASM records its input
+        # file name in the object, so the absolute source-tree path
+        # would otherwise leak into every linked executable.
+        rt_src_path = workdir / RUNTIME_ASM.name
+        try:
+            rt_src_path.write_bytes(RUNTIME_ASM.read_bytes())
+        except OSError as error:
+            return None, {"code": COMP_LINK_FAILED, "message": f"cannot stage runtime: {error}"}
+        rt_proc = subprocess.run([nasm, "-f", "elf64", rt_src_path.name, "-o", rt_obj_path.name],
+                                 capture_output=True, text=True, timeout=120,
+                                 cwd=str(workdir))
+        if rt_proc.returncode != 0:
+            return None, {"code": COMP_ASSEMBLE_FAILED,
+                          "message": (rt_proc.stderr or rt_proc.stdout).strip()[-2000:] or "nasm runtime failed"}
+        link_proc = linker(exe_path, [obj_path, rt_obj_path], workdir)
+        if link_proc.returncode != 0:
+            return None, {"code": COMP_LINK_FAILED,
+                          "message": (link_proc.stderr or link_proc.stdout).strip()[-2000:] or "link failed"}
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, {"code": COMP_LINK_FAILED, "message": f"tool execution failed: {error}"}
+    return (asm_path, obj_path, rt_obj_path, exe_path), None
+
+
+def build_module_program(entry: str | Path, workdir: str | Path, prog: str = "prog"):
+    """Compile a multi-file Stage 19c program to a linked executable.
+
+    Entry is analyzed with imports, merged, lowered, and linked exactly
+    like build_program (same flags, same runtime, same staleness rules).
+    """
+    from tools.rynorlang import module as _module
+    from tools.rynorlang import rir as _rir2
+    workdir = Path(workdir)
+    try:
+        workdir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return None, {"code": "PAR_INVALID_INPUT", "message": f"cannot create {workdir}: {error}"}
+    if _reserved(prog):
+        return None, {"code": "PAR_INVALID_INPUT",
+                      "message": f"reserved program name: {prog!r}"}
+    _discard(workdir, (f"{prog}.asm", f"{prog}.o", "rt_linux.o", prog,
+                       RUNTIME_ASM.name))
+    tools, error = find_toolchain()
+    if error is not None:
+        return None, error
+    nasm, linker, _runner = tools
+    asm_text, error = _module.compile_entry(entry)
+    if error is not None:
+        return None, error
+    paths, error = _assemble_link(asm_text, workdir, prog, nasm, linker)
+    if error is not None:
+        return None, error
+    asm_path, obj_path, rt_obj_path, exe_path = paths
+    program, error = _module.analyze_entry(entry)
+    if error is not None:
+        return None, error
+    module, rir_error = _rir2.build_rir(program, str(entry))
+    if rir_error is not None:
+        return None, rir_error
+    return ({"asm": asm_path, "obj": obj_path, "rt_obj": rt_obj_path, "exe": exe_path,
+             "rir": _rir2.dumps(module)}, None)
+
+
 def _discard(workdir: Path, names) -> None:
     """Remove stale build outputs so a failed rebuild can never leave a
     prior success behind (mirrors image.py/qemu.py invalidation). Missing

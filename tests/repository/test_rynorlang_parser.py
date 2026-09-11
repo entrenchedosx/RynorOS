@@ -403,7 +403,7 @@ class Stage13ParserTests(unittest.TestCase):
             directory.cleanup()
 
     def test_52_mutation_trailing_program_token_is_detected(self):
-        directory, mutant = mutated('if not self.at("EOF"):\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function and record definitions are allowed at top level", ("FN", "EOF"))', 'if False:\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function and record definitions are allowed at top level", ("FN", "EOF"))', "program_trailing")
+        directory, mutant = mutated('if not self.at("EOF"):\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function, record, and use definitions are allowed at top level", ("FN", "EOF"))', 'if False:\n            self.fail("PAR_UNEXPECTED_TOKEN", "only function, record, and use definitions are allowed at top level", ("FN", "EOF"))', "program_trailing")
         try:
             self.assertTrue(mutant.parse("fn f() {} 1").ok)
             self.assertFalse(parser.parse("fn f() {} 1").ok)

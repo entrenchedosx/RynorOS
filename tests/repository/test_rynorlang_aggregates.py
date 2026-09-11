@@ -373,8 +373,8 @@ class AggregateMutationTests(unittest.TestCase):
     def test_19_builtin_reserved_check_removed(self):
         self._assert_removal_flips(
             ANALYZER_PATH,
-            "                if name in AGG_BUILTINS:\n                    self._error(C_DUPLICATE,",
-            "                if False and name in AGG_BUILTINS:\n                    self._error(C_DUPLICATE,",
+            "                if name in RESERVED_FN_NAMES:\n                    self._error(C_DUPLICATE, f\"'{name}' is reserved\"",
+            "                if False and name in RESERVED_FN_NAMES:\n                    self._error(C_DUPLICATE, f\"'{name}' is reserved\"",
             "fn push(l: list<int,4>): int { return 0; }\nfn main(): int { return 0; }",
             "SEM_DUPLICATE")
 
