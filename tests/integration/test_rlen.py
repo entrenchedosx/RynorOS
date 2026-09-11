@@ -50,6 +50,8 @@ from sh_output import (validate_sh_section, collect_sh_rows,
                        terminal_stream)
 from test_cplshell import (CTRL_C, _slot_blob, _drive_entries)
 from test_rleval import KF as _KF, _compile_shell, _compile_rltest, host_check
+from test_rleval import RL_COMMANDS as _RL_COMMANDS
+from test_rleval import host_analyze as _host_analyze
 
 
 # Slice G key map: Slice F punctuation plus comma (probed live in
@@ -394,9 +396,12 @@ class RlLenTests(unittest.TestCase):
     def _check_gfix(self, out, fixtures, prelude_dones=0,
                     prelude_lines=()):
         # Same shape as the Slice F fixture checker: the host
-        # verdict is asserted live (len calls record the raw
-        # SEM_UNKNOWN_FUNCTION as DOCUMENTED), guest rows/classes
-        # and value bytes are pinned by hand + oracle.
+        # verdict is asserted live. Since 19a the host knows `len`
+        # (aggregate builtin), so arity/type rows agree with the
+        # guest (FULL) and value rows carry guest bytes the host
+        # oracle must reproduce (asserted by the callers for FULL
+        # value rows). Genuine divergences stay DOCUMENTED: the
+        # guest evaluates what the host rejects and vice versa.
         chunks = self._chunks(out, len(fixtures) + prelude_dones + 1)
         chunks = chunks[prelude_dones:prelude_dones + len(fixtures)]
         self.assertEqual(len(chunks), len(fixtures))
@@ -428,20 +433,37 @@ class RlLenTests(unittest.TestCase):
                 self.assertIn(g_bytes, chunk, line)
             self.assertIn(parity, ("FULL", "DOCUMENTED"))
 
+    def _host_value(self, expr, prelude=()):
+        # Host oracle value for one REPL expression (guest bytes live
+        # in the fx rows; this closes the FULL-agreement loop).
+        from tools.rynorlang import interp as _oracle
+        from tools.rynorlang import rir as _rir
+        body = "".join(f"{line};\n" for line in prelude)
+        prog = "fn main(): int {\n" + body + f"print({expr});\nreturn 0;\n}}\n"
+        res = _host_analyze.analyze(prog, filename="<repl>",
+                                    edition="shell", commands=_RL_COMMANDS)
+        self.assertTrue(res.ok, res.diagnostic)
+        module, error = _rir.build_rir(res.ast, "<repl>")
+        self.assertIsNone(error)
+        emitted: list = []
+        outcome = _oracle.run_rir(module, out=emitted)
+        self.assertIsNone(outcome["trapped"])
+        return "".join(emitted).encode("ascii")
+
     def test_g7_diff_pure(self):
         fx = [
-            ('len("abc") + 1000', False, "SEM_UNKNOWN_FUNCTION",
-             True, None, b"1003", "DOCUMENTED"),
-            ('100 * len("a\\nb")', False, "SEM_UNKNOWN_FUNCTION",
-             True, None, b"300", "DOCUMENTED"),
-            ('len("") + 7001', False, "SEM_UNKNOWN_FUNCTION",
-             True, None, b"7001", "DOCUMENTED"),
-            ('len("a", "b")', False, "SEM_UNKNOWN_FUNCTION", False,
-             "SEM_ARITY_MISMATCH", None, "DOCUMENTED"),
-            ("len(1)", False, "SEM_UNKNOWN_FUNCTION", False,
-             "SEM_TYPE_MISMATCH", None, "DOCUMENTED"),
-            ('len(len("abc"))', False, "SEM_UNKNOWN_FUNCTION",
-             False, "SEM_TYPE_MISMATCH", None, "DOCUMENTED"),
+            ('len("abc") + 1000', True, None,
+             True, None, b"1003", "FULL"),
+            ('100 * len("a\\nb")', True, None,
+             True, None, b"300", "FULL"),
+            ('len("") + 7001', True, None,
+             True, None, b"7001", "FULL"),
+            ('len("a", "b")', False, "SEM_ARITY_MISMATCH", False,
+             "SEM_ARITY_MISMATCH", None, "FULL"),
+            ("len(1)", False, "SEM_TYPE_MISMATCH", False,
+             "SEM_TYPE_MISMATCH", None, "FULL"),
+            ('len(len("abc"))', False, "SEM_TYPE_MISMATCH",
+             False, "SEM_TYPE_MISMATCH", None, "FULL"),
             ('banana("x")', False, "SEM_UNKNOWN_FUNCTION", False,
              "SEM_UNKNOWN_FUNCTION", None, "FULL"),
         ]
@@ -454,6 +476,12 @@ class RlLenTests(unittest.TestCase):
         dones = collect_done_statuses(out)
         self.assertEqual(dones, [0, 0, 0, 2, 2, 2, 2, 0])
         self._check_gfix(out, fx)
+        # FULL value rows: the host oracle must reproduce the guest
+        # bytes exactly (the fixture format pins guest bytes only).
+        for line, want in (('len("abc") + 1000', b"1003"),
+                           ('100 * len("a\\nb")', b"300"),
+                           ('len("") + 7001', b"7001")):
+            self.assertEqual(self._host_value(line), want, line)
 
     _G7_PRELUDE_SRC = ("let q9: int = 7000", 'let s9: str = "abc"')
 
@@ -463,20 +491,21 @@ class RlLenTests(unittest.TestCase):
 
     def test_g7_diff_session(self):
         fx = [
-            ("len(s9) * 1000", False, "SEM_UNKNOWN_FUNCTION", True,
-             None, b"3000", "DOCUMENTED"),
-            ("len(q9)", False, "SEM_UNKNOWN_FUNCTION", False,
-             "SEM_TYPE_MISMATCH", None, "DOCUMENTED"),
-            ("len(nosuch)", False, "SEM_UNKNOWN_FUNCTION", False,
+            ("len(s9) * 1000", True, None, True,
+             None, b"3000", "FULL"),
+            ("len(q9)", False, "SEM_TYPE_MISMATCH", False,
+             "SEM_TYPE_MISMATCH", None, "FULL"),
+            ("len(nosuch)", False, "SHELL_UNKNOWN_COMMAND", False,
              "SEM_UNDECLARED", None, "DOCUMENTED"),
-            ("let n9: int = len(s9)", False, "SEM_UNKNOWN_FUNCTION",
-             True, None, None, "DOCUMENTED"),
-            # Knock-on divergence: the host never bound n9 (it
-            # rejects the len let), so the use reads undeclared to
-            # the host while the guest evaluates it.
+            ("let n9: int = len(s9)", True, None,
+             True, None, None, "FULL"),
+            # Knock-on divergence: the host check runs each line
+            # against the fixed prelude (n9 never bound there), so
+            # the use reads undeclared to the host while the guest
+            # evaluates the bound n9 from the earlier row.
             ("n9 * 1000 + 1", False, "SEM_UNDECLARED", True, None,
              b"3001", "DOCUMENTED"),
-            ("len(s9, q9)", False, "SEM_UNKNOWN_FUNCTION", False,
+            ("len(s9, q9)", False, "SEM_ARITY_MISMATCH", False,
              "SEM_ARITY_MISMATCH", None, "DOCUMENTED"),
         ]
         keys = self._g7_prelude()
@@ -489,6 +518,8 @@ class RlLenTests(unittest.TestCase):
         self.assertEqual(dones, [0, 0, 0, 2, 2, 0, 0, 2, 0])
         self._check_gfix(out, fx, prelude_dones=2,
                          prelude_lines=self._G7_PRELUDE_SRC)
+        self.assertEqual(
+            self._host_value("len(s9) * 1000", self._G7_PRELUDE_SRC), b"3000")
 
     def test_g7_oracle_crosscheck(self):
         # The in-test byte-length oracle agrees with every

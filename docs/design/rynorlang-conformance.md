@@ -235,8 +235,8 @@ New `tests/repository/test_rynorlang_conformance.py`
 exact accept/codes; text-artifact 3× over the full corpus
 ungated; linked/run 3× gated with recorded hashes; banned-
 source pin; profile R1/R2 accept/reject; kLOC counter unit
-pins incl. comment/blank accounting; ≥8-mutant matrix:
+pins incl. comment/blank accounting; 8-mutant matrix:
 canonical-string swap, print-order swap, key-bytes swap,
-profile-bypass, manifest-order sensitivity, memo/offset
-perturbations, banned-source allowlisting). Guest evaluator
+profile-bypass, manifest-order sensitivity, merge-order swap,
+step-budget slash, module-cap lift). Guest evaluator
 suites re-recorded green. v1 suite green unchanged.

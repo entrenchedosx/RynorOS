@@ -231,12 +231,13 @@ def _check_pins(files: dict, pins: dict | None):
     return None
 
 
-def analyze_entry(entry: str | Path):
+def analyze_entry(entry: str | Path, profile: str = "default"):
     """Load, analyze, and merge a multi-file program.
 
     Returns (merged_ast, None) or (None, {"code","message"}) with
     MOD_* for load failures or the first PAR_*/SEM_* diagnostic in
-    dependency order (leaves first).
+    dependency order (leaves first). Under profile "strict", project
+    imports require a fully-pinning manifest (R2).
     """
     from tools.rynorlang import analyze as _analyze
     entry_path = Path(entry)
@@ -250,6 +251,15 @@ def analyze_entry(entry: str | Path):
     error = _check_pins(files, pins)
     if error is not None:
         return None, error
+    if pins is None and profile == "strict":
+        # R2 (reproducible multi-file): strict rejects unpinned
+        # project imports; std/ stays toolchain-pinned. Merge order
+        # keeps the first offender deterministic.
+        for key in _merge_order(files):
+            rel = files[key]["rel"]
+            if files[key]["alias"] is not None and not rel.startswith(STD_PREFIX):
+                return None, {"code": MOD_PIN_MISMATCH,
+                              "message": f"unpinned import under --profile=strict: {rel!r}"}
     error = _check_mangle_collisions(files)
     if error is not None:
         return None, error
@@ -265,7 +275,8 @@ def analyze_entry(entry: str | Path):
         analyzer = _analyze.Analyzer(info["root"], source=source, edition="v1",
                                      external=external,
                                      imports=_imports_for(info),
-                                     self_alias=info["alias"])
+                                     self_alias=info["alias"],
+                                     profile=profile)
         result = analyzer.analyze()
         if not result.ok:
             diag = result.diagnostic
@@ -424,14 +435,14 @@ def _remap_tree(ast: dict, name_to_index: dict, offset: int) -> int:
     return peak + 1
 
 
-def compile_entry(entry: str | Path):
+def compile_entry(entry: str | Path, profile: str = "default"):
     """Full pipeline for a multi-file program: load/analyze/merge to RIR
     to assembly. Returns (asm_text, None) or (None, {"code","message"})
     with MOD_*/PAR_*/SEM_*/COMP_* codes. Never raises on bad input.
     """
     from tools.rynorlang import rir as _rir
     from tools.rynorlang import compile as _compile
-    program, error = analyze_entry(entry)
+    program, error = analyze_entry(entry, profile=profile)
     if error is not None:
         return None, error
     module, error = _rir.build_rir(program, str(entry))

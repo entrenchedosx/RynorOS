@@ -114,7 +114,7 @@ def _assemble_link(asm_text: str, workdir: Path, prog: str, nasm: str, linker) -
     return (asm_path, obj_path, rt_obj_path, exe_path), None
 
 
-def build_module_program(entry: str | Path, workdir: str | Path, prog: str = "prog"):
+def build_module_program(entry: str | Path, workdir: str | Path, prog: str = "prog", profile: str = "default"):
     """Compile a multi-file Stage 19c program to a linked executable.
 
     Entry is analyzed with imports, merged, lowered, and linked exactly
@@ -136,14 +136,14 @@ def build_module_program(entry: str | Path, workdir: str | Path, prog: str = "pr
     if error is not None:
         return None, error
     nasm, linker, _runner = tools
-    asm_text, error = _module.compile_entry(entry)
+    asm_text, error = _module.compile_entry(entry, profile=profile)
     if error is not None:
         return None, error
     paths, error = _assemble_link(asm_text, workdir, prog, nasm, linker)
     if error is not None:
         return None, error
     asm_path, obj_path, rt_obj_path, exe_path = paths
-    program, error = _module.analyze_entry(entry)
+    program, error = _module.analyze_entry(entry, profile=profile)
     if error is not None:
         return None, error
     module, rir_error = _rir2.build_rir(program, str(entry))
@@ -299,7 +299,7 @@ def find_toolchain():
     return (nasm, link_wsl, run_wsl), None
 
 
-def build_program(source: str, filename: str, workdir: str | Path, prog: str = "prog"):
+def build_program(source: str, filename: str, workdir: str | Path, prog: str = "prog", profile: str = "default"):
     """Compile .rl source to a linked host-native executable.
 
     Writes prog.asm, prog.o, rt_linux.o, prog into workdir (created). On
@@ -320,12 +320,12 @@ def build_program(source: str, filename: str, workdir: str | Path, prog: str = "
     if error is not None:
         return None, error
     nasm, linker, _runner = tools
-    asm_text, error = _compile.compile_source(source, filename)
+    asm_text, error = _compile.compile_source(source, filename, profile=profile)
     if error is not None:
         return None, error
     # RIR text for inspection/determinism (rebuilt deterministically).
     from tools.rynorlang import analyze as _analyze
-    result = _analyze.analyze(source, filename)
+    result = _analyze.analyze(source, filename, profile=profile)
     module, rir_error = _rir.build_rir(result.ast, filename)
     if rir_error is not None:
         return None, rir_error
@@ -705,7 +705,8 @@ def main_build(args) -> int:
         import tempfile as _tf
         with _tf.TemporaryDirectory(prefix="rlrun-") as work:
             arts, error = build_program(source, str(args.source), work,
-                                        args.source.stem or "prog")
+                                        args.source.stem or "prog",
+                                        getattr(args, "profile", "default"))
             if error is not None:
                 print(f"{args.source}:1:1:0: {error['code']}: {error['message']}",
                       file=sys.stderr)
@@ -723,7 +724,8 @@ def main_build(args) -> int:
                 return 128 + result["signal"]
             return result["exit"] if result["exit"] is not None else 1
     arts, error = build_program(source, str(args.source), args.build,
-                                args.source.stem or "prog")
+                                args.source.stem or "prog",
+                                getattr(args, "profile", "default"))
     if error is not None:
         print(f"{args.source}:1:1:0: {error['code']}: {error['message']}", file=sys.stderr)
         return 1
