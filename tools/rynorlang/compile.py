@@ -32,6 +32,12 @@ COMP_NO_ENTRY = "COMP_NO_ENTRY"
 
 _ARG_REGS = ("rdi", "rsi", "rdx", "rcx", "r8", "r9")
 
+# Stage 19e file builtins: dedicated RIR ops lowered through runtime
+# helpers (not `call` instrs). The helpers own a 1 MiB bump arena for
+# stable result strings (addresses never leak into output: only bytes
+# are observed, so ASLR/PIE cannot perturb determinism).
+_RT_HELPER_BY_OP = {"str_fread": "rt_fread", "str_fjoin": "rt_fjoin"}
+
 _REG = r"(?:r(?:ax|bx|cx|dx|si|di|bp|sp|8|9|1[0-5])|e(?:ax|bx|cx|dx|si|di|bp|sp)|[abcd][lhw]|sil|dil|bpl|spl|r[89][bdw]?)"
 _FORBIDDEN_RE = re.compile(
     r"(?<![A-Za-z0-9_])(syscall|sysret|sysenter|iretq?|cli|sti|hlt|"
@@ -230,6 +236,16 @@ class _Emitter:
                 if helper not in needed:
                     needed.append(helper)
             needed.sort()
+        # Stage 19e file builtins: dedicated RIR ops (not `call`), so
+        # their runtime helpers are declared from op presence.
+        for func in self.module["funcs"]:
+            for block in func["blocks"]:
+                for instr in block["instrs"]:
+                    if isinstance(instr, dict):
+                        helper = _RT_HELPER_BY_OP.get(instr.get("op"))
+                        if helper is not None and helper not in needed:
+                            needed.append(helper)
+        needed.sort()
         for name in needed:
             self.out(f"extern {_mangle(name)}")
         if needed:
@@ -562,6 +578,7 @@ class _Emitter:
         elif op in ("make_record", "get_field", "make_list", "list_len",
                     "list_idx", "list_push", "make_map", "map_get",
                     "map_insert", "map_len", "str_len", "str_byte_at",
+                    "str_fread", "str_fjoin",
                     "status_is_ok", "status_is_err", "status_unwrap_or",
                     "result_ok", "result_err", "unwrap_ok", "unwrap_err",
                     "print_agg"):
@@ -766,6 +783,12 @@ class _Emitter:
             self._emit_map_insert(instr)
         elif op == "str_byte_at":
             self._emit_str_byte_at(instr)
+        elif op == "str_fread":
+            self._emit_rt_str_status(instr, "rt_fread",
+                                     ["path", "offset", "length"])
+        elif op == "str_fjoin":
+            self._emit_rt_str_status(instr, "rt_fjoin",
+                                     ["directory", "rel"])
         elif op == "status_is_ok":
             self.out(f"    mov rax, {self.home(instr['v'])}")
             self.out("    xor rax, 1")
@@ -977,7 +1000,41 @@ class _Emitter:
         self._status_err(dst, _agtypes.ERR_OORANGE, 1)
         self.out(f"{done}:")
 
-    # -- maps: FNV-1a hash + open-addressing probes --------------------
+    def _emit_rt_str_status(self, instr: dict, helper: str, fields: list) -> None:
+        # Marshal str/int homes into SysV regs (str takes two), call the
+        # runtime helper (rax = byte count or negative err code, rdx =
+        # result buffer), and fill the status<str> home. Only
+        # caller-saved registers are touched; homes live under rbp.
+        regs = iter(("rdi", "rsi", "rdx", "rcx"))
+        for field in fields:
+            home = self.home(instr[field])
+            vtype = self.vreg_type[instr[field]]
+            if vtype == "str":
+                self.out(f"    mov {next(regs)}, {home}")
+                self.out(f"    mov {next(regs)}, {self.home_at(instr[field], 1)}")
+            else:
+                self.out(f"    mov {next(regs)}, {home}")
+        self.out(f"    call {_mangle(helper)}")
+        dst = instr["dst"]
+        err = self._fresh("rter")
+        done = self._fresh("rtdone")
+        self.out("    test rax, rax")
+        self.out(f"    js {err}")
+        self.out("    xor ecx, ecx")
+        self.out(f"    mov {self.home(dst)}, rcx")
+        self.out(f"    mov {self.home_at(dst, 1)}, rcx")
+        self.out(f"    mov {self.home_at(dst, 2)}, rdx")
+        self.out(f"    mov {self.home_at(dst, 3)}, rax")
+        self.out(f"    jmp {done}")
+        self.out(f"{err}:")
+        self.out("    neg rax")
+        self.out("    mov rcx, 1")
+        self.out(f"    mov {self.home(dst)}, rcx")
+        self.out(f"    mov {self.home_at(dst, 1)}, rax")
+        self.out("    xor ecx, ecx")
+        self.out(f"    mov {self.home_at(dst, 2)}, rcx")
+        self.out(f"    mov {self.home_at(dst, 3)}, rcx")
+        self.out(f"{done}:")
     # Key bytes: int = 8-byte LE of the u64 bits; bool = low byte (homes
     # hold canonical 0/1); str = raw bytes. Same algorithm in the oracle
     # (re-derived) and the analyzer-visible freeze; differentials prove it.
@@ -1552,8 +1609,8 @@ def main(argv=None) -> int:
     group.add_argument("--run", action="store_true",
                        help="build to a temp dir, run it, forward its stdout; "
                             "exit code is the program's (diagnostics stay on stderr)")
-    parser.add_argument("--profile", default="default", choices=("default", "strict"),
-                        help="build profile: default (current behavior) or strict (19d reproducible lock)")
+    parser.add_argument("--profile", default="default", choices=("default", "strict", "core"),
+                        help="build profile: default (current behavior), strict (19d reproducible lock), or core (19e self-host subset)")
     args = parser.parse_args(argv)
     if args.source is None:
         parser.print_usage(sys.stderr)

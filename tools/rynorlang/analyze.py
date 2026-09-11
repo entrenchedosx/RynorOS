@@ -85,7 +85,7 @@ def _normalize_edition(edition: str) -> str:
     return "v1"
 
 
-VALID_PROFILES = ("default", "strict")
+VALID_PROFILES = ("default", "strict", "core")
 
 
 def _normalize_profile(profile: str) -> str:
@@ -541,9 +541,27 @@ class Analyzer:
                         expected="valid type", context="type")
         shape = self._mangle_shape(shape, tnode.span)
         canon = _agtypes.canonical(shape)
+        if self.profile == "core":
+            self._check_core_shape(_agtypes.parse_type(canon), tnode.span)
         if check_size:
             self._check_type_bounded(canon, tnode.span)
         return canon
+
+    def _check_core_shape(self, shape, span: Span) -> None:
+        # Stage 19e core dialect: maps and results stay host-only
+        # (the guest backend omits map probing and result layouts;
+        # corpus expresses them via projection). Iterative over the
+        # shape tree; caps are inert tuples.
+        stack = [shape] if shape else []
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, tuple) or not node:
+                continue
+            if node[0] == "generic":
+                if node[1] in ("map", "result"):
+                    self._error(C_PROFILE_EXCLUDED, f"{node[1]} excluded by --profile=core", span,
+                                expected="core type", got=node[1], context="profile gate")
+                stack.extend(node[2])
 
     def _mangle_shape(self, node: tuple, span: Span):
         # Rewrite nominal leaves through the file's alias map (own bare
@@ -1109,6 +1127,9 @@ class Analyzer:
                             expected=elem_t, got=vtype, callee=callee_name, context="call argument")
             return call_node([arg, val], f"status<{atype}>")
         if callee_name == "insert":
+            if self.profile == "core":
+                self._error(C_PROFILE_EXCLUDED, "'insert' excluded by --profile=core", node.span,
+                            expected="core builtin", got=callee_name, context="profile gate")
             expect_arity(3)
             arg, atype = yield operand(0)
             shape = _agtypes.parse_type(atype)
@@ -1127,6 +1148,9 @@ class Analyzer:
                             expected=val_t, got=vtype, callee=callee_name, context="call argument")
             return call_node([arg, key, val], f"status<{atype}>")
         if callee_name == "get":
+            if self.profile == "core":
+                self._error(C_PROFILE_EXCLUDED, "'get' excluded by --profile=core", node.span,
+                            expected="core builtin", got=callee_name, context="profile gate")
             expect_arity(2)
             arg, atype = yield operand(0)
             shape = _agtypes.parse_type(atype)
@@ -1151,7 +1175,39 @@ class Analyzer:
                 self._error(C_TYPE_MISMATCH, f"'byte_at' index expects int got {itype}", arg_nodes[1].span,
                             expected="int", got=itype, callee=callee_name, context="call argument")
             return call_node([arg, index], "status<int>")
+        if callee_name == "fread":
+            # Stage 19e file input (self-host compiler source loading).
+            expect_arity(3)
+            path, ptype = yield operand(0)
+            if ptype != "str":
+                self._error(C_TYPE_MISMATCH, f"'fread' path expects str got {ptype}", arg_nodes[0].span,
+                            expected="str", got=ptype, callee=callee_name, context="call argument")
+            offset, otype = yield operand(1)
+            if otype != "int":
+                self._error(C_TYPE_MISMATCH, f"'fread' offset expects int got {otype}", arg_nodes[1].span,
+                            expected="int", got=otype, callee=callee_name, context="call argument")
+            length, ltype = yield operand(2)
+            if ltype != "int":
+                self._error(C_TYPE_MISMATCH, f"'fread' length expects int got {ltype}", arg_nodes[2].span,
+                            expected="int", got=ltype, callee=callee_name, context="call argument")
+            return call_node([path, offset, length], "status<str>")
+        if callee_name == "fjoin":
+            # Stage 19e path join (guest module resolution without
+            # string synthesis, which the core dialect omits).
+            expect_arity(2)
+            directory, dtype = yield operand(0)
+            if dtype != "str":
+                self._error(C_TYPE_MISMATCH, f"'fjoin' dir expects str got {dtype}", arg_nodes[0].span,
+                            expected="str", got=dtype, callee=callee_name, context="call argument")
+            rel, rtype = yield operand(1)
+            if rtype != "str":
+                self._error(C_TYPE_MISMATCH, f"'fjoin' rel expects str got {rtype}", arg_nodes[1].span,
+                            expected="str", got=rtype, callee=callee_name, context="call argument")
+            return call_node([directory, rel], "status<str>")
         if callee_name == "ok" or callee_name == "err":
+            if self.profile == "core":
+                self._error(C_PROFILE_EXCLUDED, f"'{callee_name}' excluded by --profile=core", node.span,
+                            expected="core builtin", got=callee_name, context="profile gate")
             # Stage 19b result constructors: the expected result type
             # elaborates the payload (no inference anywhere in the
             # language, so an unannotated ok()/err() is an error).
@@ -1183,6 +1239,9 @@ class Analyzer:
         if not (scalar or is_status or is_result):
             self._error(C_TYPE_MISMATCH, f"cannot match on {stype}", scrut_node.span,
                         expected="status, result, int, bool, or str", got=stype, context="match")
+        if is_result and self.profile == "core":
+            self._error(C_PROFILE_EXCLUDED, "match on result excluded by --profile=core", scrut_node.span,
+                        expected="core scrutinee", got=stype, context="profile gate")
         if is_status:
             payload_t = _agtypes.canonical(shape[2][0])
             ok_t, err_t = payload_t, "int"
@@ -1602,6 +1661,8 @@ class Analyzer:
                         if not self._is_printable(atype):
                             self._error(C_TYPE_MISMATCH, f"print expects a value type got {atype}", arg_nodes[0].span,
                                         expected="value type", got=atype, callee=callee_name, context="call argument")
+                        if self.profile == "core":
+                            self._check_core_shape(_agtypes.parse_type(atype), arg_nodes[0].span)
                         stable = {"kind": "Call", "span": self._node_span(node), "callee": "print", "args": [arg_stable], "symbol": -1, "type": "unit"}
                         return (stable, "unit")
                     # Stage 19a aggregate builtins (reserved names; dedicated
