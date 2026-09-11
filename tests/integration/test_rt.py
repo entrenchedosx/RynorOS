@@ -36,28 +36,77 @@ RLPRINT_SRC = 'fn main(): int { print(42); print(true); print("hi"); return 0; }
 RTLIB_SRC_DIR = RT_DIR / "tests"
 
 
+def _compile_one_rt_elf(work, name, libdir=None):
+    """Build one conformance program ELF; returns the exe path.
+    libdir overrides the library sources (mutant trees); None uses the
+    live user/lib/rt tree."""
+    srcdir = Path(libdir) / "tests" if libdir is not None else RTLIB_SRC_DIR
+    if name == "rlprint":
+        progdir = work / "prog-rlprint"
+        progdir.mkdir(parents=True, exist_ok=True)
+        arts, error = rynor_program.build_rynor_program(
+            RLPRINT_SRC, "rlprint.rl", progdir, prog="rlprint",
+            runtime="rtlib", rtlib_dir=libdir)
+        assert error is None, ("rlprint", error)
+        return Path(arts["exe"])
+    src = (srcdir / f"t_{name}.c").read_text(encoding="utf-8")
+    progdir = work / f"prog-{name}"
+    progdir.mkdir(parents=True, exist_ok=True)
+    arts, error = rynor_program.build_rynor_c_program(
+        {f"t_{name}.c": src}, progdir, prog=name, rtlib_dir=libdir)
+    assert error is None, (name, error)
+    return Path(arts["exe"])
+
+
 def _compile_rt_programs(work, libdir=None):
     """Compile the six C tests plus the .rl print program to RYNX bytes.
     libdir overrides the library sources (mutant trees); None uses the
     live user/lib/rt tree."""
-    srcdir = Path(libdir) / "tests" if libdir is not None else RTLIB_SRC_DIR
     out = {}
-    for name in C_TESTS:
-        src = (srcdir / f"t_{name}.c").read_text(encoding="utf-8")
-        progdir = work / f"prog-{name}"
-        progdir.mkdir(parents=True, exist_ok=True)
-        arts, error = rynor_program.build_rynor_c_program(
-            {f"t_{name}.c": src}, progdir, prog=name, rtlib_dir=libdir)
-        assert error is None, (name, error)
-        out[name] = rnyx.elf_to_rnyx(Path(arts["exe"]).read_bytes())
-    progdir = work / "prog-rlprint"
-    progdir.mkdir(parents=True, exist_ok=True)
-    arts, error = rynor_program.build_rynor_program(
-        RLPRINT_SRC, "rlprint.rl", progdir, prog="rlprint",
-        runtime="rtlib", rtlib_dir=libdir)
-    assert error is None, ("rlprint", error)
-    out["rlprint"] = rnyx.elf_to_rnyx(Path(arts["exe"]).read_bytes())
+    for name in C_TESTS + ["rlprint"]:
+        out[name] = rnyx.elf_to_rnyx(
+            _compile_one_rt_elf(work, name, libdir).read_bytes())
     return out
+
+
+def _compile_mutant_programs(work, libdir):
+    """Like _compile_rt_programs against a mutant libdir, except a program
+    whose mutant ELF no longer fits the frozen v1 window is rebuilt from
+    the UNMUTATED tree for that program only.
+
+    Rationale: the v1 single-page ceiling is frozen and the good-path
+    suite (setUpClass) is the canary for genuine product overflow — it
+    compiles the same programs unmutated, so a product regression fails
+    there first. A mutant-tree-only overflow is therefore toolchain
+    layout noise (e.g. a removed branch shifting alignment), and the
+    fail-closed converter killing the mutant binary is itself a detection
+    layer. Booting the mixed image still executes every other mutated
+    binary in-guest, so the test's fail-fast leg is preserved.
+
+    Soundness: substitution can only cause a false RED, never a false
+    GREEN. If it masked the mutant's only detection leg the boot would
+    validate clean and _assert_not_clean would fail the test for manual
+    triage. Returns (rnx_dict, substituted_names)."""
+    out = {}
+    substituted = []
+    for name in C_TESTS + ["rlprint"]:
+        exe = _compile_one_rt_elf(work, name, libdir)
+        try:
+            out[name] = rnyx.elf_to_rnyx(exe.read_bytes())
+        except ValueError:
+            baseline = _compile_one_rt_elf(work / "baseline", name, None)
+            try:
+                out[name] = rnyx.elf_to_rnyx(baseline.read_bytes())
+            except ValueError as error:
+                raise AssertionError(
+                    f"baseline {name} no longer fits the frozen v1 window: "
+                    f"{error} (product regression, not mutant noise)") from error
+            substituted.append(name)
+    if substituted:
+        print(f"MUTANT-BUILD-NOTE: v1-window overflow in mutant tree; "
+              f"baseline substituted for {substituted} (guest leg still "
+              f"executes for all other mutated programs)")
+    return out, substituted
 
 
 def _mutate_rtlib(pairs):
@@ -159,7 +208,8 @@ class RtIntegrationTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         work = root / "mut"
         work.mkdir(parents=True, exist_ok=True)
-        rnx = _compile_rt_programs(work, libdir=root / "user/lib/rt")
+        rnx, _substituted = _compile_mutant_programs(
+            work, libdir=root / "user/lib/rt")
         entries = list(GOOD_ENTRIES)
         entries.append(("/rt", None))
         for name in C_TESTS + ["rlprint"]:

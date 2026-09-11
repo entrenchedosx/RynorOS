@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/host"))
 sys.path.insert(0, str(ROOT / "tools/rynorlang"))
+sys.path.insert(0, str(ROOT))
 from image import build_image
 from qemu import boot_image
 from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
