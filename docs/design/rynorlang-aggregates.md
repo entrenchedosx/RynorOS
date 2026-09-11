@@ -35,14 +35,19 @@ in-OS); methods, defaults, generics beyond the builtins below.
 
 - New punctuation, all previously `LEX_INVALID_CHAR` (no valid v1
   program contains them; every frozen lexer golden passes unchanged):
-  `.` → DOT, `[` → LEFT_BRACKET, `]` → RIGHT_BRACKET,
-  `&` → AMP, `|` → PIPE, `^` → CARET, `~` → TILDE,
-  `<<` → SHIFT_LEFT, `>>` → SHIFT_RIGHT (maximal munch, `|>`-precedent).
-- NO new keywords. `record` is a contextual parser word (IDENTIFIER
-  text match in declaration position). `list`, `map`, `status` are
-  contextual type constructors (IDENTIFIER in type position). A v1
-  program using these words as variables/functions still lexes
-  identically; only genuinely new shapes parse differently.
+  `[` → LEFT_BRACKET, `]` → RIGHT_BRACKET, `&` → AMP, `|` → PIPE,
+  `^` → CARET, `~` → TILDE, `<<` → SHIFT_LEFT, `>>` → SHIFT_RIGHT
+  (maximal munch, `|>`-precedent).
+- Deliberately NOT added: `.` (DOT). The frozen bad-fixture
+  `invalid_char_dot.rl` (`let x = 3.14;`) plus
+  `test_49_all_fixtures_have_the_expected_outcome` require `.` to stay
+  lexically invalid (floats deferred). Field access therefore uses the
+  existing `->` token in postfix position (see §3), which is free
+  real estate: `->` occurs in valid v1 only in function return-type
+  position, never in expressions.
+- Shell `>>` append-redirect keeps working: `parse_redirect` accepts
+  either two adjacent `>` tokens or one `SHIFT_RIGHT` token (parser
+  accommodation; shell fixtures byte-stable).
 
 ## 3. Syntax
 
@@ -60,7 +65,8 @@ keytype    ::= "int" | "bool" | "str"
 - Trailing commas forbidden everywhere (frozen rule extended).
 - Record construction: postfix `IDENT "{" [ name ":" expr { "," ... } ] "}"`
   (all fields required, any order, no duplicates, no unknowns).
-- Field access: postfix `expr "." IDENT`. Index: postfix `expr "[" expr "]"`.
+- Field access: postfix `expr "->" IDENT` (existing ARROW token).
+- Index: postfix `expr "[" expr "]"`.
 - List literal: `"[" [ expr { "," expr } ] "]"` (empty `[]` allowed;
   element count ≤ N else static rejection).
 - Map literal: `"{" [ expr ":" expr { "," ... } ] "}"` in expression
