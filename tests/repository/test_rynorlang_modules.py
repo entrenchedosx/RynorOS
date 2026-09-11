@@ -34,7 +34,7 @@ GOOD = ROOT / "tests" / "fixtures" / "rynorlang" / "modules" / "good"
 BAD = ROOT / "tests" / "fixtures" / "rynorlang" / "modules" / "bad"
 
 GOOD_PROJECTS = {
-    "basic_import", "diamond", "error_threading_mod",
+    "basic_import", "dep_main", "diamond", "error_threading_mod",
     "manifest_pinned", "nested_use", "std_use",
 }
 
@@ -46,7 +46,7 @@ BAD_CODES = {
     "cycle": "MOD_CYCLE",
     "dup_alias": "MOD_DUPLICATE",
     "edition_mismatch": "MOD_EDITION_MISMATCH",
-    "mangle_collision": "SEM_DUPLICATE",
+    "mangle_collision": "MOD_DUPLICATE",
     "missing_file": "MOD_NOT_FOUND",
     "pin_mismatch": "MOD_PIN_MISMATCH",
     "qualified_arity": "SEM_ARITY_MISMATCH",
@@ -55,10 +55,12 @@ BAD_CODES = {
     "unknown_member": "SEM_UNKNOWN_FUNCTION",
     "unpinned_with_manifest": "MOD_PIN_MISMATCH",
     "unqualified_call": "SEM_UNKNOWN_FUNCTION",
+    "use_reserved": "SEM_DUPLICATE",
 }
 
 GOLDEN = {
     "basic_import": (0, "10{a: 3, b: 4}"),
+    "dep_main": (0, "42"),
     "diamond": (0, "203"),
     "error_threading_mod": (0, "7e"),
     "manifest_pinned": (0, "42"),
@@ -339,17 +341,21 @@ class ModuleMutationTests(unittest.TestCase):
         self.assertIsNotNone(mutant_error)
         self.assertEqual(mutant_error["code"], "MOD_DUPLICATE")
 
-    def test_17_collision_check_removed_misses_mangle(self):
+    def test_17_load_collision_removed_falls_through_to_analyzer(self):
+        # The load scan fires first (MOD_DUPLICATE naming the squat);
+        # removing it exposes the analyzer's seed reservation as
+        # backstop (SEM_DUPLICATE) — both layers proven, order pinned.
         _, error = mod.analyze_entry(BAD / "mangle_collision" / "main.rl")
         self.assertIsNotNone(error)
-        self.assertEqual(error["code"], "SEM_DUPLICATE")
-        _, mutant_error = _analyze_mutant_entry(
-            '                if stored in self.global_funcs or stored in self.record_decls:\n'
-            '                    self._error(C_DUPLICATE, f"duplicate function',
-            '                if False and (stored in self.global_funcs or stored in self.record_decls):\n'
-            '                    self._error(C_DUPLICATE, f"duplicate function',
-            BAD / "mangle_collision")
-        self.assertIsNone(mutant_error, f"removed check still rejected input: {mutant_error}")
+        self.assertEqual(error["code"], "MOD_DUPLICATE")
+        self.assertIn("calc__double", error["message"])
+        mutant = _load_mutant(
+            MODULE_PATH,
+            "    error = _check_mangle_collisions(files)",
+            "    error = None")
+        _, mutant_error = mutant.analyze_entry(BAD / "mangle_collision" / "main.rl")
+        self.assertIsNotNone(mutant_error)
+        self.assertEqual(mutant_error["code"], "SEM_DUPLICATE")
 
     def test_18_stored_identity_breaks_qualified_types(self):
         program, error = mod.analyze_entry(GOOD / "basic_import" / "main.rl")
