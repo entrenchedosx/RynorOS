@@ -48,7 +48,7 @@ INTEGRATION_TEST_INVENTORY = {
     "test_scheduler": 23, "test_shell": 9, "test_vm": 8,
     "test_storage": 10, "test_filesystem": 19, "test_userspace": 18,
     "test_load": 15, "test_rt": 12, "test_input": 7, "test_proc": 10,
-    "test_pipe": 15, "test_cplshell": 26,
+    "test_pipe": 15, "test_cplshell": 26, "test_rleval": 56,
 }
 
 

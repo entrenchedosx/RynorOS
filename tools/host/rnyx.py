@@ -8,8 +8,10 @@ rejects anything outside the documented subset. See
 docs/design/executable-format.md.
 
 Stage 18d Slice C adds version 2 (same 28-byte layout, version-gated
-size classes): code tiles up to 32 KiB, data up to 16 KiB. v1 behavior
-is byte-identical (default conversion path unchanged).
+size classes): code tiles up to 64 KiB, data up to 32 KiB (Stage 18d
+Slice F architecture amendment reconciling the envelope with the
+reserved 64K code / 32K data VA windows; v1 behavior is byte-identical
+and its path is unchanged).
 
 Envelope layout (all little-endian, 28 bytes, no trailing bytes):
   u8[4]  magic "RYNX"
@@ -18,8 +20,8 @@ Envelope layout (all little-endian, 28 bytes, no trailing bytes):
   u16    header_len (28)
   u16    reserved (0)
   u32    entry_off (0: entry is defined as USER_CODE_BASE)
-  u32    code_size (v1: 1..4096; v2: 1..32768)
-  u32    data_filesz (v1: 0..4096; v2: 0..16384)
+  u32    code_size (v1: 1..4096; v2: 1..65536)
+  u32    data_filesz (v1: 0..4096; v2: 0..32768)
   u32    data_memsz (filesz..same class max)
 followed by code_size code bytes then data_filesz data bytes.
 """
@@ -35,8 +37,8 @@ HEADER_LEN = 28
 CODE_BASE = 0x400000
 DATA_BASE = 0x600000
 PAGE = 4096
-CODE_MAX2 = 8 * PAGE
-DATA_MAX2 = 4 * PAGE
+CODE_MAX2 = 16 * PAGE
+DATA_MAX2 = 8 * PAGE
 
 PT_NULL = 0
 PT_LOAD = 1

@@ -112,7 +112,7 @@ static cpu_u8 *load_image(const char *path, cpu_u64 *len_out, const char *why)
     cpu_u64 got = 0;
     if (fs_stat(path, &st) != FS_OK) pfail(why);
     if (st.type != FS_TYPE_FILE) pfail(why);
-    if (st.size < RNYX_HEADER_LEN || st.size > 28u + 32768u + 16384u) pfail(why);
+    if (st.size < RNYX_HEADER_LEN || st.size > 28u + 65536u + 32768u) pfail(why);
     if (fs_open(path, &h) != FS_OK) pfail(why);
     if (heap_alloc(st.size, 8, (void **)&img) != HEAP_OK) pfail(why);
     while (got < st.size) {

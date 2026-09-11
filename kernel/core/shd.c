@@ -103,7 +103,7 @@ void shd_boot(void)
         shd_balanced(base);
         halt("[SHD] missing /bin/sh");
     }
-    if (st.size < RNYX_HEADER_LEN || st.size > 28u + 32768u + 16384u) {
+    if (st.size < RNYX_HEADER_LEN || st.size > 28u + 65536u + 32768u) {
         fs_unmount();
         shd_balanced(base);
         halt("[SHD] malformed /bin/sh");

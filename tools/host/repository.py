@@ -211,16 +211,23 @@ REQUIRED_FILES = (
     "user/proc-tests/p_freadprobe.c", "user/proc-tests/p_pipeprobe.c",
     "user/proc-tests/p_discprobe.c", "user/proc-tests/p_rxread.c",
     # Stage 18d Slice E: CPL3 shell, shell helpers, shell boot driver,
-    # shell validator, and tests. No evaluator exists yet (Slice F).
+    # shell validator, and tests. Slice F resident evaluator (CPL3).
     "kernel/include/shd.h", "kernel/core/shd.c",
     "user/shell/sh.c", "user/shell/sh_key.c", "user/shell/sh_key.h",
     "user/shell/sh_parse.c", "user/shell/sh_parse.h",
+    "user/shell/rl_lex.c", "user/shell/rl_lex.h",
+    "user/shell/rl_parse.c", "user/shell/rl_parse.h",
+    "user/shell/rl_sem.c", "user/shell/rl_sem.h",
+    "user/shell/rl_eval.c", "user/shell/rl_eval.h",
+    "user/shell/rl_mem.h",
     "user/proc-tests/sh_echo.c", "user/proc-tests/sh_cat.c",
     "user/proc-tests/sh_upper.c", "user/proc-tests/sh_exit.c",
     "user/proc-tests/sh_dcode.c", "user/proc-tests/sh_prod.c",
+    "user/proc-tests/rltest.c",
     "tools/host/sh_output.py",
     "tests/repository/test_shell_abi.py",
     "tests/integration/test_cplshell.py",
+    "tests/integration/test_rleval.py",
 ) + tuple(f"{directory}/.gitkeep" for directory in RESERVED_DIRECTORIES)
 
 # Version 14 is the exact Stage 14 repository contract, not a build-target DSL.

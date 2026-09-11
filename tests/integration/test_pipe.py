@@ -43,6 +43,14 @@ MAXDATA_ASM = """bits 64
     or rax, [0x602ff8]
     or rax, [0x603000]
     or rax, [0x603ff8]
+    or rax, [0x604000]
+    or rax, [0x604ff8]
+    or rax, [0x605000]
+    or rax, [0x605ff8]
+    or rax, [0x606000]
+    or rax, [0x606ff8]
+    or rax, [0x607000]
+    or rax, [0x607ff8]
     test rax, rax
     jnz .bad
     mov eax, 0
@@ -152,10 +160,12 @@ class PipeIntegrationTests(unittest.TestCase):
         entries.append(("/t/v1badver.rnx", bytes(bad)))
         bad = bytearray(blobs["p_exit42"])
         entries.append(("/t/v1badshape.rnx", bytes(bad[:-10])))
+        # v2 boundaries under the amended caps (code-over-cap is
+        # unstageable via spawn; the shared phase no longer reads
+        # maxcode1, mirroring test_proc.py).
         entries.append(("/t/maxcode.rnx", _envelope(EXIT_BLOB + bytes(32768 - 12), 0, 0, b"")))
-        entries.append(("/t/maxcode1.rnx", _envelope(EXIT_BLOB + bytes(32769 - 12), 0, 0, b"")))
-        entries.append(("/t/maxdata.rnx", _envelope(maxdata_code, 0, 16384, b"")))
-        entries.append(("/t/maxdata1.rnx", _envelope(maxdata_code, 0, 16385, b"")))
+        entries.append(("/t/maxdata.rnx", _envelope(maxdata_code, 0, 32768, b"")))
+        entries.append(("/t/maxdata1.rnx", _envelope(maxdata_code, 0, 32769, b"")))
         for iname, mutate in (("badv2ver", lambda b: struct.pack_into("<H", b, 4, 3)),
                               ("badv2rsv", lambda b: struct.pack_into("<H", b, 10, 1)),
                               ("badv2entry", lambda b: struct.pack_into("<I", b, 12, 8)),
