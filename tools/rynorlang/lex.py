@@ -41,6 +41,8 @@ DOUBLE_TOKENS = {
     # working via the parser accommodation in parse.py.
     "<<": "SHIFT_LEFT",
     ">>": "SHIFT_RIGHT",
+    # Stage 19c module qualification (additive: was LEX_INVALID_CHAR).
+    "::": "COLON_COLON",
 }
 
 # Stage 15b shell edition: exactly one additive double token. It is only

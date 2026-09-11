@@ -161,7 +161,7 @@ class LexerTokenTests(unittest.TestCase):
         self.assertEqual(kinds(source), expected)
 
     def test_19_double_character_tokens(self):
-        source = "== != <= >= && || -> << >>"
+        source = "== != <= >= && || -> << >> ::"
         self.assertEqual(kinds(source), list(lexer.DOUBLE_TOKENS.values()) + ["EOF"])
 
     def test_20_equals_maximal_munch(self):

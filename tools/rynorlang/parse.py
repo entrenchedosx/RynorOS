@@ -165,14 +165,20 @@ class _Parser:
     def parse_program(self) -> ParseNode:
         start = self.current().span
         members: list[ParseNode] = []
-        while self.at("FN") or (self.at("IDENTIFIER") and self.current().lexeme == _RECORD_WORD):
+        while (self.at("FN") or (self.at("IDENTIFIER") and self.current().lexeme == _RECORD_WORD)
+               or (self.at("IDENTIFIER") and self.current().lexeme == "use")):
             if self.at("FN"):
                 members.append(self.parse_function())
+            elif self.current().lexeme == "use":
+                node = self.parse_use_stmt()
+                if node is None:
+                    break
+                members.append(node)
             else:
                 members.append(self.parse_record_decl())
         # MUTATION_POINT_PROGRAM_TRAILING
         if not self.at("EOF"):
-            self.fail("PAR_UNEXPECTED_TOKEN", "only function and record definitions are allowed at top level", ("FN", "EOF"))
+            self.fail("PAR_UNEXPECTED_TOKEN", "only function, record, and use definitions are allowed at top level", ("FN", "EOF"))
         eof = self.current()
         end = members[-1].span if members else eof.span
         return ParseNode("Program", _cover(start, end), tuple(members))
@@ -260,6 +266,14 @@ class _Parser:
         if token.kind == "IDENTIFIER":
             self.take()
             base = token.lexeme
+            span = token.span
+            if self.at("COLON_COLON"):
+                # Stage 19c qualified type (module record; analyzer
+                # resolves against the import table).
+                self.take()
+                member = self.identifier()
+                span = _cover(span, member.span)
+                base = base + "::" + member.text
             if base in _TYPE_CTORS and self.at("LESS"):
                 self.take()
                 self.type_angle_depth += 1
@@ -278,7 +292,7 @@ class _Parser:
                     self.type_angle_depth -= 1
                     if self.type_angle_depth == 0:
                         del self.gt_pending[:]
-            return ParseNode("Type", token.span, text=base)
+            return ParseNode("Type", span, text=base)
         self.fail("PAR_EXPECTED_TOKEN", "expected a type", tuple(sorted(_TYPE_TOKENS)))
         raise AssertionError("unreachable")
 
@@ -327,6 +341,10 @@ class _Parser:
             node = self.parse_match_stmt()
             if node is not None:
                 return node
+        if self.at("IDENTIFIER") and self.current().lexeme == "use":
+            node = self.parse_use_stmt()
+            if node is not None:
+                return node
         if self.at("LEFT_BRACE"):
             return self.parse_block()
         expression = self.parse_pipeline()
@@ -369,6 +387,22 @@ class _Parser:
         condition = self.parse_pipeline()
         body = self.parse_block()
         return ParseNode("WhileStmt", _cover(start.span, body.span), (condition, body))
+
+    def parse_use_stmt(self) -> ParseNode | None:
+        # Stage 19c import (contextual word). `use` + STRING is an import;
+        # anything else falls back to an ordinary expression-statement
+        # (a variable named `use` keeps working; no function may be named
+        # `use`, so no call shape is lost).
+        if self.index + 1 >= len(self.tokens):
+            return None
+        nxt = self.tokens[self.index + 1]
+        if nxt.kind != "STRING":
+            return None
+        start = self.take()
+        path_tok = self.take()
+        end = self.expect("SEMICOLON", "after use statement")
+        path_node = ParseNode("StringLiteral", path_tok.span, text=path_tok.lexeme, value=path_tok.value)
+        return ParseNode("UseStmt", _cover(start.span, end.span), (path_node,))
 
     def parse_loop_jump(self) -> ParseNode:
         # Stage 19b break/continue (reserved words; exactly `break;`).
@@ -628,6 +662,13 @@ class _Parser:
         while True:
             if self.match("LEFT_PAREN"):
                 expression = self.finish_call(expression)
+            elif self.at("COLON_COLON") and expression.kind == "Identifier":
+                # Stage 19c qualified name (module alias; analyzer splits,
+                # validates, and mangles). Other heads reject `::`.
+                self.take()
+                member = self.identifier()
+                text = expression.text + "::" + member.text
+                expression = ParseNode("Identifier", _cover(expression.span, member.span), text=text)
             elif self.match("ARROW"):
                 # Stage 19a field access (existing token; expression-postfix
                 # position was always a parse error, so no valid v1 input

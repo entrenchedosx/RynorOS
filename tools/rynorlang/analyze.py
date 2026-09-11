@@ -107,7 +107,8 @@ class _AbortAnalysis(Exception):
 
 class Analyzer:
     def __init__(self, program: ParseNode, source: str | None = None, tokens: tuple[Token, ...] = (),
-                 edition: str = "v1", commands: dict | None = None):
+                 edition: str = "v1", commands: dict | None = None, external: dict | None = None,
+                 imports: dict | None = None, self_alias: str | None = None):
         self.program = program
         self.depth = 0
         # Stage 19b loop nesting for break/continue targeting (separate
@@ -122,6 +123,18 @@ class Analyzer:
         # span, symbol}. Collected in the first pass like functions.
         self.record_decls = {}
         self.record_sizes = {}  # name -> static byte size (recursion-checked)
+        # Stage 19c modules: preloaded foreign globals (mangled names) and
+        # this file's alias table. Own top-level names mangle with the
+        # file's alias (entry files pass None: identity, v1-identical).
+        # `own` maps bare -> stored for same-file references.
+        self.imports = dict(imports) if imports else {}
+        self.self_alias = self_alias
+        self.own: dict[str, str] = {}
+        if external:
+            for name, info in external.get("funcs", {}).items():
+                self.global_funcs[name] = dict(info)
+            for name, info in external.get("records", {}).items():
+                self.record_decls[name] = dict(info)
         self.sym_counter = 0
         self.diagnostic: Optional[Diagnostic] = None
         self.source = source
@@ -135,6 +148,33 @@ class Analyzer:
                 else:
                     column += 1
             self.end_positions[token.span.offset + token.span.length] = (line, column)
+
+    def _stored(self, bare: str) -> str:
+        # Storage name for an own top-level declaration (identity for the
+        # entry file, alias-mangled otherwise). Always populated, so every
+        # top-level lookup below behaves identically for both.
+        if self.self_alias is None:
+            return bare
+        return f"{self.self_alias}__{bare}"
+
+    def _top(self, name: str) -> str:
+        # Resolve a bare top-level reference to its stored name.
+        return self.own.get(name, name)
+
+    def _qualify(self, alias: str, base: str, span: Span):
+        # Resolve alias::base to its stored (mangled) name or raise.
+        if alias not in self.imports:
+            self._error(C_UNDECLARED, f"unknown module '{alias}'", span,
+                        expected="imported module", got=alias, name=alias, context="qualified name")
+        return f"{alias}__{base}"
+
+    def _split_qualified(self, text: str):
+        if "::" in text:
+            alias, _, base = text.partition("::")
+            if not alias or not base or "::" in base:
+                return None
+            return alias, base
+        return None
 
     def _span_dict(self, span: Span) -> dict:
         end_offset = span.offset + span.length
@@ -192,15 +232,21 @@ class Analyzer:
                 if fn.kind == "RecordDecl":
                     self._collect_record(fn)
                     continue
+                if fn.kind == "UseStmt":
+                    # Stage 19c import directive (resolved at load; the
+                    # import table carries every file). Nothing collects.
+                    continue
                 # fn is FunctionDef ParseNode
                 name = fn.text
                 span = fn.span
-                if name in self.global_funcs:
+                stored = self._stored(name)
+                if stored in self.global_funcs or stored in self.record_decls:
                     self._error(C_DUPLICATE, f"duplicate function '{name}'", span,
                                 expected="unique function", got=name, name=name, context="function")
                 if name in RESERVED_FN_NAMES:
                     self._error(C_DUPLICATE, f"'{name}' is reserved", span,
                                 expected="non-reserved function name", got=name, name=name, context="function")
+                self.own[name] = stored
                 # extract params and ret_type (raw type nodes; resolved to
                 # canonical strings after record collection, so parametric
                 # and record types validate uniformly at every position)
@@ -233,24 +279,24 @@ class Analyzer:
                     seen.add(pname)
                 symbol = None  # assigned below: functions take 0..n-1 so the
                 # frozen RIR symbol==index rule holds with records present
-                self.global_funcs[name] = {"params": params, "ret_type": ret_type, "span": span, "symbol": symbol, "node": fn, "block": block}
+                self.global_funcs[stored] = {"params": params, "ret_type": ret_type, "span": span, "symbol": symbol, "node": fn, "block": block}
                 function_params.append(params)
             for params in function_params:
                 for pname, _ptype, pspan in params:
-                    if pname in self.global_funcs:
+                    if self._top(pname) in self.global_funcs:
                         self._error(C_DUPLICATE, f"duplicate declaration '{pname}' shadows global function", pspan,
                                     expected="name distinct from functions", got=pname, name=pname, context="parameter")
             # Symbol assignment: functions take 0..n-1 in source order (the
             # frozen RIR symbol==index rule), records follow. Deterministic.
             for fn in func_nodes:
                 if fn.kind == "FunctionDef":
-                    info = self.global_funcs[fn.text]
+                    info = self.global_funcs[self._top(fn.text)]
                     if info["symbol"] is None:
                         info["symbol"] = self.sym_counter
                         self.sym_counter += 1
             for fn in func_nodes:
                 if fn.kind == "RecordDecl":
-                    info = self.record_decls[fn.text]
+                    info = self.record_decls[self._top(fn.text)]
                     if info["symbol"] is None:
                         info["symbol"] = self.sym_counter
                         self.sym_counter += 1
@@ -266,6 +312,8 @@ class Analyzer:
             for fn in func_nodes:
                 if fn.kind == "RecordDecl":
                     stable_records.append(self._lower_record(fn))
+                    continue
+                if fn.kind == "UseStmt":
                     continue
                 stable = self._lower_function(fn)
                 stable_funcs.append(stable)
@@ -291,7 +339,7 @@ class Analyzer:
         self._enter()
         try:
             name = fn.text
-            info = self.global_funcs[name]
+            info = self.global_funcs[self._top(name)]
             ret_type = info["ret_type"]
             block = None
             for c in fn.children:
@@ -311,7 +359,7 @@ class Analyzer:
                 stable_params.append({"kind": "Param", "span": self._span_dict(pspan), "name": pname, "type": ptype, "symbol": sym})
             stable_block = self._drive(self._lower_block(block, scope_stack, ret_type))
             prog_span = self._node_span(fn)
-            return {"kind": "Function", "span": prog_span, "name": name, "params": stable_params, "ret_type": ret_type, "body": stable_block, "symbol": info["symbol"]}
+            return {"kind": "Function", "span": prog_span, "name": self._top(name), "params": stable_params, "ret_type": ret_type, "body": stable_block, "symbol": info["symbol"]}
         finally:
             self._leave()
 
@@ -347,7 +395,8 @@ class Analyzer:
             stmts = []
             for stmt in block.children:
                 stable = yield self._lower_stmt(stmt, scope_stack, ret_type)
-                stmts.append(stable)
+                if stable is not None:
+                    stmts.append(stable)
                 if self.diagnostic:
                     break
             # pop scope
@@ -380,7 +429,8 @@ class Analyzer:
         # namespace shared with functions (redefine either way duplicates).
         name = node.text
         span = node.span
-        if name in self.global_funcs or name in self.record_decls:
+        stored = self._stored(name)
+        if stored in self.global_funcs or stored in self.record_decls:
             self._error(C_DUPLICATE, f"duplicate declaration '{name}'", span,
                         expected="unique declaration", got=name, name=name, context="record")
         if name in RESERVED_TYPE_NAMES:
@@ -395,8 +445,9 @@ class Analyzer:
                             expected="unique field", got=fname, name=fname, context="record field")
             seen.add(fname)
             raw.append((fname, child.children[1], child.span))
-        symbol = None  # assigned with the functions: records follow them
-        self.record_decls[name] = {"fields_raw": raw, "span": span, "symbol": symbol, "node": node}
+        symbol = None  # assigned with the functions (records follow them)
+        self.own[name] = stored
+        self.record_decls[stored] = {"fields_raw": raw, "span": span, "symbol": symbol, "node": node, "bare": name}
 
     def _type_shape(self, tnode: ParseNode):
         # Parse-tree Type/Cap nodes -> agtypes shape (no validation yet).
@@ -418,17 +469,34 @@ class Analyzer:
 
     def _resolve_type(self, tnode: ParseNode, check_size: bool = True) -> str:
         # Resolve a parse-tree type to its canonical string, enforcing all
-        # 19a shape rules and (unless check_size is False, used while record
+        # shape rules and (unless check_size is False, used while record
         # sizes are still being computed) the static size bound.
+        # Qualified `alias::Name` resolves through the import table;
+        # bare nominals resolve through own-mangled names.
+        raw = tnode.text or ""
+        qualified = self._split_qualified(raw)
+        if qualified is not None:
+            alias, base = qualified
+            stored = self._qualify(alias, base, tnode.span)
+            if tnode.children:
+                self._error(C_TYPE_MISMATCH, f"type '{raw}' takes no arguments", tnode.span,
+                            expected="plain record name", got=raw, context="type")
+            if stored not in self.record_decls:
+                self._error(C_UNDECLARED, f"unknown type '{raw}'", tnode.span,
+                            expected="declared record", got=raw, name=raw, context="type")
+            return stored
         shape = self._type_shape(tnode)
+        if shape is None:
+            self._error(C_TYPE_MISMATCH, "malformed type", tnode.span,
+                        expected="valid type", context="type")
         if shape[0] == "nominal":
-            name = shape[1]
-            if name in ("list", "map", "status"):
-                self._error(C_ARITY_MISMATCH, f"type '{name}' needs type arguments", tnode.span,
-                            expected="type arguments", got=name, context="type")
+            name = self._top(shape[1])
+            if shape[1] in ("list", "map", "status", "result"):
+                self._error(C_ARITY_MISMATCH, f"type '{shape[1]}' needs type arguments", tnode.span,
+                            expected="type arguments", got=shape[1], context="type")
             if name not in self.record_decls:
-                self._error(C_UNDECLARED, f"unknown type '{name}'", tnode.span,
-                            expected="declared record or builtin type", got=name, name=name, context="type")
+                self._error(C_UNDECLARED, f"unknown type '{shape[1]}'", tnode.span,
+                            expected="declared record or builtin type", got=shape[1], name=shape[1], context="type")
             return name
         err = _agtypes.validate_type(shape)
         if err == "unknown-base":
@@ -483,11 +551,15 @@ class Analyzer:
         # Resolve every field type string (all record names known), then
         # compute static sizes with occurs-check. Source order throughout.
         for name, info in self.record_decls.items():
+            if "fields" in info:
+                # Seeded (imported) records arrive pre-resolved; sizes are
+                # still computed below.
+                continue
             resolved = []
             for fname, ftnode, fspan in info["fields_raw"]:
                 canon = self._resolve_type(ftnode, check_size=False)
                 shape = _agtypes.parse_type(canon)
-                if shape is not None and shape[0] == "generic" and shape[1] == "status":
+                if shape is not None and shape[0] == "generic" and shape[1] in ("status", "result"):
                     self._error(C_TYPE_MISMATCH, f"record field '{fname}' cannot be a status value", fspan,
                                 expected="non-status field", got=canon, name=fname, context="record field")
                 resolved.append((fname, canon, fspan))
@@ -533,7 +605,7 @@ class Analyzer:
             if fn.kind != "FunctionDef" or fn.text in seen:
                 continue
             seen.add(fn.text)
-            info = self.global_funcs[fn.text]
+            info = self.global_funcs[self._top(fn.text)]
             canon_params = []
             for pname, tnode, pspan in info["params"]:
                 ctype = self._resolve_type(tnode)
@@ -543,9 +615,9 @@ class Analyzer:
                 info["ret_type"] = self._resolve_type(info["ret_type"])
 
     def _lower_record(self, node: ParseNode) -> dict:
-        info = self.record_decls[node.text]
+        info = self.record_decls[self._top(node.text)]
         fields = [{"name": fname, "type": fcanon} for fname, fcanon, _fspan in info["fields"]]
-        return {"kind": "RecordDecl", "span": self._node_span(node), "name": node.text,
+        return {"kind": "RecordDecl", "span": self._node_span(node), "name": self._top(node.text),
                 "fields": fields, "symbol": info["symbol"]}
 
     def _declare(self, name: str, typ: str, span: Span, scope_stack: list):
@@ -553,7 +625,7 @@ class Analyzer:
         if name in ("break", "continue"):
             self._error(C_DUPLICATE, f"'{name}' is a reserved control word", span,
                         expected="non-reserved name", got=name, name=name, context="let")
-        if name in self.global_funcs:
+        if name in self.global_funcs or self._stored(name) in self.global_funcs:
             self._error(C_DUPLICATE, f"duplicate declaration '{name}' shadows function", span,
                         expected="name distinct from functions", got=name, name=name, context="let")
         for scope in scope_stack:
@@ -657,6 +729,11 @@ class Analyzer:
                 expr, etype = yield self._lower_expr(expr_node, scope_stack, True)
                 # if expr is Call returning unit, ok; otherwise etype must not be unit (but only Call can be unit)
                 return {"kind": "ExprStmt", "span": self._node_span(stmt), "expr": expr}
+            elif stmt.kind == "UseStmt":
+                # Stage 19c import directive: validated at load (the import
+                # table carries every resolved file); lowers to nothing
+                # (the caller drops None results).
+                return None
             elif stmt.kind == "Block":
                 return (yield self._lower_block(stmt, scope_stack, ret_type))
             else:
@@ -887,6 +964,12 @@ class Analyzer:
         return (yield self._construct_record(callee_name, pairs, node, scope_stack))
 
     def _construct_record(self, callee_name: str, pairs: list, node: ParseNode, scope_stack: list):
+        qualified = self._split_qualified(callee_name)
+        if qualified is not None:
+            alias, base = qualified
+            callee_name = self._qualify(alias, base, node.span)
+        else:
+            callee_name = self._top(callee_name)
         if callee_name in self.global_funcs:
             self._error(C_TYPE_MISMATCH, f"'{callee_name}' is a function, not a record", node.span,
                         expected="record construction", got=callee_name, callee=callee_name, context="record literal")
@@ -1445,6 +1528,14 @@ class Analyzer:
                         self._error(C_UNKNOWN_FUNCTION, f"called expression is not a function name", callee_node.span,
                                     expected="identifier callee", got=callee_node.kind, context="call")
                     callee_name = callee_node.text
+                    qualified = self._split_qualified(callee_name)
+                    if qualified is not None:
+                        alias, base = qualified
+                        callee_name = self._qualify(alias, base, callee_node.span)
+                    else:
+                        # Own top-level names resolve through the file's
+                        # alias map (identity for entry files: v1-identical).
+                        callee_name = self._top(callee_name)
                     # Stage 16 builtin: print(x). Stage 19a widens the
                     # argument to every value type (aggregates render in the
                     # frozen canonical format; the RIR builder desugars).
