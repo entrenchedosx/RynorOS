@@ -30,6 +30,12 @@ KEY_TYPES = ("int", "bool", "str")
 MAX_AGG_BYTES = 8192
 MAX_TYPE_NESTING = 8
 
+# Stage 19a aggregate builtins (reserved names, `print` precedent: user
+# functions may not claim them; analyzer lowers calls to dedicated RIR
+# ops). Single source: analyze.py and rir.py both import this tuple.
+AGG_BUILTINS = ("len", "push", "insert", "get", "is_ok", "is_err",
+                "unwrap_or", "byte_at")
+
 # Frozen 19a err codes (int payload of err statuses).
 ERR_FULL = 1
 ERR_NOTFOUND = 2
