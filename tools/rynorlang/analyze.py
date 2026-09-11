@@ -1090,7 +1090,7 @@ class Analyzer:
                                 expected="unique literal", context="match arm")
                 covered_lits.add(key)
             for bname, _btype, _bsym in bindings:
-                if self._lookup(bname, scope_stack) is not None or bname in self.global_funcs:
+                if self._lookup(bname, scope_stack) is not None or bname in self.global_funcs or bname in RESERVED_FN_NAMES:
                     self._error(C_DUPLICATE, f"duplicate declaration '{bname}'", pat_node.span,
                                 expected="unique binding", got=bname, name=bname, context="match binding")
             bound = []
