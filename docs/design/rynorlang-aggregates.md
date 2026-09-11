@@ -261,7 +261,34 @@ Source ≤1MiB; int magnitude ≤i64max; str ≤4096B; expr/type nesting
 map probes ≤N; shift masked &63; interp steps ≤10M, calls ≤100k.
 Every bound has accept/reject or max/max+1 evidence.
 
-## 12. Test plan (binding)
+## 12. Supersessions of the 15b shell-language notes (explicit)
+
+`docs/design/rynorlang-shell-language.md` is NOT edited; the
+following 15b forward-looking notes yield to higher-precedence
+sources, recorded here per the freeze hierarchy (executable tests
+and ROADMAP intent outrank older design prose):
+
+- 15b §4 planned a `DOT` token plus `Member`/`MethodCall` kinds for
+  19a field access. SUPERSEDED: the frozen executable
+  `test_49_all_fixtures_have_the_expected_outcome` +
+  `invalid_char_dot.rl` (`let x = 3.14;`) require `.` to stay
+  `LEX_INVALID_CHAR`, so no `DOT` token and no `Member` kind exist;
+  field access is postfix `->` lowering to `Field` nodes. The 15b
+  "`->` stays reserved" sentence (written to justify `|>` over `->`
+  for pipelines) is spent by this decision: no future construct
+  needs it, and reserving syntax forever for nothing is rejected.
+  No 15b test or fixture uses `->` in expression position, so all
+  47 shell tests pass unchanged.
+- 15b §5 prose "`|` still `LEX_INVALID_CHAR`" described 15b-era
+  behavior, not an executable pin (no test or fixture asserts it).
+  The ROADMAP 19a bitops requirement needs the universal `|`/`&`/`^`
+  spellings (word-operators would break the frozen identifier
+  property, e.g. `or` in `test_08`), so `|`/`&`/`^`/`~`/`<<`/`>>`
+  become tokens. The §5 byte-identical promise itself holds: every
+  previously-valid input lexes/parses byte-identically (gated by the
+  full v1 suite, which must pass unchanged).
+
+## 13. Test plan (binding)
 
 New fixtures `tests/fixtures/rynorlang/aggregates/{good,bad}/`
 (≥12 good incl. nesting/map-order/print-format/max-cap, ≥18 bad incl.

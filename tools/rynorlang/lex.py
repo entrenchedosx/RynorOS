@@ -36,11 +36,17 @@ DOUBLE_TOKENS = {
     "&&": "AND_AND",
     "||": "OR_OR",
     "->": "ARROW",
+    # Stage 19a aggregates/bitops (additive: all were LEX_INVALID_CHAR;
+    # no valid earlier program contains them). Shell `>>` redirect keeps
+    # working via the parser accommodation in parse.py.
+    "<<": "SHIFT_LEFT",
+    ">>": "SHIFT_RIGHT",
 }
 
 # Stage 15b shell edition: exactly one additive double token. It is only
-# recognized when the caller opts into a shell edition; default v1 behavior
-# is byte-identical (a '|' character stays LEX_INVALID_CHAR there).
+# recognized when the caller opts into a shell edition. (Stage 19a adds
+# single `|` everywhere; `|>` still munchs first in shell editions, and
+# default v1 behavior stays byte-identical for all previously-valid input.)
 SHELL_DOUBLE_TOKENS = {
     "|>": "PIPE_GT",
 }
@@ -70,6 +76,14 @@ SINGLE_TOKENS = {
     ";": "SEMICOLON",
     ",": "COMMA",
     ":": "COLON",
+    # Stage 19a aggregates/bitops (additive: all were LEX_INVALID_CHAR).
+    # `.` is deliberately NOT added: invalid_char_dot.rl keeps it invalid.
+    "[": "LEFT_BRACKET",
+    "]": "RIGHT_BRACKET",
+    "&": "AMP",
+    "|": "PIPE",
+    "^": "CARET",
+    "~": "TILDE",
 }
 
 ESCAPES = {"\\": "\\", '"': '"', "n": "\n", "t": "\t"}
