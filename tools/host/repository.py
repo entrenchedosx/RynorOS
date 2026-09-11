@@ -196,6 +196,7 @@ REQUIRED_FILES = (
     "tools/rynorlang/std/str.rl",
     "tools/rynorlang/std/test.rl",
     "tests/repository/test_rynorlang_modules.py",
+    "docs/reports/stage19c.md",
     "docs/reports/stage19b.md",
     "docs/reports/stage19a.md",
     # Stage 18d Slices A/B: gated input driver, UAPI header, validator,
