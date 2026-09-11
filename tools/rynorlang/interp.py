@@ -40,6 +40,12 @@ CALL_LIMIT = 100_000
 ERR_FULL = 1
 ERR_NOTFOUND = 2
 ERR_OORANGE = 3
+# Stage 19e: arena overflow (NOMEM) and misc file failures (IO),
+# re-derived like the rest. The oracle is test-only and unbounded,
+# so NOMEM is unreachable here by construction (lengths cap at
+# 16384 per call); backends implement the real bound.
+ERR_NOMEM = 4
+ERR_IO = 5
 
 FNV_OFFSET = 14695981039346656037
 FNV_PRIME = 1099511628211
@@ -381,7 +387,7 @@ def _exec_instr(instr: dict, env: dict, funcs: dict, strtab: dict, emitted: list
         return None
     if op in ("make_record", "get_field", "make_list", "list_len", "list_idx", "list_push",
               "make_map", "map_get", "map_insert", "map_len",
-              "str_len", "str_byte_at", "status_is_ok", "status_is_err",
+              "str_len", "str_byte_at", "str_fread", "str_fjoin", "status_is_ok", "status_is_err",
               "status_unwrap_or", "result_ok", "result_err", "unwrap_ok", "unwrap_err"):
         return _exec_agg(instr, env, rectypes, emitted, vtypes)
     if op == "call":
@@ -570,6 +576,42 @@ def _exec_agg(instr: dict, env: dict, rectypes: dict, emitted: list | None = Non
             env[instr["dst"]] = (1, ERR_OORANGE, 0)
         else:
             env[instr["dst"]] = (0, 0, ord(text[index]))
+        return None
+    if op == "str_fread":
+        # Test-only host-filesystem read (mirrors the native helper's
+        # contract, not its implementation): exact bytes, surrogate
+        # escapes round-trip non-ASCII deterministically.
+        import os as _os
+        raw_path = env[instr["path"]].encode("ascii", "surrogateescape")
+        offset = _signed(env[instr["offset"]])
+        length = _signed(env[instr["length"]])
+        if offset < 0 or length < 0 or length > 16384:
+            env[instr["dst"]] = (1, ERR_OORANGE, "")
+            return None
+        try:
+            with open(raw_path, "rb") as handle:
+                handle.seek(0, _os.SEEK_END)
+                size = handle.tell()
+                if offset > size:
+                    env[instr["dst"]] = (1, ERR_OORANGE, "")
+                    return None
+                handle.seek(offset)
+                data = handle.read(length)
+        except FileNotFoundError:
+            env[instr["dst"]] = (1, ERR_NOTFOUND, "")
+            return None
+        except OSError:
+            env[instr["dst"]] = (1, ERR_IO, "")
+            return None
+        env[instr["dst"]] = (0, 0, data.decode("ascii", "surrogateescape"))
+        return None
+    if op == "str_fjoin":
+        directory = env[instr["directory"]]
+        rel = env[instr["rel"]]
+        if not rel or rel.startswith("/"):
+            env[instr["dst"]] = (1, ERR_OORANGE, "")
+            return None
+        env[instr["dst"]] = (0, 0, rel if not directory else directory + "/" + rel)
         return None
     if op == "status_is_ok":
         env[instr["dst"]] = 1 if env[instr["v"]][0] == 0 else 0

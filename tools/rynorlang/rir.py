@@ -97,7 +97,7 @@ AGG_OPS = (
     "make_record", "get_field",
     "make_list", "list_len", "list_idx", "list_push",
     "make_map", "map_get", "map_insert", "map_len",
-    "str_len", "str_byte_at",
+    "str_len", "str_byte_at", "str_fread", "str_fjoin",
     "status_is_ok", "status_is_err", "status_unwrap_or",
     "result_ok", "result_err", "unwrap_ok", "unwrap_err",
     "print_agg",
@@ -455,6 +455,12 @@ def _uses_of_instr(instr: dict) -> list:
                 "map_get": ("map", "key"), "map_insert": ("map", "key", "val"),
                 "str_byte_at": ("v", "index"),
                 "status_unwrap_or": ("v", "default")}[op]
+        return [instr[k] for k in keys if isinstance(instr.get(k), str)]
+    if op == "str_fread":
+        keys = ("path", "offset", "length")
+        return [instr[k] for k in keys if isinstance(instr.get(k), str)]
+    if op == "str_fjoin":
+        keys = ("directory", "rel")
         return [instr[k] for k in keys if isinstance(instr.get(k), str)]
     if op in ("result_ok", "result_err"):
         return [instr["val"]] if isinstance(instr.get("val"), str) else []
@@ -960,7 +966,9 @@ def _status_payload_type(low: _FunctionLowering, scrut: str, stype: str, fname: 
     if node is None or node[0] != "generic" or node[1] not in ("status", "result"):
         _fail(COMP_BAD_AST, f"function '{fname}' {kind} pattern needs a status or result")
     if node[1] == "status":
-        return _agtypes.canonical(node[2][0])
+        # Status err payloads are always int codes (the payload type
+        # belongs to ok only); result carries both payloads.
+        return _agtypes.canonical(node[2][0]) if kind == "OkPat" else "int"
     payloads = (_agtypes.canonical(node[2][0]), _agtypes.canonical(node[2][1]))
     return payloads[0] if kind == "OkPat" else payloads[1]
 
@@ -1469,6 +1477,24 @@ def _lower_builtin_call(low: _FunctionLowering, node: dict, callee: str,
         if _vtype(low, arg_temps[1], fname, "byte_at index") != "int":
             _fail(COMP_BAD_AST, "byte_at needs an int index")
         return emit("str_byte_at", "status<int>", v=arg_temps[0], index=arg_temps[1])
+    if callee == "fread":
+        if len(arg_temps) != 3:
+            _fail(COMP_BAD_AST, "fread needs exactly three arguments")
+        if _vtype(low, arg_temps[0], fname, "fread path") != "str":
+            _fail(COMP_BAD_AST, "fread needs a str path")
+        if _vtype(low, arg_temps[1], fname, "fread offset") != "int":
+            _fail(COMP_BAD_AST, "fread needs an int offset")
+        if _vtype(low, arg_temps[2], fname, "fread length") != "int":
+            _fail(COMP_BAD_AST, "fread needs an int length")
+        return emit("str_fread", "status<str>", path=arg_temps[0], offset=arg_temps[1], length=arg_temps[2])
+    if callee == "fjoin":
+        if len(arg_temps) != 2:
+            _fail(COMP_BAD_AST, "fjoin needs exactly two arguments")
+        if _vtype(low, arg_temps[0], fname, "fjoin directory") != "str":
+            _fail(COMP_BAD_AST, "fjoin needs a str directory")
+        if _vtype(low, arg_temps[1], fname, "fjoin rel") != "str":
+            _fail(COMP_BAD_AST, "fjoin needs a str rel")
+        return emit("str_fjoin", "status<str>", directory=arg_temps[0], rel=arg_temps[1])
     if callee == "ok" or callee == "err":
         # Stage 19b result constructors (analyzer elaborated the payload
         # against the annotated result type; re-checked here).
@@ -2315,6 +2341,30 @@ def _verify_agg(func: dict, name: str, where: str, instr: dict, vregs: dict,
         if instr.get("type") != "status<int>":
             errors.append(f"func '{name}': {where} str_byte_at result must be status<int>")
         fresh(instr.get("dst"), "status<int>")
+    elif op == "str_fread":
+        allowed = {"op", "dst", "type", "path", "offset", "length"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} str_fread carries unknown fields")
+        if use(instr.get("path"), "fread path") != "str":
+            errors.append(f"func '{name}': {where} str_fread needs a str path")
+        if use(instr.get("offset"), "fread offset") != "int":
+            errors.append(f"func '{name}': {where} str_fread needs an int offset")
+        if use(instr.get("length"), "fread length") != "int":
+            errors.append(f"func '{name}': {where} str_fread needs an int length")
+        if instr.get("type") != "status<str>":
+            errors.append(f"func '{name}': {where} str_fread result must be status<str>")
+        fresh(instr.get("dst"), "status<str>")
+    elif op == "str_fjoin":
+        allowed = {"op", "dst", "type", "directory", "rel"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} str_fjoin carries unknown fields")
+        if use(instr.get("directory"), "fjoin directory") != "str":
+            errors.append(f"func '{name}': {where} str_fjoin needs a str directory")
+        if use(instr.get("rel"), "fjoin rel") != "str":
+            errors.append(f"func '{name}': {where} str_fjoin needs a str rel")
+        if instr.get("type") != "status<str>":
+            errors.append(f"func '{name}': {where} str_fjoin result must be status<str>")
+        fresh(instr.get("dst"), "status<str>")
     elif op == "status_is_ok" or op == "status_is_err":
         allowed = {"op", "dst", "type", "v"}
         if set(instr) - allowed:
@@ -2526,6 +2576,11 @@ def _dump_instr(instr: dict) -> str:
         return f'{instr.get("dst")} = str_len {instr.get("v")}'
     if op == "str_byte_at":
         return f'{instr.get("dst")} = str_byte_at {instr.get("v")}[{instr.get("index")}]'
+    if op == "str_fread":
+        return (f'{instr.get("dst")} = str_fread {instr.get("path")} '
+                f'{instr.get("offset")} {instr.get("length")}')
+    if op == "str_fjoin":
+        return f'{instr.get("dst")} = str_fjoin {instr.get("directory")} {instr.get("rel")}'
     if op == "status_is_ok":
         return f'{instr.get("dst")} = status_is_ok {instr.get("v")}'
     if op == "status_is_err":

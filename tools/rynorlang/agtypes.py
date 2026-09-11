@@ -33,16 +33,27 @@ MAX_TYPE_NESTING = 8
 
 # Stage 19a aggregate builtins (reserved names, `print` precedent: user
 # functions may not claim them; analyzer lowers calls to dedicated RIR
-# ops). Stage 19b adds ok/err constructors. Single source: analyze.py
+# ops). Stage 19b adds ok/err constructors. Stage 19e adds fread/fjoin
+# (file input + path join for the self-host compiler; same reservation
+# rule, zero collisions across all fixtures). Single source: analyze.py
 # and rir.py both import this tuple.
 AGG_BUILTINS = ("len", "push", "insert", "get", "is_ok", "is_err",
-                "unwrap_or", "byte_at", "ok", "err")
+                "unwrap_or", "byte_at", "ok", "err", "fread", "fjoin")
 
 # Frozen 19a err codes (int payload of err statuses).
 ERR_FULL = 1
 ERR_NOTFOUND = 2
 ERR_OORANGE = 3
 # 4 NOMEM is reserved and unused in 19a (frames are static).
+# Stage 19e claims it: fread/fjoin arena exhaustion (both backends
+# bump-allocate stable strings; overflow is a clean err, never a trap).
+ERR_NOMEM = 4
+# Stage 19e file errors (fread err payloads; fjoin uses ERR_OORANGE
+# documented as invalid-argument): missing file is ERR_NOTFOUND,
+# bad offset/len is ERR_OORANGE, arena overflow is ERR_NOMEM, and
+# anything else is ERR_IO (new additive code: previously no builtin
+# could fail this way, so no valid program observes it).
+ERR_IO = 5
 
 
 def _is_name(text: str) -> bool:

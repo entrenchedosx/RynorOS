@@ -202,6 +202,7 @@ REQUIRED_FILES = (
     "docs/design/rynorlang-conformance.md",
     "tools/rynorlang/kloc.py",
     "tests/repository/test_rynorlang_conformance.py",
+    "tests/repository/test_rynorlang_selfhost.py",
     "docs/reports/stage19d.md",
     "docs/reports/stage19c.md",
     "docs/reports/stage19b.md",
