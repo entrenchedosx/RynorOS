@@ -31,7 +31,8 @@
 #define SYS_FREAD 7u
 #define SYS_SPAWN_PIPE 8u
 /* 9..2^32-1 reserved: unknown numbers die as invalid_call; the namespace
-   only ever extends upward, never renumbers. */
+   only ever extends upward, never renumbers. Next free number is 9;
+   growth policy is frozen in docs/design/abi-growth.md (P3). */
 
 #define SYS_STDOUT 1u
 #define SYSCALL_WRITE_MAX 4096u
