@@ -42,6 +42,9 @@ CORE_EXCLUSIONS = {
     "print list": "fn main(): int { print([1, 2]); return 0; }",
     "print status list": ("fn main(): int { let l: list<int,2> = [1]; "
                           "let s: status<list<int,2>> = push(l, 2); print(s); return 0; }"),
+    "nested let": "fn main(): int { if true { let x: int = 1; print(x); } return 0; }",
+    "arm let": ("fn main(): int { let s: status<int> = get({\"k\": 1}, \"k\"); match s { "
+                "ok(v) => { let y: int = v; print(y); }, err(e) => { print(e); } } return 0; }"),
     "match result": ("fn main(): int { let r: result<int,int> = ok(1); match r { "
                      "ok(v) => { print(v); }, err(e) => { print(e); } } return 0; }"),
     "nested map payload": "fn main(): int { let l: list<map<int,int,2>,2> = []; print(l); return 0; }",
@@ -68,13 +71,23 @@ def _write_data(directory, name="data.txt", content=b"hello-from-file"):
     return target
 
 
+def _rlpath(path):
+    """Render a host path for embedding in a RynorLang string literal.
+
+    Frozen language-visible paths use forward slashes on every host; a raw
+    Windows path would inject ``\\U``-style escapes into the literal. The
+    forward-slash form opens the same file through Python on all platforms.
+    """
+    return Path(path).as_posix()
+
+
 class FreadAcceptTests(unittest.TestCase):
     def test_01_read_exact_bytes(self):
         directory = tempfile.mkdtemp(prefix="selfhost-")
         self.addCleanup(shutil.rmtree, directory, True)
         target = _write_data(directory)
         src = (f"fn main(): int {{\n"
-               f"  let r: status<str> = fread(\"{target}\", 0, 100);\n"
+               f"  let r: status<str> = fread(\"{_rlpath(target)}\", 0, 100);\n"
                f"  match r {{\n"
                f"    ok(v) => {{ print(v); return 0; }},\n"
                f"    err(e) => {{ print(e); return 1; }}\n"
@@ -95,12 +108,12 @@ class FreadAcceptTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, directory, True)
         target = _write_data(directory, content=b"abcdefghij")
         src = (f"fn main(): int {{\n"
-               f"  let a: status<str> = fread(\"{target}\", 4, 3);\n"
+               f"  let a: status<str> = fread(\"{_rlpath(target)}\", 4, 3);\n"
                f"  match a {{\n"
                f"    ok(v) => {{ print(v); }},\n"
                f"    err(e) => {{ print(e); return 1; }}\n"
                f"  }}\n"
-               f"  let b: status<str> = fread(\"{target}\", 10, 5);\n"
+               f"  let b: status<str> = fread(\"{_rlpath(target)}\", 10, 5);\n"
                f"  match b {{\n"
                f"    ok(v) => {{ print(len(v)); }},\n"
                f"    err(e) => {{ print(e); return 2; }}\n"
@@ -163,10 +176,10 @@ class FreadRejectTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, directory, True)
         target = _write_data(directory, content=b"12345")
         cases = [
-            (f'fread("{directory}/missing", 0, 10)', 2),
-            (f'fread("{target}", 99, 10)', 3),
-            (f'fread("{target}", 0 - 1, 10)', 3),
-            (f'fread("{target}", 0, 16385)', 3),
+            (f'fread("{_rlpath(directory)}/missing", 0, 10)', 2),
+            (f'fread("{_rlpath(target)}", 99, 10)', 3),
+            (f'fread("{_rlpath(target)}", 0 - 1, 10)', 3),
+            (f'fread("{_rlpath(target)}", 0, 16385)', 3),
             ('fjoin("/a", "")', 3),
             ('fjoin("/a", "/b")', 3),
         ]
@@ -349,17 +362,17 @@ class SelfhostDifferentialTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, directory, True)
         target = _write_data(directory, content=b"abcdef")
         src = (f"fn main(): int {{\n"
-               f"  let r: status<str> = fread(\"{target}\", 1, 3);\n"
+               f"  let r: status<str> = fread(\"{_rlpath(target)}\", 1, 3);\n"
                f"  match r {{\n"
                f"    ok(v) => {{ print(v); }},\n"
                f"    err(e) => {{ print(e); return 1; }}\n"
                f"  }}\n"
-               f"  let j: status<str> = fjoin(\"{directory}\", \"data.txt\");\n"
+               f"  let j: status<str> = fjoin(\"{_rlpath(directory)}\", \"data.txt\");\n"
                f"  match j {{\n"
                f"    ok(v) => {{ print(v); }},\n"
                f"    err(e) => {{ print(e); return 2; }}\n"
                f"  }}\n"
-               f"  let m: status<str> = fread(\"{directory}/missing\", 0, 3);\n"
+               f"  let m: status<str> = fread(\"{_rlpath(directory)}/missing\", 0, 3);\n"
                f"  match m {{\n"
                f"    ok(v) => {{ print(v); return 3; }},\n"
                f"    err(e) => {{ print(e); }}\n"
@@ -367,7 +380,7 @@ class SelfhostDifferentialTests(unittest.TestCase):
                f"  return 0;\n"
                f"}}\n")
         want = self._oracle(src)
-        self.assertEqual(want, (0, f"bcd{directory}/data.txt2"))
+        self.assertEqual(want, (0, f"bcd{_rlpath(directory)}/data.txt2"))
         work = Path(tempfile.mkdtemp(prefix="selfhost-nat-"))
         try:
             self.assertEqual(self._native(src, work), want)

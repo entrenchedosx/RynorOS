@@ -185,7 +185,9 @@ def _resolve_graph(entry_path: Path, root: Path, std_dir: Path):
                 else:
                     child = (abspath.parent / norm).resolve()
                     try:
-                        child_rel = str(child.relative_to(root))
+                        # Frozen language-visible paths use forward slashes on
+                        # every host (matches manifest keys and diagnostics).
+                        child_rel = child.relative_to(root).as_posix()
                     except ValueError:
                         return {"code": MOD_NOT_FOUND, "message": f"{rel}: import escapes the project: {path_text!r}"}
                     stem = Path(norm).stem
