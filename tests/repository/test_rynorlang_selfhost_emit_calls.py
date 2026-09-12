@@ -149,8 +149,6 @@ REJECT25_CASES = [
     ("bool-param", "fn f(b: bool): int { return 1; }\nfn main(): int { return f(true); }\n"),
     ("seven-params", "fn f(a: int, b: int, c: int, d: int, e: int, g: int, h: int): int { return a; }\nfn main(): int { return f(1, 2, 3, 4, 5, 6, 7); }\n"),
     ("bool-ret-helper", "fn f(): bool { return true; }\nfn main(): int { return 1; }\n"),
-    ("if-helper", "fn f(x: int): int { if true { return x; } return 0; }\nfn main(): int { return f(1); }\n"),
-    ("while-helper", "fn f(x: int): int { while true { break; } return x; }\nfn main(): int { return f(1); }\n"),
     ("str-helper", "fn f(): int { let s: str = \"ab\"; return 0; }\nfn main(): int { return f(); }\n"),
     ("main-with-param", "fn main(a: int): int { return a; }\n"),
 ]

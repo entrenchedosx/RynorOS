@@ -8,7 +8,9 @@ restricted validated subset (single `fn main(): int`, scalar int/bool lets,
 directly to x86-64 machine code in a normal RYNX v2 image. (Multi-function
 programs and direct calls are covered by BE-B in
 `test_rynorlang_selfhost_emit_calls.py`; the `call`/`second-fn` shapes
-graduated there.) QEMU and a
+graduated there. Control flow is covered by BE-C in
+`test_rynorlang_selfhost_emit_branch.py`; the `if-stmt`/`while-stmt`/
+`continue-stmt` shapes graduated there.) QEMU and a
 native toolchain are unavailable here, so execution is proven by the
 test-only emulator below (it EXECUTES baby bytes; it never generates
 code and cannot mask a broken backend). Reference semantics come from
@@ -540,8 +542,6 @@ ACCEPT_CASES = [
 REJECT25_CASES = [
     ("div", "fn main(): int { return 1 / 2; }\n"),
     ("mod", "fn main(): int { return 1 % 2; }\n"),
-    ("if-stmt", "fn main(): int { if true { return 0; } return 1; }\n"),
-    ("while-stmt", "fn main(): int { while true { break; } return 0; }\n"),
     ('match-stmt', 'fn main(): int { let r: status<int> = byte_at("ab", 0); match r { ok(v) => { return v; }, err(e) => { return 1; } } }\n'),
     ('str-let', 'fn main(): int { let s: str = "ab"; return 0; }\n'),
     ("list-let", "fn main(): int { let l: list<int,2> = [1, 2]; return 0; }\n"),
@@ -551,7 +551,6 @@ REJECT25_CASES = [
     ("unit-ret", "fn main() { return; }\n"),
     ("print-call", "fn main(): int { print(1); return 0; }\n"),
     ("no-main", "fn f(): int { return 0; }\n"),
-    ("continue-stmt", "fn main(): int { while true { continue; } return 0; }\n"),
 ]
 
 REJECT_CHECK_CASES = [
