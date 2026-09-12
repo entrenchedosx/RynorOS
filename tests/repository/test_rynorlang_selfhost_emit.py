@@ -721,8 +721,20 @@ class BEMutantTests(unittest.TestCase):
             "  let disp: int = mainoff - 4;")
         self.assertTrue(self._red_on(combo, 3))
 
-    def test_be_m7_native_only_pending(self):
-        self.skipTest("QEMU/native unavailable: wrong-exit-register mutant needs execution proof")
+    def test_be_m7_native_red_verified(self):
+        # M7 was PENDING for lack of native execution; it is now owned by
+        # tests/integration/test_native_backend.py (baseline exits 42
+        # natively, exit-register mutant exits 0 natively). This marker
+        # pins the live _start exit-register sequence the native M7
+        # mutates, so the assumption cannot rot silently.
+        combo = _combo_text()
+        live = ("fn e_start(mainoff: int, acc: int): int {\n"
+                "  let disp: int = mainoff - 5;\n"
+                "  let a0: int = e_b(232, acc);\n"
+                "  let a1: int = e_le32(disp, a0);\n"
+                "  let a2: int = e_b(137, a1);\n"
+                "  let a3: int = e_b(195, a2);")
+        self.assertEqual(combo.count(live), 1)
 
     def test_be_m8_canned_image(self):
         combo = _mutated_combo(
