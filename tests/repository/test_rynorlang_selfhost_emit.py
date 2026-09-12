@@ -5,7 +5,10 @@ bounds, and backend mutants.
 The baby backend (`rynorlang/selfhost/emit.rl`, core dialect) compiles a
 restricted validated subset (single `fn main(): int`, scalar int/bool lets,
 `return`, arithmetic/logic/shift/compare, no calls/division/aggregates)
-directly to x86-64 machine code in a normal RYNX v2 image. QEMU and a
+directly to x86-64 machine code in a normal RYNX v2 image. (Multi-function
+programs and direct calls are covered by BE-B in
+`test_rynorlang_selfhost_emit_calls.py`; the `call`/`second-fn` shapes
+graduated there.) QEMU and a
 native toolchain are unavailable here, so execution is proven by the
 test-only emulator below (it EXECUTES baby bytes; it never generates
 code and cannot mask a broken backend). Reference semantics come from
@@ -537,13 +540,11 @@ ACCEPT_CASES = [
 REJECT25_CASES = [
     ("div", "fn main(): int { return 1 / 2; }\n"),
     ("mod", "fn main(): int { return 1 % 2; }\n"),
-    ("call", "fn f(): int { return 1; }\nfn main(): int { return f(); }\n"),
     ("if-stmt", "fn main(): int { if true { return 0; } return 1; }\n"),
     ("while-stmt", "fn main(): int { while true { break; } return 0; }\n"),
     ('match-stmt', 'fn main(): int { let r: status<int> = byte_at("ab", 0); match r { ok(v) => { return v; }, err(e) => { return 1; } } }\n'),
     ('str-let', 'fn main(): int { let s: str = "ab"; return 0; }\n'),
     ("list-let", "fn main(): int { let l: list<int,2> = [1, 2]; return 0; }\n"),
-    ("second-fn", "fn main(): int { return 0; }\nfn f(): int { return 1; }\n"),
     ("record", "record P { a: int }\nfn main(): int { return 0; }\n"),
     ("params", "fn main(a: int): int { return a; }\n"),
     ("bool-main", "fn main(): bool { return true; }\n"),

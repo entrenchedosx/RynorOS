@@ -1161,6 +1161,7 @@ fn pgm_hparam_ty(src: str, f: int, cs: int, ce: int, idx: int): TR {
 }
 fn pgm_hty_at(src: str, f: int, pos: int, bo: int, idx: int, cur: int): TR {
   let t: Tok = next_tok(src, pos);
+  if pgm_is_comma(src, t) { return pgm_hty_at(src, f, t->p, bo, idx, cur); } else { }
   if t->k == 1 { } else { return TR(t: tscal(1), p: pos, d: derr(12, f, pos)); }
   if cur == idx { return pgm_hty_ty(src, f, t->p, bo); } else { }
   let an: VS = annot_span(src, t->p);
