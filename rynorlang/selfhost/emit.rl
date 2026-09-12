@@ -641,6 +641,10 @@ fn be_s_stmt(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): 
 fn be_s_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
   if t->l == 3 { if beq(src, t->s, "let", 0, 3) { return be_s_let(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
   if t->l == 6 { if beq(src, t->s, "return", 0, 6) { return be_s_return(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
+  if t->l == 2 { if beq(src, t->s, "if", 0, 2) { return be_s_if(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
+  if t->l == 5 { if beq(src, t->s, "while", 0, 5) { return be_s_while(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
+  if t->l == 5 { if beq(src, t->s, "break", 0, 5) { return be_s_jump(src, f, pos, end, acc, t); } else { } } else { }
+  if t->l == 8 { if beq(src, t->s, "continue", 0, 8) { return be_s_jump(src, f, pos, end, acc, t); } else { } } else { }
   if be_s_ctrl(src, t) == 1 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   if t->l == 3 { if beq(src, t->s, "use", 0, 3) { return be_s_usevar(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
   return be_s_exprstmt(src, f, fs, fe, pos, end, acc);
@@ -651,11 +655,7 @@ fn be_s_usevar(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int,
   return be_s_exprstmt(src, f, fs, fe, pos, end, acc);
 }
 fn be_s_ctrl(src: str, t: Tok): int {
-  if t->l == 2 { if beq(src, t->s, "if", 0, 2) { return 1; } else { } } else { }
-  if t->l == 5 { if beq(src, t->s, "while", 0, 5) { return 1; } else { } } else { }
   if t->l == 5 { if beq(src, t->s, "match", 0, 5) { return 1; } else { } } else { }
-  if t->l == 5 { if beq(src, t->s, "break", 0, 5) { return 1; } else { } } else { }
-  if t->l == 8 { if beq(src, t->s, "continue", 0, 8) { return 1; } else { } } else { }
   return 0;
 }
 fn be_s_block_in(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
@@ -698,24 +698,28 @@ fn be_s_return(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int,
   if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }
   return BZ(p: sc->p, n: acc + e->n + sz_leave_ret(), c: 0, o: 0);
 }
-fn be_e_block(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): BZ {
+fn be_e_block(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, bx: int, bc: int): BZ {
   let t: Tok = pgm_tok(src, pos, end);
   if t->k == 0 { return BZ(p: pos, n: acc, c: 0, o: 0); } else { }
   if pgm_is_cbrace(src, t) { return BZ(p: pos, n: acc, c: 0, o: 0); } else { }
-  let s: BZ = be_e_stmt(src, f, fs, fe, t->s, end, acc);
+  let s: BZ = be_e_stmt(src, f, fs, fe, t->s, end, acc, bx, bc);
   if s->c == 0 { } else { return s; }
-  return be_e_block(src, f, fs, fe, s->p, end, s->n);
+  return be_e_block(src, f, fs, fe, s->p, end, s->n, bx, bc);
 }
-fn be_e_stmt(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): BZ {
+fn be_e_stmt(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, bx: int, bc: int): BZ {
   let t: Tok = pgm_tok(src, pos, end);
   if t->k == 0 { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
-  if t->k == 1 { return be_e_stmt_kw(src, f, fs, fe, pos, end, acc, t); } else { }
-  if pgm_is_obrace(src, t) { return be_e_block_in(src, f, fs, fe, t, end, acc); } else { }
+  if t->k == 1 { return be_e_stmt_kw(src, f, fs, fe, pos, end, acc, bx, bc, t); } else { }
+  if pgm_is_obrace(src, t) { return be_e_block_in(src, f, fs, fe, t, end, acc, bx, bc); } else { }
   return be_e_exprstmt(src, f, fs, fe, pos, end, acc);
 }
-fn be_e_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
+fn be_e_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, bx: int, bc: int, t: Tok): BZ {
   if t->l == 3 { if beq(src, t->s, "let", 0, 3) { return be_e_let(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
   if t->l == 6 { if beq(src, t->s, "return", 0, 6) { return be_e_return(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
+  if t->l == 2 { if beq(src, t->s, "if", 0, 2) { return be_e_if(src, f, fs, fe, pos, end, acc, bx, bc, t); } else { } } else { }
+  if t->l == 5 { if beq(src, t->s, "while", 0, 5) { return be_e_while(src, f, fs, fe, pos, end, acc, bx, bc, t); } else { } } else { }
+  if t->l == 5 { if beq(src, t->s, "break", 0, 5) { return be_e_break(src, f, pos, end, acc, bx, bc, t); } else { } } else { }
+  if t->l == 8 { if beq(src, t->s, "continue", 0, 8) { return be_e_continue(src, f, pos, end, acc, bx, bc, t); } else { } } else { }
   if be_s_ctrl(src, t) == 1 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   if t->l == 3 { if beq(src, t->s, "use", 0, 3) { return be_e_usevar(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
   return be_e_exprstmt(src, f, fs, fe, pos, end, acc);
@@ -725,10 +729,10 @@ fn be_e_usevar(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int,
   if nx->k == 3 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   return be_e_exprstmt(src, f, fs, fe, pos, end, acc);
 }
-fn be_e_block_in(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
+fn be_e_block_in(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int, bx: int, bc: int): BZ {
   let be: int = pgm_brace_end(src, t->s, end);
   if be == 0 - 1 { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
-  let d: BZ = be_e_block(src, f, fs, fe, t->p, be, acc);
+  let d: BZ = be_e_block(src, f, fs, fe, t->p, be, acc, bx, bc);
   if d->c == 0 { } else { return d; }
   return BZ(p: be, n: d->n, c: 0, o: 0);
 }
@@ -821,17 +825,6 @@ fn be_size_prog(src: str, f: int): BZ {
   if m->c == 0 { } else { return m; }
   return BZ(p: m->p, n: m->n, c: 0, o: 0);
 }
-fn be_size_main(src: str, f: int, cs: int, ce: int): BZ {
-  let kw: Tok = next_tok(src, cs);
-  let nm: Tok = next_tok(src, kw->p);
-  let lp: Tok = next_tok(src, nm->p);
-  let bo: int = pgm_body_open(src, lp->p, ce);
-  let be: int = pgm_brace_end(src, bo, ce);
-  let nl: int = scope_slot(src, f, cs, ce, ce);
-  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, sz_frame(nl));
-  if b->c == 0 { } else { return b; }
-  return BZ(p: be, n: sz_start() + b->n + 1, c: 0, o: 0);
-}
 fn be_emit_prog(src: str, f: int): BZ {
   let n: int = be_fn_count(src, f);
   let mi: int = be_main_index(src, f);
@@ -839,26 +832,6 @@ fn be_emit_prog(src: str, f: int): BZ {
   let h: int = be_rnyx_header(14 + be_all_len(src, f), 0);
   let s: int = e_start(mo, h);
   return be_emit_all(src, f, 0, n, s);
-}
-fn be_emit_main(src: str, f: int, cs: int, ce: int, acc: int): BZ {
-  let kw: Tok = next_tok(src, cs);
-  let nm: Tok = next_tok(src, kw->p);
-  let lp: Tok = next_tok(src, nm->p);
-  let bo: int = pgm_body_open(src, lp->p, ce);
-  let be: int = pgm_brace_end(src, bo, ce);
-  let nl: int = scope_slot(src, f, cs, ce, ce);
-  let h: int = be_rnyx_header(14 + be_main_len(src, f, cs, ce), acc);
-  let s: int = e_start(14, h);
-  let fr: int = e_frame(nl, s);
-  let b: BZ = be_e_block(src, f, cs, ce, bo + 1, be, fr);
-  if b->c == 0 { } else { return b; }
-  let t: int = e_b(204, b->n);
-  return BZ(p: be, n: t, c: 0, o: 0);
-}
-fn be_main_len(src: str, f: int, cs: int, ce: int): int {
-  let s: BZ = be_size_main(src, f, cs, ce);
-  if s->c == 0 { return s->n - sz_start(); } else { }
-  return 0;
 }
 fn be_gate_helper(src: str, f: int, it: TI, end: int, nfns: int, nmain: int): D {
   let hs: int = it->s;
@@ -978,7 +951,7 @@ fn be_emit_fn(src: str, f: int, cs: int, ce: int, acc: int): BZ {
   let np: int = pgm_hparam_count(src, cs, ce);
   let fr: int = e_frame(nl, acc);
   let sp: int = be_e_spills(fr, np, 0);
-  let b: BZ = be_e_block(src, f, cs, ce, bo + 1, be, sp);
+  let b: BZ = be_e_block(src, f, cs, ce, bo + 1, be, sp, 0 - 1, 0 - 1);
   if b->c == 0 { } else { return b; }
   let t: int = e_b(204, b->n);
   return BZ(p: be, n: t, c: 0, o: 0);
@@ -1116,4 +1089,158 @@ fn be_e_callclose(src: str, pos: int, end: int, acc: int): BZ {
   let t: Tok = pgm_tok(src, pos, end);
   if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 41 { return BZ(p: t->p, n: acc, c: 0, o: 0); } else { } } else { } } else { }
   return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+fn sz_test(): int {
+  return 2;
+}
+fn e_test_eax(acc: int): int {
+  let a0: int = e_b(133, acc);
+  let a1: int = e_b(192, a0);
+  return a1;
+}
+fn sz_jcc(): int {
+  return 6;
+}
+fn e_jcc_z(disp: int, acc: int): int {
+  let a0: int = e_b(15, acc);
+  let a1: int = e_b(132, a0);
+  let a2: int = e_le32(disp, a1);
+  return a2;
+}
+fn sz_jmp(): int {
+  return 5;
+}
+fn e_jmp_rel(disp: int, acc: int): int {
+  let a0: int = e_b(233, acc);
+  let a1: int = e_le32(disp, a0);
+  return a1;
+}
+fn be_rel32(targ: int, pos: int, len: int): int {
+  return targ - (pos + len);
+}
+fn be_s_jump(src: str, f: int, pos: int, end: int, acc: int, t: Tok): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if pgm_is_semi(src, nx) { } else { return BZ(p: pos, n: acc, c: 29, o: nx->s); }
+  return BZ(p: nx->p, n: acc + sz_jmp(), c: 0, o: 0);
+}
+fn be_e_break(src: str, f: int, pos: int, end: int, acc: int, bx: int, bc: int, t: Tok): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if pgm_is_semi(src, nx) { } else { return BZ(p: pos, n: acc, c: 29, o: nx->s); }
+  if bx == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: t->s); } else { }
+  return BZ(p: nx->p, n: e_jmp_rel(be_rel32(bx, acc, sz_jmp()), acc), c: 0, o: 0);
+}
+fn be_e_continue(src: str, f: int, pos: int, end: int, acc: int, bx: int, bc: int, t: Tok): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if pgm_is_semi(src, nx) { } else { return BZ(p: pos, n: acc, c: 29, o: nx->s); }
+  if bc == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: t->s); } else { }
+  return BZ(p: nx->p, n: e_jmp_rel(be_rel32(bc, acc, sz_jmp()), acc), c: 0, o: 0);
+}
+fn be_s_if(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
+  let c: BZ = be_s_level(src, f, fs, fe, 0, t->p, end);
+  if c->c == 0 { } else { return c; }
+  let bo: Tok = pgm_tok(src, c->p, end);
+  if pgm_is_obrace(src, bo) { } else { return BZ(p: pos, n: acc, c: 29, o: bo->s); }
+  let be: int = pgm_brace_end(src, bo->s, end);
+  if be == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: bo->s); } else { }
+  let th: BZ = be_s_block(src, f, fs, fe, bo->p, be, 0);
+  if th->c == 0 { } else { return th; }
+  return be_s_if_else(src, f, fs, fe, be, end, acc, c->n, th->n);
+}
+fn be_s_if_else(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, cn: int, tn: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 1 { if t->l == 4 { if beq(src, t->s, "else", 0, 4) { return be_s_else(src, f, fs, fe, pos, end, acc, cn, tn, t); } else { } } else { } } else { }
+  return BZ(p: pos, n: acc + cn + sz_test() + sz_jcc() + tn, c: 0, o: 0);
+}
+fn be_s_else(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, cn: int, tn: int, t: Tok): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 1 { if nx->l == 2 { if beq(src, nx->s, "if", 0, 2) { return be_s_if(src, f, fs, fe, nx->s, end, acc + cn + sz_test() + sz_jcc() + tn + sz_jmp(), nx); } else { } } else { } } else { }
+  if pgm_is_obrace(src, nx) { } else { return BZ(p: pos, n: acc, c: 29, o: nx->s); }
+  let be: int = pgm_brace_end(src, nx->s, end);
+  if be == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: nx->s); } else { }
+  let el: BZ = be_s_block(src, f, fs, fe, nx->p, be, 0);
+  if el->c == 0 { } else { return el; }
+  return BZ(p: be, n: acc + cn + sz_test() + sz_jcc() + tn + sz_jmp() + el->n, c: 0, o: 0);
+}
+fn be_s_while(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
+  let c: BZ = be_s_level(src, f, fs, fe, 0, t->p, end);
+  if c->c == 0 { } else { return c; }
+  let bo: Tok = pgm_tok(src, c->p, end);
+  if pgm_is_obrace(src, bo) { } else { return BZ(p: pos, n: acc, c: 29, o: bo->s); }
+  let be: int = pgm_brace_end(src, bo->s, end);
+  if be == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: bo->s); } else { }
+  let bd: BZ = be_s_block(src, f, fs, fe, bo->p, be, 0);
+  if bd->c == 0 { } else { return bd; }
+  return BZ(p: be, n: acc + c->n + sz_test() + sz_jcc() + bd->n + sz_jmp(), c: 0, o: 0);
+}
+fn be_e_if(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, bx: int, bc: int, t: Tok): BZ {
+  let c: BZ = be_e_level(src, f, fs, fe, 0, t->p, end, acc);
+  if c->c == 0 { } else { return c; }
+  let bo: Tok = pgm_tok(src, c->p, end);
+  if pgm_is_obrace(src, bo) { } else { return BZ(p: pos, n: acc, c: 29, o: bo->s); }
+  let be: int = pgm_brace_end(src, bo->s, end);
+  if be == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: bo->s); } else { }
+  let th: BZ = be_s_block(src, f, fs, fe, bo->p, be, 0);
+  if th->c == 0 { } else { return th; }
+  let hasel: int = be_is_else(src, be, end);
+  let ex: BZ = be_e_else_measure(src, f, fs, fe, be, end, hasel);
+  if ex->c == 0 { } else { return ex; }
+  let tt: int = e_test_eax(c->n);
+  let eo: int = tt + sz_jcc() + th->n + hasel * sz_jmp() + ex->n;
+  let jo: int = e_jcc_z(be_rel32(tt + sz_jcc() + th->n + hasel * sz_jmp(), tt, sz_jcc()), tt);
+  let tb: BZ = be_e_block(src, f, fs, fe, bo->p, be, jo, bx, bc);
+  if tb->c == 0 { } else { return tb; }
+  return be_e_if_tail(src, f, fs, fe, be, end, tb->n, bx, bc, hasel, eo);
+}
+fn be_is_else(src: str, pos: int, end: int): int {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 1 { if t->l == 4 { if beq(src, t->s, "else", 0, 4) { return 1; } else { } } else { } } else { }
+  return 0;
+}
+fn be_e_else_measure(src: str, f: int, fs: int, fe: int, pos: int, end: int, hasel: int): BZ {
+  if hasel == 0 { return BZ(p: pos, n: 0, c: 0, o: 0); } else { }
+  let t: Tok = pgm_tok(src, pos, end);
+  return be_e_else_size(src, f, fs, fe, t, end);
+}
+fn be_e_else_size(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 1 { if nx->l == 2 { if beq(src, nx->s, "if", 0, 2) { return be_s_if(src, f, fs, fe, nx->s, end, 0, nx); } else { } } else { } } else { }
+  if pgm_is_obrace(src, nx) { } else { return BZ(p: t->s, n: 0, c: 29, o: nx->s); }
+  let be: int = pgm_brace_end(src, nx->s, end);
+  if be == 0 - 1 { return BZ(p: t->s, n: 0, c: 29, o: nx->s); } else { }
+  let el: BZ = be_s_block(src, f, fs, fe, nx->p, be, 0);
+  if el->c == 0 { } else { return el; }
+  return BZ(p: be, n: el->n, c: 0, o: 0);
+}
+fn be_e_if_tail(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, bx: int, bc: int, hasel: int, eo: int): BZ {
+  if hasel == 0 { return BZ(p: pos, n: acc, c: 0, o: 0); } else { }
+  let t: Tok = pgm_tok(src, pos, end);
+  return be_e_else(src, f, fs, fe, t, end, acc, bx, bc, eo);
+}
+fn be_e_else(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int, bx: int, bc: int, eo: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 1 { if nx->l == 2 { if beq(src, nx->s, "if", 0, 2) { return be_e_if(src, f, fs, fe, nx->s, end, acc, bx, bc, nx); } else { } } else { } } else { }
+  if pgm_is_obrace(src, nx) { } else { return BZ(p: t->s, n: acc, c: 29, o: nx->s); }
+  let be: int = pgm_brace_end(src, nx->s, end);
+  if be == 0 - 1 { return BZ(p: t->s, n: acc, c: 29, o: nx->s); } else { }
+  let jp: int = e_jmp_rel(be_rel32(eo, acc, sz_jmp()), acc);
+  let eb: BZ = be_e_block(src, f, fs, fe, nx->p, be, jp, bx, bc);
+  if eb->c == 0 { } else { return eb; }
+  return BZ(p: be, n: eb->n, c: 0, o: 0);
+}
+fn be_e_while(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, bx: int, bc: int, t: Tok): BZ {
+  let c: BZ = be_e_level(src, f, fs, fe, 0, t->p, end, acc);
+  if c->c == 0 { } else { return c; }
+  let bo: Tok = pgm_tok(src, c->p, end);
+  if pgm_is_obrace(src, bo) { } else { return BZ(p: pos, n: acc, c: 29, o: bo->s); }
+  let be: int = pgm_brace_end(src, bo->s, end);
+  if be == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: bo->s); } else { }
+  let bd: BZ = be_s_block(src, f, fs, fe, bo->p, be, 0);
+  if bd->c == 0 { } else { return bd; }
+  let tt: int = e_test_eax(c->n);
+  let eo: int = tt + sz_jcc() + bd->n + sz_jmp();
+  let jo: int = e_jcc_z(be_rel32(eo, tt, sz_jcc()), tt);
+  let bb: BZ = be_e_block(src, f, fs, fe, bo->p, be, jo, eo, acc);
+  if bb->c == 0 { } else { return bb; }
+  let ko: int = e_jmp_rel(be_rel32(acc, bb->n, sz_jmp()), bb->n);
+  return BZ(p: be, n: ko, c: 0, o: 0);
 }
