@@ -8,6 +8,9 @@
 // 15 profile, 16 mod-find, 17 mod-cycle, 18 mod-dup, 19 mod-pin,
 // 20 mod-edition, 21 mod-manifest, 22 no-entry, 23 emit, 24 usage.
 // Token kinds: 0 EOF, 1 IDENT, 2 INT, 3 STR, 4 OP.
+// Backend codes (additive, BE-A): 25 unsupported construct,
+// 26 code/data overflow, 27 reserved, 28 size/emit mismatch,
+// 29 bad checked-state invariant, 30 displacement overflow.
 record D { c: int, f: int, o: int }
 fn beq(s: str, a: int, t: str, b: int, n: int): bool {
   if n == 0 { return true; } else { }
