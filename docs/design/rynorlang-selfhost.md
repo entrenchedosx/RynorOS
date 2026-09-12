@@ -62,9 +62,12 @@ scrutinee. Everything else in frozen v1 stays (incl. records,
 lists, status + `is_ok`/`unwrap_or`, `match` on
 status/int/bool/str, `break`/`continue`, bitops, `use` imports,
 `fread`/`fjoin`/`argv` from §6). Core programs additionally
-observe one discipline (baby-enforced, host-accepted):
+observe two disciplines (baby-enforced, host-accepted):
 definition before use (functions and records; enables
-single-pass codegen with no backpatching).
+single-pass codegen with no backpatching), and `let` at
+function top level only (params plus top-level lets plus
+match-arm bindings are the whole namespace; nested-block
+lets are excluded, which keeps baby scope resolution flat).
 Rationale: each exclusion removes backend machinery (map
 probing, result layouts, print_agg, match-on-result) while the
 required corpus stays expressible via projection (lengths,

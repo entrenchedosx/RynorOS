@@ -699,6 +699,12 @@ class Analyzer:
 
     def _declare(self, name: str, typ: str, span: Span, scope_stack: list):
         # check no shadowing anywhere in scope chain + global funcs
+        if self.profile == "core" and len(scope_stack) > 2:
+            # Stage 19e core binds names at function top level only
+            # (params live in scope 1, body lets in scope 2; deeper is
+            # a nested block). Match bindings bypass _declare.
+            self._error(C_PROFILE_EXCLUDED, "nested let excluded by --profile=core", span,
+                        expected="top-level let", got=name, name=name, context="profile gate")
         if name in ("break", "continue"):
             self._error(C_DUPLICATE, f"'{name}' is a reserved control word", span,
                         expected="non-reserved name", got=name, name=name, context="let")
