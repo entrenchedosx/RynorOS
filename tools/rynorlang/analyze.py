@@ -563,6 +563,21 @@ class Analyzer:
                                 expected="core type", got=node[1], context="profile gate")
                 stack.extend(node[2])
 
+    def _check_core_printable(self, shape, span: Span) -> None:
+        # Stage 19e core printing: scalars and status-of-scalar only
+        # (the guest backend has no aggregate renderer; corpus covers
+        # aggregates through projections of the same layouts).
+        node = shape
+        while isinstance(node, tuple) and node:
+            if node[0] == "scalar":
+                return
+            if node[0] == "generic" and node[1] == "status":
+                node = node[2][0]
+                continue
+            break
+        self._error(C_PROFILE_EXCLUDED, "print of aggregate excluded by --profile=core", span,
+                    expected="core printable", got="aggregate", context="profile gate")
+
     def _mangle_shape(self, node: tuple, span: Span):
         # Rewrite nominal leaves through the file's alias map (own bare
         # names mangle; qualified alias::Name resolves; already-mangled
@@ -1204,6 +1219,15 @@ class Analyzer:
                 self._error(C_TYPE_MISMATCH, f"'fjoin' rel expects str got {rtype}", arg_nodes[1].span,
                             expected="str", got=rtype, callee=callee_name, context="call argument")
             return call_node([directory, rel], "status<str>")
+        if callee_name == "argv":
+            # Stage 19e command-line access (the guest compiler reads
+            # its entry path from argv[1]; core dialect).
+            expect_arity(1)
+            index, itype = yield operand(0)
+            if itype != "int":
+                self._error(C_TYPE_MISMATCH, f"'argv' index expects int got {itype}", arg_nodes[0].span,
+                            expected="int", got=itype, callee=callee_name, context="call argument")
+            return call_node([index], "status<str>")
         if callee_name == "ok" or callee_name == "err":
             if self.profile == "core":
                 self._error(C_PROFILE_EXCLUDED, f"'{callee_name}' excluded by --profile=core", node.span,
@@ -1662,7 +1686,7 @@ class Analyzer:
                             self._error(C_TYPE_MISMATCH, f"print expects a value type got {atype}", arg_nodes[0].span,
                                         expected="value type", got=atype, callee=callee_name, context="call argument")
                         if self.profile == "core":
-                            self._check_core_shape(_agtypes.parse_type(atype), arg_nodes[0].span)
+                            self._check_core_printable(_agtypes.parse_type(atype), arg_nodes[0].span)
                         stable = {"kind": "Call", "span": self._node_span(node), "callee": "print", "args": [arg_stable], "symbol": -1, "type": "unit"}
                         return (stable, "unit")
                     # Stage 19a aggregate builtins (reserved names; dedicated

@@ -38,7 +38,8 @@ MAX_TYPE_NESTING = 8
 # rule, zero collisions across all fixtures). Single source: analyze.py
 # and rir.py both import this tuple.
 AGG_BUILTINS = ("len", "push", "insert", "get", "is_ok", "is_err",
-                "unwrap_or", "byte_at", "ok", "err", "fread", "fjoin")
+                "unwrap_or", "byte_at", "ok", "err", "fread", "fjoin",
+                "argv")
 
 # Frozen 19a err codes (int payload of err statuses).
 ERR_FULL = 1

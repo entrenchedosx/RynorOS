@@ -36,7 +36,8 @@ _ARG_REGS = ("rdi", "rsi", "rdx", "rcx", "r8", "r9")
 # helpers (not `call` instrs). The helpers own a 1 MiB bump arena for
 # stable result strings (addresses never leak into output: only bytes
 # are observed, so ASLR/PIE cannot perturb determinism).
-_RT_HELPER_BY_OP = {"str_fread": "rt_fread", "str_fjoin": "rt_fjoin"}
+_RT_HELPER_BY_OP = {"str_fread": "rt_fread", "str_fjoin": "rt_fjoin",
+                     "str_argv": "rt_argv"}
 
 _REG = r"(?:r(?:ax|bx|cx|dx|si|di|bp|sp|8|9|1[0-5])|e(?:ax|bx|cx|dx|si|di|bp|sp)|[abcd][lhw]|sil|dil|bpl|spl|r[89][bdw]?)"
 _FORBIDDEN_RE = re.compile(
@@ -498,10 +499,87 @@ class _Emitter:
         self._spill_params(func)
         for block in func["blocks"]:
             self.out(f"{label}_{block['id']}:")
-            for instr in block["instrs"]:
+            instrs = block["instrs"]
+            term = block["term"]
+            if self._is_tail_call(func, block, instrs, term):
+                for instr in instrs[:-1]:
+                    self._emit_instr(func, instr)
+                self._emit_tail_call(func, instrs[-1])
+                continue
+            for instr in instrs:
                 self._emit_instr(func, instr)
-            self._emit_term(func, block, block["term"])
+            self._emit_term(func, block, term)
         self.out("")
+
+    def _is_tail_call(self, func: dict, block: dict, instrs: list, term: dict) -> bool:
+        # Backend peephole (Stage 19e): a direct user-function call
+        # whose value flows straight into `ret` needs no frame of its
+        # own — teardown and jump instead of call and return, so
+        # tail-recursive programs run in constant stack. Sound by
+        # construction: the call is the block's last instruction (no
+        # pending work), the term returns exactly its value (or both
+        # are valueless), runtime helpers are excluded (foreign frame
+        # protocol), the value is used nowhere else, and — critically
+        # — the call needs no stack slots: with slots the callee entry
+        # state cannot be reproduced without fresh space below the
+        # rewound frame (per-iteration drift), so those stay normal
+        # calls (correct, linear stack). Only all-register calls
+        # (scalars, no sret) take the jump.
+        if not instrs or not isinstance(term, dict) or term.get("op") != "ret":
+            return False
+        instr = instrs[-1]
+        if not isinstance(instr, dict) or instr.get("op") != "call":
+            return False
+        name = instr.get("name")
+        if not isinstance(name, str) or name in _rir.RT_HELPERS:
+            return False
+        if "dst" in instr:
+            if term.get("v") != instr["dst"]:
+                return False
+            if self.vreg_type[instr["dst"]] not in ("int", "bool", "str"):
+                return False
+            if self._vreg_used_elsewhere(func, block, instr["dst"]):
+                return False
+        elif term.get("v") is not None:
+            return False
+        _ret_agg, _regs, stack, sbytes = self._call_plan(instr)
+        if sbytes:
+            return False
+        return True
+
+    def _vreg_used_elsewhere(self, func: dict, block: dict, vreg: str) -> bool:
+        for other in func["blocks"]:
+            if other is block:
+                continue
+            for instr in other["instrs"]:
+                if not isinstance(instr, dict):
+                    continue
+                for value in instr.values():
+                    if value == vreg or (isinstance(value, list) and vreg in value):
+                        return True
+            term = other.get("term", {})
+            if not isinstance(term, dict):
+                continue
+            for value in term.values():
+                if value == vreg or (isinstance(value, list) and vreg in value):
+                    return True
+        return False
+
+    def _emit_tail_call(self, func: dict, instr: dict) -> None:
+        # All-register tail call only (the gate guarantees sbytes == 0):
+        # marshal into registers, drop our own frame, and jump. No
+        # stack slots are written and no dummy is pushed, so repeated
+        # tail calls reuse the identical stack shape every iteration
+        # (constant space, proven by the constricted-stack tests). The
+        # return-address slot above the rewound frame still holds our
+        # caller's address (nothing writes there), so the callee's
+        # normal `leave; ret` lands directly in our caller.
+        _ret_agg, regs, _stack, _sbytes = self._call_plan(instr)
+        for arg, reg in regs:
+            self._emit_arg_to_reg(arg, reg)
+        self.out("    mov rsp, rbp")
+        self.out("    pop rbp")
+        self.out(f'    jmp {_mangle(instr["name"])}')
 
     def _spill_params(self, func: dict) -> None:
         # Aggregate returns arrive with the hidden slot at stack slot 0
@@ -578,7 +656,7 @@ class _Emitter:
         elif op in ("make_record", "get_field", "make_list", "list_len",
                     "list_idx", "list_push", "make_map", "map_get",
                     "map_insert", "map_len", "str_len", "str_byte_at",
-                    "str_fread", "str_fjoin",
+                    "str_fread", "str_fjoin", "str_argv",
                     "status_is_ok", "status_is_err", "status_unwrap_or",
                     "result_ok", "result_err", "unwrap_ok", "unwrap_err",
                     "print_agg"):
@@ -789,6 +867,8 @@ class _Emitter:
         elif op == "str_fjoin":
             self._emit_rt_str_status(instr, "rt_fjoin",
                                      ["directory", "rel"])
+        elif op == "str_argv":
+            self._emit_rt_str_status(instr, "rt_argv", ["index"])
         elif op == "status_is_ok":
             self.out(f"    mov rax, {self.home(instr['v'])}")
             self.out("    xor rax, 1")
@@ -1468,15 +1548,13 @@ class _Emitter:
             self.out(f"    mov rax, {self.home_at(arg, index)}")
             self.out(f"    mov [rsp + {k + 8 * index}], rax")
 
-    def _emit_call(self, func: dict, instr: dict) -> None:
+    def _call_plan(self, instr: dict):
+        # Shared marshal plan for normal and tail calls: aggregate
+        # returns take a caller-provided hidden slot at stack slot 0
+        # (sret) with user params shifted right; registers undisturbed.
+        # Returns (ret_agg, regs, stack, sbytes).
         args = instr["args"]
-        # Aggregate returns use a caller-provided hidden slot passed as
-        # stack slot 0 (sret); user params shift right by one stack slot
-        # while registers are undisturbed. Scalars behave byte-identically
-        # to before (no sret slot, same marshal).
         ret_agg = "dst" in instr and self.vreg_type[instr["dst"]] not in ("int", "bool", "str")
-        # Marshal left-to-right into SysV slots; a value crossing the
-        # register/stack boundary moves wholly to the stack, never split.
         regs: list[tuple] = []
         stack: list[tuple] = []
         slot = 0
@@ -1496,6 +1574,16 @@ class _Emitter:
                 slot += width
         # Round stack bytes up to 16 so rsp%16==0 holds at the call.
         sbytes = (nstack * 8 + 15) // 16 * 16
+        return ret_agg, regs, stack, sbytes
+
+    def _emit_call(self, func: dict, instr: dict) -> None:
+        # Aggregate returns use a caller-provided hidden slot passed as
+        # stack slot 0 (sret); user params shift right by one stack slot
+        # while registers are undisturbed. Scalars behave byte-identically
+        # to before (no sret slot, same marshal).
+        # Marshal left-to-right into SysV slots; a value crossing the
+        # register/stack boundary moves wholly to the stack, never split.
+        ret_agg, regs, stack, sbytes = self._call_plan(instr)
         if sbytes:
             self.out(f"    sub rsp, {sbytes}")
         if ret_agg:

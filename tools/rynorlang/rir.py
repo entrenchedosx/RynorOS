@@ -97,7 +97,7 @@ AGG_OPS = (
     "make_record", "get_field",
     "make_list", "list_len", "list_idx", "list_push",
     "make_map", "map_get", "map_insert", "map_len",
-    "str_len", "str_byte_at", "str_fread", "str_fjoin",
+    "str_len", "str_byte_at", "str_fread", "str_fjoin", "str_argv",
     "status_is_ok", "status_is_err", "status_unwrap_or",
     "result_ok", "result_err", "unwrap_ok", "unwrap_err",
     "print_agg",
@@ -462,6 +462,8 @@ def _uses_of_instr(instr: dict) -> list:
     if op == "str_fjoin":
         keys = ("directory", "rel")
         return [instr[k] for k in keys if isinstance(instr.get(k), str)]
+    if op == "str_argv":
+        return [instr["index"]] if isinstance(instr.get("index"), str) else []
     if op in ("result_ok", "result_err"):
         return [instr["val"]] if isinstance(instr.get("val"), str) else []
     if op in ("unwrap_ok", "unwrap_err"):
@@ -1495,6 +1497,12 @@ def _lower_builtin_call(low: _FunctionLowering, node: dict, callee: str,
         if _vtype(low, arg_temps[1], fname, "fjoin rel") != "str":
             _fail(COMP_BAD_AST, "fjoin needs a str rel")
         return emit("str_fjoin", "status<str>", directory=arg_temps[0], rel=arg_temps[1])
+    if callee == "argv":
+        if len(arg_temps) != 1:
+            _fail(COMP_BAD_AST, "argv needs exactly one argument")
+        if _vtype(low, arg_temps[0], fname, "argv index") != "int":
+            _fail(COMP_BAD_AST, "argv needs an int index")
+        return emit("str_argv", "status<str>", index=arg_temps[0])
     if callee == "ok" or callee == "err":
         # Stage 19b result constructors (analyzer elaborated the payload
         # against the annotated result type; re-checked here).
@@ -2365,6 +2373,15 @@ def _verify_agg(func: dict, name: str, where: str, instr: dict, vregs: dict,
         if instr.get("type") != "status<str>":
             errors.append(f"func '{name}': {where} str_fjoin result must be status<str>")
         fresh(instr.get("dst"), "status<str>")
+    elif op == "str_argv":
+        allowed = {"op", "dst", "type", "index"}
+        if set(instr) - allowed:
+            errors.append(f"func '{name}': {where} str_argv carries unknown fields")
+        if use(instr.get("index"), "argv index") != "int":
+            errors.append(f"func '{name}': {where} str_argv needs an int index")
+        if instr.get("type") != "status<str>":
+            errors.append(f"func '{name}': {where} str_argv result must be status<str>")
+        fresh(instr.get("dst"), "status<str>")
     elif op == "status_is_ok" or op == "status_is_err":
         allowed = {"op", "dst", "type", "v"}
         if set(instr) - allowed:
@@ -2581,6 +2598,8 @@ def _dump_instr(instr: dict) -> str:
                 f'{instr.get("offset")} {instr.get("length")}')
     if op == "str_fjoin":
         return f'{instr.get("dst")} = str_fjoin {instr.get("directory")} {instr.get("rel")}'
+    if op == "str_argv":
+        return f'{instr.get("dst")} = str_argv {instr.get("index")}'
     if op == "status_is_ok":
         return f'{instr.get("dst")} = status_is_ok {instr.get("v")}'
     if op == "status_is_err":

@@ -56,19 +56,23 @@ new `--profile core` value (19d-handoff mechanism). Under `core`
 these are `SEM_PROFILE_EXCLUDED` (same code in baby):
 map types anywhere; result types anywhere; `ok`/`err`
 constructors; `unwrap_ok`/`unwrap_err`; `insert`/`get`
-builtins; `print` of map/result values; `match` on a result
+builtins; `print` of map/result/record/list values
+(status/int/bool/str prints stay); `match` on a result
 scrutinee. Everything else in frozen v1 stays (incl. records,
 lists, status + `is_ok`/`unwrap_or`, `match` on
 status/int/bool/str, `break`/`continue`, bitops, `use` imports,
-`fread`/`fjoin` from §6). Core programs additionally observe
-one discipline (baby-enforced, host-accepted): definition
-before use (functions and records; enables single-pass codegen
-with no backpatching).
+`fread`/`fjoin`/`argv` from §6). Core programs additionally
+observe one discipline (baby-enforced, host-accepted):
+definition before use (functions and records; enables
+single-pass codegen with no backpatching).
 Rationale: each exclusion removes backend machinery (map
 probing, result layouts, print_agg, match-on-result) while the
 required corpus stays expressible via projection (lengths,
-elements, `is_ok`/`unwrap_or`, exit codes). `result` cells are
-the only corpus class deferred to post-19e, documented in §18.
+elements, fields, `is_ok`/`unwrap_or`, exit codes). `result`
+cells are the only corpus class deferred to post-19e;
+aggregate prints run as projections (same layouts verified).
+Host-core tracks baby exactly: any cut below amends this
+section and the §18 classification together.
 
 ## 4. Source/module model
 
@@ -107,12 +111,15 @@ baked RYNX artifacts.
 ## 6. New builtins (additive, collision-checked)
 
 `fread(path: str, offset: int, len: int) -> status<str>`
-(exact file bytes; err codes 1 NOTFOUND, 2 RANGE, 3 IO/other —
-host maps open/read failures, guest maps kernel `sys_err`
-identically) and `fjoin(dir: str, rel: str) -> status<str>`
+(exact file bytes; err codes reuse the frozen family:
+ERR_NOTFOUND for missing, ERR_OORANGE for bad offset/len,
+ERR_NOMEM for arena overflow, new additive ERR_IO for other
+failures — guest maps kernel `sys_err` onto the same table)
+and `fjoin(dir: str, rel: str) -> status<str>`
 (`dir + "/" + rel`, empty dir yields rel; empty or absolute
-rel yields err 2; deeper rules like `..` belong to the module
-layer, which applies them identically on both sides). Reserved via
+rel yields ERR_OORANGE, documented as invalid-argument;
+deeper rules like `..` belong to the module layer, which
+applies them identically on both sides). Reserved via
 `AGG_BUILTINS` (a `fn fread`/`fjoin` becomes `SEM_DUPLICATE`
 like `len`; zero collisions across all fixtures, pinned by
 test). New RIR ops `str_fread`/`str_fjoin` with verifier,
@@ -137,7 +144,9 @@ allows 1024 — corpus uses ≤16, DOCUMENTED beyond); output
 code ≤65536 / data ≤32768 (v2 maxima, counted during the
 sizing pass). Baby SOURCE discipline (checked host-side by
 test): ≤12 KiB source, per-function frameslots ≤96, call depth
-≤8 by audit, zero recursion (iterative lexer/parser, worklists).
+≤8 by audit, no unbounded recursion (iterative lexer/parser,
+worklists; one bounded type-size recursion ≤ `MAX_TYPE_NESTING`
+8, audited at 8 × small frames).
 No recursion in baby-executed paths: parser is precedence
 climbing with an explicit loop; type/shape walks are bounded
 by `MAX_TYPE_NESTING` 8.
@@ -378,9 +387,15 @@ Guest: source ≤16 KiB, 2-token window, symbols ≤256, modules
 ≤16, import depth ≤16, manifest ≤64 KiB, frames ≤128
 slots/fn, output code ≤65536, data ≤32768, argv path ≤32,
 fread chunk ≤16384, print chunk ≤4096, hex line discipline
-per §10. Baby source: ≤12 KiB, ≤350 lines target (kLOC
+per §10. Code-size ladder (measured at slice B on baby-shaped
+code; stop the line past 55 KiB projected): L1 cut match
+desugaring (match corpus deferred, host-core rejects all
+match); L2 cut the `std/` prefix map (std corpus deferred);
+L3 cut `push` (cap cells via literals). Cuts never threaten
+Level 4 (self-compile uses only the intersection). Baby
+source: ≤12 KiB, ≤350 lines target (kLOC
 1.5k loose bound), per-fn frameslots ≤96, call depth ≤8,
-zero recursion. Host: `fread`/`fjoin` lengths mirror guest
+no unbounded recursion. Host: `fread`/`fjoin` lengths mirror guest
 caps (fread len ≤16384, paths ≤32); `--profile core`
 rejections enumerated in §3. Each bound carries ±1 or
 present/absent evidence.

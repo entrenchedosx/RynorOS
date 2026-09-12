@@ -256,7 +256,8 @@ def _parse_ctype(text: object):
 
 
 def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
-            call_limit: int = CALL_LIMIT, out: list | None = None) -> dict:
+            call_limit: int = CALL_LIMIT, out: list | None = None,
+            argv: list | None = None) -> dict:
     """Evaluate a verified RIR module's entry function.
 
     Returns {"exit": int|None, "trapped": str|None, "steps": int} where exit
@@ -298,6 +299,7 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
                     table[dst] = ins.get("type")
         vtype_maps[func["name"]] = table
     emitted: list = out if out is not None else []
+    arglist: list = list(argv) if argv else []
     # frames: [func, block_id, ip, env] plus pending dest slot appended on call.
     frames = [[entry, "bb0", 0, {}]]
     steps = 0
@@ -318,7 +320,7 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
             if steps > step_limit:
                 return {"exit": None, "trapped": "steps", "steps": steps}
             outcome = _exec_instr(blk["instrs"][ip], env, funcs, strtab, emitted, rectypes,
-                                  vtype_maps.get(cur["name"], {}))
+                                   vtype_maps.get(cur["name"], {}), arglist)
             frames[-1][2] += 1
             if outcome is None:
                 continue
@@ -356,7 +358,7 @@ def run_rir(module: dict, func: str = "main", step_limit: int = STEP_LIMIT,
     return {"exit": 0, "trapped": None, "steps": steps}  # unreachable; defensive
 
 
-def _exec_instr(instr: dict, env: dict, funcs: dict, strtab: dict, emitted: list | None = None, rectypes: dict | None = None, vtypes: dict | None = None):
+def _exec_instr(instr: dict, env: dict, funcs: dict, strtab: dict, emitted: list | None = None, rectypes: dict | None = None, vtypes: dict | None = None, argv: list | None = None):
     """Execute one instruction; returns None, ("call", ...), or ("trap", kind)."""
     op = instr["op"]
     rectypes = rectypes or {}
@@ -387,9 +389,9 @@ def _exec_instr(instr: dict, env: dict, funcs: dict, strtab: dict, emitted: list
         return None
     if op in ("make_record", "get_field", "make_list", "list_len", "list_idx", "list_push",
               "make_map", "map_get", "map_insert", "map_len",
-              "str_len", "str_byte_at", "str_fread", "str_fjoin", "status_is_ok", "status_is_err",
+              "str_len", "str_byte_at", "str_fread", "str_fjoin", "str_argv", "status_is_ok", "status_is_err",
               "status_unwrap_or", "result_ok", "result_err", "unwrap_ok", "unwrap_err"):
-        return _exec_agg(instr, env, rectypes, emitted, vtypes)
+        return _exec_agg(instr, env, rectypes, emitted, vtypes, argv)
     if op == "call":
         name = instr["name"]
         if name in _rir.RT_HELPERS:
@@ -467,7 +469,7 @@ def _map_locate(slots: list, key: object, kind: str, rectypes: dict):
     return ("full", -1)
 
 
-def _exec_agg(instr: dict, env: dict, rectypes: dict, emitted: list | None = None, vtypes: dict | None = None):
+def _exec_agg(instr: dict, env: dict, rectypes: dict, emitted: list | None = None, vtypes: dict | None = None, argv: list | None = None):
     """Execute one Stage 19a aggregate instruction (frozen semantics).
 
     Records are name->value dicts (field order comes from rectypes, so
@@ -612,6 +614,14 @@ def _exec_agg(instr: dict, env: dict, rectypes: dict, emitted: list | None = Non
             env[instr["dst"]] = (1, ERR_OORANGE, "")
             return None
         env[instr["dst"]] = (0, 0, rel if not directory else directory + "/" + rel)
+        return None
+    if op == "str_argv":
+        index = _signed(env[instr["index"]])
+        table = argv if argv else []
+        if index < 0 or index >= len(table):
+            env[instr["dst"]] = (1, ERR_OORANGE, "")
+        else:
+            env[instr["dst"]] = (0, 0, table[index])
         return None
     if op == "status_is_ok":
         env[instr["dst"]] = 1 if env[instr["v"]][0] == 0 else 0
