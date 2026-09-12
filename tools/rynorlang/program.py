@@ -192,7 +192,7 @@ def find_toolchain():
     """Return ((nasm, linker, runner), None) or (None, {"code","message"}).
 
     linker(inputs, output) assembles-links via (argv, to_guest) closures;
-    runner(exe, timeout) executes and reports. The split mirrors the Stage
+    runner(exe, timeout, args) executes and reports. The split mirrors the Stage
     15a native harness: Windows NASM assembles, WSL archlinux links+runs
     (or a POSIX host links+runs directly).
     """
@@ -216,8 +216,8 @@ def find_toolchain():
                                   capture_output=True, text=True, timeout=120,
                                   cwd=str(workdir))
 
-        def run_posix(path, timeout):
-            return subprocess.run([str(path)], capture_output=True, timeout=timeout)
+        def run_posix(path, timeout, args=()):
+            return subprocess.run([str(path), *args], capture_output=True, timeout=timeout)
 
         return (nasm, link_posix, run_posix), None
     wsl = shutil.which("wsl")
@@ -256,7 +256,7 @@ def find_toolchain():
                                *flags],
                               capture_output=True, text=True, timeout=120)
 
-    def run_wsl(path, timeout, _wsl=wsl):
+    def run_wsl(path, timeout, args=(), _wsl=wsl):
         # The wait-status probe cannot separate the child's stdout from its
         # own marker lines, so the child redirects stdout to a sidecar file
         # (visible to Windows through /mnt/d) which is read back verbatim.
@@ -266,7 +266,7 @@ def find_toolchain():
                   "pid=os.fork()\n"
                   "if pid==0:\n"
                   " os.dup2(out.fileno(),1)\n"
-                  " os.execv(sys.argv[1],[sys.argv[1]])\n"
+                  " os.execv(sys.argv[1],[sys.argv[1]]+sys.argv[3:])\n"
                   "_,status=os.waitpid(pid,0)\n"
                   "out.close()\n"
                   "if os.WIFSIGNALED(status):\n"
@@ -274,7 +274,8 @@ def find_toolchain():
                   "else:\n"
                   " print('EXIT',os.WEXITSTATUS(status))\n")
         proc = subprocess.run([_wsl, "-d", "archlinux", "python3", "-c", waiter,
-                               to_wsl(path), to_wsl(out_path)], capture_output=True,
+                               to_wsl(path), to_wsl(out_path),
+                               *(to_wsl(a) for a in args)], capture_output=True,
                               text=True, timeout=timeout + 30)
         marker = proc.stdout.strip().splitlines()[-1:] or [""]
         parts = marker[0].split()
@@ -662,11 +663,12 @@ def build_rynor_program(source: str, filename: str, workdir: str | Path, prog: s
              "rir": _rir.dumps(module)}, None)
 
 
-def run_program(exe: str | Path, timeout: int = 60):
+def run_program(exe: str | Path, timeout: int = 60, args=()):
     """Execute a built program. Returns (result, None) or (None, diag).
 
     result is {"exit": int|None, "signal": int|None, "stdout": bytes}.
     exit is the low-8-bit process status; signal is set when killed by one.
+    args are forwarded as process argv (argv[0] is the executable).
     """
     tools, error = find_toolchain()
     if error is not None:
@@ -677,7 +679,7 @@ def run_program(exe: str | Path, timeout: int = 60):
     except OSError:
         pass
     try:
-        proc = runner(str(exe), timeout)
+        proc = runner(str(exe), timeout, tuple(args))
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         return None, {"code": COMP_LINK_FAILED, "message": f"execution failed: {error}"}
     code = proc.returncode

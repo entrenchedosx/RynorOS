@@ -86,6 +86,18 @@ whole string moves to the stack -- never split across the boundary).
   `[rbp-x]`. No SSE/XMM/x87, no PIC/PIE, no stack protector, no unwind
   tables, no varargs. Emission header is `bits 64; default rel` plus
   `section .note.GNU-stack noalloc noexec`; links use `--build-id=none`.
+* Tail calls (Stage 19e, additive): a direct user-function call whose
+  value flows straight into `ret` (or a valueless call before a bare
+  `return`) and which needs no stack slots drops its own frame instead
+  of growing the stack — marshal args into registers, `mov rsp, rbp;
+  pop rbp`, `jmp` to the callee entry (which runs its full prologue).
+  Nothing is pushed and nothing is written, so repeated tail calls
+  reuse the identical stack shape every iteration (constant space);
+  the return-address slot above the rewound frame still holds our
+  caller's address, so the callee's normal `leave; ret` lands directly
+  in our caller. Calls needing stack slots (sret aggregates, spilled
+  args) stay normal calls. Observable behavior is identical (only
+  stack depth changes); runtime helpers are excluded.
 
 ## 5. Traps (never silent)
 

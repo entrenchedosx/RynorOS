@@ -38,6 +38,10 @@ CORE_EXCLUSIONS = {
     "get": "fn main(): int { let m: map<int,int,4> = {}; print(get(m, 1)); return 0; }",
     "print map": "fn main(): int { let m: map<int,int,4> = {}; print(m); return 0; }",
     "print result": "fn main(): int { let r: result<int,int> = ok(1); print(r); return 0; }",
+    "print record": "record P { a: int }\nfn main(): int { print(P(a: 1)); return 0; }",
+    "print list": "fn main(): int { print([1, 2]); return 0; }",
+    "print status list": ("fn main(): int { let l: list<int,2> = [1]; "
+                          "let s: status<list<int,2>> = push(l, 2); print(s); return 0; }"),
     "match result": ("fn main(): int { let r: result<int,int> = ok(1); match r { "
                      "ok(v) => { print(v); }, err(e) => { print(e); } } return 0; }"),
     "nested map payload": "fn main(): int { let l: list<map<int,int,2>,2> = []; print(l); return 0; }",
@@ -285,13 +289,47 @@ class CliTests(unittest.TestCase):
         self.assertEqual(bad, [])
 
 
+class ArgvTests(unittest.TestCase):
+    ARGV_SRC = ("fn main(): int {\n"
+                "  let a: status<str> = argv(1);\n"
+                "  match a {\n"
+                "    ok(v) => { print(v); return 0; },\n"
+                "    err(e) => { print(e); return 1; }\n"
+                "  }\n"
+                "}\n")
+
+    def test_15_argv_oracle(self):
+        result = analyzer.analyze(self.ARGV_SRC, "t.rl")
+        self.assertTrue(result.ok, result.diagnostic)
+        for argv, want in ((["prog", "hi"], (0, "hi")),
+                           (["prog"], (1, "3")),
+                           ([], (1, "3"))):
+            with self.subTest(argv=argv):
+                module, error = rir.build_rir(result.ast, "t.rl")
+                self.assertIsNone(error, error)
+                emitted: list = []
+                outcome = oracle.run_rir(module, out=emitted, argv=list(argv))
+                self.assertIsNone(outcome["trapped"], outcome)
+                self.assertEqual((outcome["exit"], "".join(emitted)), want)
+
+    def test_16_argv_rejects(self):
+        for src, code in (
+                ('fn main(): int { print(argv("x")); return 0; }', "SEM_TYPE_MISMATCH"),
+                ('fn main(): int { print(argv(1, 2)); return 0; }', "SEM_ARITY_MISMATCH"),
+                ('fn argv(): int { return 1; }\nfn main(): int { return 0; }', "SEM_DUPLICATE")):
+            with self.subTest(src=src.splitlines()[0]):
+                result = analyzer.analyze(src, "t.rl")
+                self.assertFalse(result.ok)
+                self.assertEqual(result.diagnostic.code, code)
+
+
 @unittest.skipUnless(TOOLCHAIN, "native execution unavailable (nasm + linker required)")
 class SelfhostDifferentialTests(unittest.TestCase):
-    def _native(self, src, workdir):
+    def _native(self, src, workdir, args=()):
         from tools.rynorlang import program as progmod
         arts, error = progmod.build_program(src, "t.rl", workdir, prog="prog")
         self.assertIsNone(error, error)
-        result, error = progmod.run_program(arts["exe"])
+        result, error = progmod.run_program(arts["exe"], args=args)
         self.assertIsNone(error, error)
         self.assertIsNone(result["signal"], result)
         return result["exit"], result["stdout"].decode("ascii")
@@ -344,6 +382,127 @@ class SelfhostDifferentialTests(unittest.TestCase):
             self.assertEqual(self._native(CORE_OK, work), want)
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+    def test_17_argv_native_matches_oracle(self):
+        src = ArgvTests.ARGV_SRC
+        result = analyzer.analyze(src, "t.rl")
+        self.assertTrue(result.ok, result.diagnostic)
+        module, error = rir.build_rir(result.ast, "t.rl")
+        self.assertIsNone(error, error)
+        emitted: list = []
+        outcome = oracle.run_rir(module, out=emitted, argv=["prog", "hello"])
+        self.assertIsNone(outcome["trapped"], outcome)
+        want = (outcome["exit"], "".join(emitted))
+        self.assertEqual(want, (0, "hello"))
+        work = Path(tempfile.mkdtemp(prefix="selfhost-nat-"))
+        try:
+            self.assertEqual(self._native(src, work, args=("hello",)), want)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+
+@unittest.skipUnless(TOOLCHAIN, "native execution unavailable (nasm + linker required)")
+class TailCallTests(unittest.TestCase):
+    TAIL_SUM = ("fn sum(n: int, acc: int): int {\n"
+                "  if n == 0 {\n"
+                "    return acc;\n"
+                "  } else {\n"
+                "    return sum(n - 1, acc + n);\n"
+                "  }\n"
+                "}\n"
+                "fn main(): int {\n"
+                "  print(sum(1000, 0));\n"
+                "  return 0;\n"
+                "}\n")
+
+    def _build(self, src):
+        from tools.rynorlang import program as progmod
+        work = Path(tempfile.mkdtemp(prefix="selfhost-tco-"))
+        self.addCleanup(shutil.rmtree, work, True)
+        arts, error = progmod.build_program(src, "t.rl", work, prog="prog")
+        self.assertIsNone(error, error)
+        return arts["exe"]
+
+    def _run_constricted(self, exe):
+        proc = subprocess.run(["bash", "-c", f"ulimit -s 64; exec {exe}"],
+                              capture_output=True, timeout=60)
+        return proc.returncode, proc.stdout.decode("ascii", "replace")
+
+    def test_18_tail_call_emitted(self):
+        from tools.rynorlang import compile as compiler
+        asm_text, error = compiler.compile_source(self.TAIL_SUM, "t.rl")
+        self.assertIsNone(error, error)
+        self.assertIn("\n    jmp rl_3_sum\n", asm_text)
+
+    def test_19_tail_recursion_agrees_with_oracle(self):
+        result = analyzer.analyze(self.TAIL_SUM, "t.rl")
+        self.assertTrue(result.ok, result.diagnostic)
+        module, error = rir.build_rir(result.ast, "t.rl")
+        self.assertIsNone(error, error)
+        emitted: list = []
+        outcome = oracle.run_rir(module, out=emitted)
+        self.assertIsNone(outcome["trapped"], outcome)
+        self.assertEqual((outcome["exit"], "".join(emitted)), (0, "500500"))
+
+    def test_20_deep_tail_recursion_survives_64k_stack(self):
+        src = self.TAIL_SUM.replace("sum(1000, 0)", "sum(100000, 0)")
+        exe = self._build(src)
+        code, out = self._run_constricted(exe)
+        self.assertEqual((code, out), (0, "5000050000"))
+
+    def test_21_deep_nontail_recursion_faults_constricted(self):
+        # Negative control: without tail position the same depth must
+        # exhaust the constricted stack (proves test_20 measures TCO,
+        # not a loose harness).
+        src = ("fn f(n: int): int {\n"
+               "  if n == 0 {\n"
+               "    return 0;\n"
+               "  } else {\n"
+               "    return f(n - 1) + n;\n"
+               "  }\n"
+               "}\n"
+               "fn main(): int {\n"
+               "  print(f(100000));\n"
+               "  return 0;\n"
+               "}\n")
+        exe = self._build(src)
+        proc = subprocess.run(["bash", "-c", f"ulimit -s 64; exec {exe}; echo alive:$?"],
+                              capture_output=True, text=True, timeout=60)
+        self.assertNotIn("alive:0", proc.stdout)
+
+    def test_22_sret_tail_call_stays_normal_call(self):
+        # Boundary pin: aggregate tail calls need a hidden stack slot,
+        # which cannot be reproduced without fresh space per iteration,
+        # so they stay normal calls (correct, linear stack) while
+        # scalar tail calls take the jump.
+        src = ("record P { a: int }\n"
+               "fn mk(n: int): P {\n"
+               "  if n == 0 {\n"
+               "    return P(a: 42);\n"
+               "  } else {\n"
+               "    return mk(n - 1);\n"
+               "  }\n"
+               "}\n"
+               "fn main(): int {\n"
+               "  let p: P = mk(50);\n"
+               "  print(p->a);\n"
+               "  return 0;\n"
+               "}\n")
+        result = analyzer.analyze(src, "t.rl")
+        self.assertTrue(result.ok, result.diagnostic)
+        module, error = rir.build_rir(result.ast, "t.rl")
+        self.assertIsNone(error, error)
+        emitted: list = []
+        outcome = oracle.run_rir(module, out=emitted)
+        self.assertIsNone(outcome["trapped"], outcome)
+        self.assertEqual((outcome["exit"], "".join(emitted)), (0, "42"))
+        from tools.rynorlang import compile as compiler
+        asm_text, error = compiler.compile_source(src, "t.rl")
+        self.assertIsNone(error, error)
+        self.assertNotIn("\n    jmp rl_2_mk\n", asm_text)
+        exe = self._build(src)
+        code, out = self._run_constricted(exe)
+        self.assertEqual((code, out), (0, "42"))
 
 
 if __name__ == "__main__":

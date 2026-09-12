@@ -18,6 +18,7 @@ global rl_13_rt_print_bool
 global rl_12_rt_print_str
 global rl_8_rt_fread
 global rl_8_rt_fjoin
+global rl_7_rt_argv
 extern rl_4_main
 section .text
 _start:
@@ -285,6 +286,113 @@ rl_8_rt_fjoin:
 .nomem:
     mov rax, -4
     ret
+
+; long rl_7_rt_argv(index rdi): i-th process argument from
+; /proc/self/cmdline (NUL-separated) into the shared arena.
+; Returns length in rax with buffer in rdx, or negative err
+; (-3 invalid index). Linux-only test helper, like the rest of
+; this file; the guest backend reads the entry stack instead.
+rl_7_rt_argv:
+    test rdi, rdi
+    js .range
+    sub rsp, 4160
+    mov [rsp + 4152], rdi
+    lea rdi, [rel _rl_cmdline_path]
+    xor esi, esi
+    xor edx, edx
+    mov eax, 2
+    syscall
+    test rax, rax
+    js .ioerr
+    mov r8, rax
+    mov r9, [rel _rl_fread_next]
+    test r9, r9
+    jnz .have_next
+    lea r9, [rel _rl_fread_base]
+.have_next:
+    lea rax, [rel _rl_fread_base + 1048576]
+    sub rax, 4096
+    cmp r9, rax
+    ja .nomem_close
+    mov rdi, r8
+    mov rsi, r9
+    mov edx, 4096
+    xor r10d, r10d
+    mov eax, 17
+    syscall
+    test rax, rax
+    js .ioerr_close
+    mov r10, rax
+    push r10
+    push r9
+    mov rdi, r8
+    mov eax, 3
+    syscall
+    pop r9
+    pop r10
+    test r10, r10
+    jz .ioerr
+    mov rax, r9
+    add rax, r10
+    mov [rsp + 4136], rax
+    add rax, 7
+    and rax, -8
+    mov [rel _rl_fread_next], rax
+    mov r11, [rsp + 4152]
+.walk:
+    test r11, r11
+    jz .found
+.scan:
+    cmp r9, [rsp + 4136]
+    jae .range_done
+    mov cl, [r9]
+    inc r9
+    test cl, cl
+    jnz .scan
+    dec r11
+    jmp .walk
+.found:
+    cmp r9, [rsp + 4136]
+    jae .range_done
+    mov [rsp + 4128], r9
+.measure:
+    cmp r9, [rsp + 4136]
+    jae .measure_done
+    mov cl, [r9]
+    test cl, cl
+    jz .measure_done
+    inc r9
+    jmp .measure
+.measure_done:
+    mov rdx, [rsp + 4128]
+    mov rax, r9
+    sub rax, rdx
+    add rsp, 4160
+    ret
+.range_done:
+    add rsp, 4160
+.range:
+    mov rax, -3
+    ret
+.nomem_close:
+    mov rdi, r8
+    mov eax, 3
+    syscall
+    mov rax, -4
+    add rsp, 4160
+    ret
+.ioerr_close:
+    mov rdi, r8
+    mov eax, 3
+    syscall
+.ioerr:
+    mov rax, -5
+    add rsp, 4160
+    ret
+
+section .rodata align=8
+_rl_cmdline_path:
+    db "/proc/self/cmdline", 0
 
 section .bss align=8
 _rl_rt_buf:

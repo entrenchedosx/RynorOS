@@ -36,7 +36,7 @@ REPOSITORY_TEST_INVENTORY = {
     "test_rynorlang_compiler": 40, "test_rynorlang_shell": 47,
     "test_rynorlang_programs": 46, "test_rynorlang_aggregates": 26,
     "test_rynorlang_control": 18, "test_rynorlang_modules": 18,
-    "test_rynorlang_conformance": 33, "test_rynorlang_selfhost": 16,
+    "test_rynorlang_conformance": 33, "test_rynorlang_selfhost": 24,
     "test_sched_output": 8,
     "test_blk_output": 14, "test_fs_output": 20, "test_user_output": 22,
     "test_rnyx": 13,
