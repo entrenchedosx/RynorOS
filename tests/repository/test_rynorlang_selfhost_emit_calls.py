@@ -147,9 +147,7 @@ ACCEPT_CASES = [
 REJECT25_CASES = [
     ("recur", "fn foo(x: int): int { return foo(x); }\nfn main(): int { return foo(1); }\n"),
     ("bool-param", "fn f(b: bool): int { return 1; }\nfn main(): int { return f(true); }\n"),
-    ("seven-params", "fn f(a: int, b: int, c: int, d: int, e: int, g: int, h: int): int { return a; }\nfn main(): int { return f(1, 2, 3, 4, 5, 6, 7); }\n"),
     ("bool-ret-helper", "fn f(): bool { return true; }\nfn main(): int { return 1; }\n"),
-    ("str-helper", "fn f(): int { let s: str = \"ab\"; return 0; }\nfn main(): int { return f(); }\n"),
     ("main-with-param", "fn main(a: int): int { return a; }\n"),
 ]
 
@@ -330,14 +328,14 @@ class BEBMutantTests(unittest.TestCase):
 
     def test_bb_m8_first_helper(self):
         combo = _mutated_combo(
-            "  let co: int = be_fn_codeoff(src, f, ci);",
-            "  let co: int = be_fn_codeoff(src, f, 0);")
+            "  let q0: int = be_e_popargs(a->n, ns - 1);\n  let co: int = be_fn_codeoff(src, f, ci);",
+            "  let q0: int = be_e_popargs(a->n, ns - 1);\n  let co: int = be_fn_codeoff(src, f, 0);")
         self.assertTrue(self._red_on(combo, 19))
 
     def test_bb_m9_size_no_prologue(self):
         combo = _mutated_combo(
-            "  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, sz_frame(fr) + 4 * be_param_slots(src, f, cs, ce));",
-            "  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, 4 * be_param_slots(src, f, cs, ce));")
+            "  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, sz_frame(fr) + be_spill_size(src, f, cs, ce));",
+            "  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, be_spill_size(src, f, cs, ce));")
         self.assertTrue(self._red_on(combo, 8))
 
 

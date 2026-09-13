@@ -77,6 +77,13 @@ NATIVE_RECORD_CASES = [
     "record Pair { a: int, b: int }\nfn main(): int { let p: Pair = Pair(a: 1, b: 2); if p->a == 1 { return 17; } else { return 93; } }\n",
 ]
 
+NATIVE_ARG_CASES = [
+    "fn f(a: int, b: int, c: int, d: int, e: int, g: int, h: int): int { return a + b * 2 + c * 3 + d * 4 + e * 5 + g * 6 + h * 7; }\nfn main(): int { return f(1, 2, 3, 4, 5, 6, 7); }\n",
+    "fn f(a: int, b: int, c: int, d: int, e: int, g: int, h: int, i: int, j: int): int { return j * 10 + a; }\nfn main(): int { return f(1, 2, 3, 4, 5, 6, 7, 8, 9); }\n",
+    "fn g(a: int, b: int, c: int, d: int, e: int, s: str): int { return e; }\nfn main(): int { return g(1, 2, 3, 4, 5, \"pq\"); }\n",
+    "fn g(a: int, b: int, c: int, d: int, e: int, f: int, w: int): int { return w; }\nfn h(x: int, y: int): int { return x + y; }\nfn main(): int { return h(g(1, 2, 3, 4, 5, 6, 7), 100); }\n",
+]
+
 NATIVE_LIST_CASES = [
     "fn main(): int { let l: list<int,2> = [1, 2]; return len(l); }\n",
     "fn main(): int { let l: list<int,2> = [10, 20]; let s: status<int> = l[0]; return unwrap_or(s, 0); }\n",
@@ -140,11 +147,16 @@ class NativeBackendTests(unittest.TestCase):
         cls.natlist = []
         for i, src in enumerate(NATIVE_LIST_CASES):
             cls.natlist.append(("natl%d" % i, _backend_bytes(combo, src)))
+        cls.natarg = []
+        for i, src in enumerate(NATIVE_ARG_CASES):
+            cls.natarg.append(("natg%d" % i, _backend_bytes_data(combo, src)))
         for name, raw in cls.natprint:
             entries.append(("/bin/" + name, raw))
         for name, raw in cls.natrec:
             entries.append(("/bin/" + name, raw))
         for name, raw in cls.natlist:
+            entries.append(("/bin/" + name, raw))
+        for name, raw in cls.natarg:
             entries.append(("/bin/" + name, raw))
         cls.drive = cls.work / "native.img"
         cls.drive.write_bytes(fs_build(entries))
@@ -220,6 +232,21 @@ class NativeBackendTests(unittest.TestCase):
         dones = self._boot(names, tag="natlist")
         self.assertEqual(len(dones), len(names) + 1)
         for name, src, got in zip(names, NATIVE_LIST_CASES, dones):
+            result = analyzer.analyze(src, "t.rl", profile="core")
+            self.assertTrue(result.ok, name)
+            module, error = rir_mod.build_rir(result.ast, "t.rl")
+            self.assertIsNone(error, name)
+            outcome = oracle_mod.run_rir(module, out=[])
+            self.assertEqual(got, outcome["exit"] & 0xFFFFFFFF, name)
+
+    def test_native_args_match_oracle(self):
+        from tools.rynorlang import analyze as analyzer
+        from tools.rynorlang import rir as rir_mod
+        from tools.rynorlang import interp as oracle_mod
+        names = ["natg%d" % i for i in range(len(NATIVE_ARG_CASES))]
+        dones = self._boot(names, tag="natarg")
+        self.assertEqual(len(dones), len(names) + 1)
+        for name, src, got in zip(names, NATIVE_ARG_CASES, dones):
             result = analyzer.analyze(src, "t.rl", profile="core")
             self.assertTrue(result.ok, name)
             module, error = rir_mod.build_rir(result.ast, "t.rl")
