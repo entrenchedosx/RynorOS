@@ -294,7 +294,7 @@ fn tl_skip_ws(src: str, pos: int, end: int): int {
   if b == 10 { return tl_skip_ws(src, pos + 1, end); } else { }
   if b == 13 { return tl_skip_ws(src, pos + 1, end); } else { }
   if b == 47 {
-    if unwrap_or(byte_at(src, pos + 1), 0) == 47 { return tl_skip_line(src, pos + 2, end); } else { }
+    if unwrap_or(byte_at(src, pos + 1), 0) == 47 { return tl_skip_ws(src, tl_skip_line(src, pos + 2, end), end); } else { }
     return pos;
   } else { }
   if b == 34 { return tl_skip_str(src, pos + 1, end); } else { }
