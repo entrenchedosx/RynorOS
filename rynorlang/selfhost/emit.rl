@@ -174,7 +174,6 @@ fn be_var_width(src: str, f: int, fs: int, fe: int, v: VS): int {
   return tslots(vt->t, src, f);
 }
 fn be_home_base(src: str, f: int, fs: int, fe: int, v: VS): int {
-  if be_rec_count(src, f) == 0 { return be_home_slot(v); } else { }
   if v->k == 1 { return be_param_base(src, f, fs, fe, v->slot) + 1; } else { }
   return v->slot - be_var_width(src, f, fs, fe, v) + 1;
 }
@@ -735,7 +734,7 @@ fn be_s_let(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t:
   let ts: Tok = pgm_tok(src, cn->p, end);
   let ty: TR = intern_ty(src, f, ts->s, end, 0);
   if has_err(ty->d) { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
-  if tbase(ty->t) == 1 { } else { if tbase(ty->t) == 2 { } else { if tbase(ty->t) == 4 { return be_s_let_rec(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { } return BZ(p: pos, n: acc, c: 25, o: ts->s); } }
+  if tbase(ty->t) == 1 { } else { if tbase(ty->t) == 2 { } else { return be_s_let_aggsel(src, f, fs, fe, pos, end, acc, t, nm, ty, ts); } }
   let eq: Tok = pgm_tok(src, ty->p, end);
   let e: BZ = be_s_level(src, f, fs, fe, 0, eq->p, end);
   if e->c == 0 { } else { return BZ(p: e->p, n: acc, c: e->c, o: e->o); }
@@ -745,6 +744,24 @@ fn be_s_let(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t:
   if has_err(v->d) { return BZ(p: pos, n: acc, c: 29, o: nm->s); } else { }
   if v->off == nm->s { } else { return BZ(p: pos, n: acc, c: 29, o: nm->s); }
   return BZ(p: sc->p, n: acc + e->n + sz_mov_home_rax(v->slot - tslots(ty->t, src, f) + 1), c: 0, o: 0);
+}
+fn be_s_let_aggsel(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR, ts: Tok): BZ {
+  if tbase(ty->t) == 4 { return be_s_let_rec(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
+  if tbase(ty->t) == 5 { return be_s_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
+  if tbase(ty->t) == 6 { return be_s_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: ts->s);
+}
+fn be_s_let_agg(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR): BZ {
+  let v: VS = res_var(src, f, fs, fe, nm->s, nm->s, nm->l);
+  if has_err(v->d) { return BZ(p: pos, n: acc, c: 29, o: nm->s); } else { }
+  if v->off == nm->s { } else { return BZ(p: pos, n: acc, c: 29, o: nm->s); }
+  let base: int = v->slot - tslots(ty->t, src, f) + 1;
+  let eq: Tok = pgm_tok(src, ty->p, end);
+  let e: BZ = be_s_aggex(src, f, fs, fe, 0, base, ty->t, eq->p, end);
+  if e->c == 0 { } else { return BZ(p: e->p, n: acc, c: e->c, o: e->o); }
+  let sc: Tok = pgm_tok(src, e->p, end);
+  if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }
+  return BZ(p: sc->p, n: acc + e->n, c: 0, o: 0);
 }
 fn be_s_let_rec(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR): BZ {
   let v: VS = res_var(src, f, fs, fe, nm->s, nm->s, nm->l);
@@ -763,7 +780,15 @@ fn be_s_return(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int,
   if pgm_is_semi(src, nx) { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   let rt: list<int,24> = be_fn_ret(src, f, fs, fe);
   if tbase(rt) == 4 { return be_s_return_rec(src, f, fs, fe, pos, end, acc, t, nx); } else { }
+  if tbase(rt) == 5 { return be_s_return_agg(src, f, fs, fe, pos, end, acc, t, nx, rt); } else { }
   let e: BZ = be_s_level(src, f, fs, fe, 0, nx->s, end);
+  if e->c == 0 { } else { return BZ(p: e->p, n: acc, c: e->c, o: e->o); }
+  let sc: Tok = pgm_tok(src, e->p, end);
+  if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }
+  return BZ(p: sc->p, n: acc + e->n + sz_leave_ret(), c: 0, o: 0);
+}
+fn be_s_return_agg(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nx: Tok, rt: list<int,24>): BZ {
+  let e: BZ = be_s_aggex(src, f, fs, fe, 1, 0, rt, nx->s, end);
   if e->c == 0 { } else { return BZ(p: e->p, n: acc, c: e->c, o: e->o); }
   let sc: Tok = pgm_tok(src, e->p, end);
   if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }
@@ -827,7 +852,7 @@ fn be_e_let(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t:
   let ts: Tok = pgm_tok(src, cn->p, end);
   let ty: TR = intern_ty(src, f, ts->s, end, 0);
   if has_err(ty->d) { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
-  if tbase(ty->t) == 1 { } else { if tbase(ty->t) == 2 { } else { if tbase(ty->t) == 4 { return be_e_let_rec(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { } return BZ(p: pos, n: acc, c: 25, o: ts->s); } }
+  if tbase(ty->t) == 1 { } else { if tbase(ty->t) == 2 { } else { return be_e_let_aggsel(src, f, fs, fe, pos, end, acc, t, nm, ty, ts); } }
   let eq: Tok = pgm_tok(src, ty->p, end);
   let e: BZ = be_e_level(src, f, fs, fe, 0, eq->p, end, acc);
   if e->c == 0 { } else { return e; }
@@ -837,6 +862,24 @@ fn be_e_let(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t:
   if has_err(v->d) { return BZ(p: pos, n: acc, c: 29, o: nm->s); } else { }
   if v->off == nm->s { } else { return BZ(p: pos, n: acc, c: 29, o: nm->s); }
   return BZ(p: sc->p, n: e_mov_home_rax(v->slot - tslots(ty->t, src, f) + 1, e->n), c: 0, o: 0);
+}
+fn be_e_let_aggsel(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR, ts: Tok): BZ {
+  if tbase(ty->t) == 4 { return be_e_let_rec(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
+  if tbase(ty->t) == 5 { return be_e_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
+  if tbase(ty->t) == 6 { return be_e_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: ts->s);
+}
+fn be_e_let_agg(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR): BZ {
+  let v: VS = res_var(src, f, fs, fe, nm->s, nm->s, nm->l);
+  if has_err(v->d) { return BZ(p: pos, n: acc, c: 29, o: nm->s); } else { }
+  if v->off == nm->s { } else { return BZ(p: pos, n: acc, c: 29, o: nm->s); }
+  let base: int = v->slot - tslots(ty->t, src, f) + 1;
+  let eq: Tok = pgm_tok(src, ty->p, end);
+  let e: BZ = be_e_aggex(src, f, fs, fe, 0, base, ty->t, eq->p, end, acc);
+  if e->c == 0 { } else { return e; }
+  let sc: Tok = pgm_tok(src, e->p, end);
+  if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }
+  return BZ(p: sc->p, n: e->n, c: 0, o: 0);
 }
 fn be_e_let_rec(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR): BZ {
   let v: VS = res_var(src, f, fs, fe, nm->s, nm->s, nm->l);
@@ -855,7 +898,15 @@ fn be_e_return(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int,
   if pgm_is_semi(src, nx) { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   let rt: list<int,24> = be_fn_ret(src, f, fs, fe);
   if tbase(rt) == 4 { return be_e_return_rec(src, f, fs, fe, pos, end, acc, t, nx); } else { }
+  if tbase(rt) == 5 { return be_e_return_agg(src, f, fs, fe, pos, end, acc, t, nx, rt); } else { }
   let e: BZ = be_e_level(src, f, fs, fe, 0, nx->s, end, acc);
+  if e->c == 0 { } else { return e; }
+  let sc: Tok = pgm_tok(src, e->p, end);
+  if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }
+  return BZ(p: sc->p, n: e_leave_ret(e->n), c: 0, o: 0);
+}
+fn be_e_return_agg(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nx: Tok, rt: list<int,24>): BZ {
+  let e: BZ = be_e_aggex(src, f, fs, fe, 1, 0, rt, nx->s, end, acc);
   if e->c == 0 { } else { return e; }
   let sc: Tok = pgm_tok(src, e->p, end);
   if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }
@@ -956,7 +1007,7 @@ fn be_gate_helper(src: str, f: int, it: TI, end: int, nfns: int, nmain: int): D 
   if has_err(gd) { return gd; } else { }
   if be_param_slots(src, f, hs, he) <= 6 { } else { return derr(25, f, hs); }
   let hr: list<int,24> = pgm_body_ret(src, f, hp->p, hb);
-  if tbase(hr) == 1 { } else { if tbase(hr) == 4 { } else { return derr(25, f, hs); } }
+  if be_subset_ty(hr, src, f, 0, 1) == 1 { } else { return derr(25, f, hs); }
   let hn: int = scope_slot(src, f, hs, he, he);
   if hn <= 128 { } else { return derr(26, f, hs); }
   if hn + be_unit_maxrec(src, f) <= 128 { } else { return derr(26, f, hs); }
@@ -966,7 +1017,7 @@ fn be_gate_hparams(src: str, f: int, hs: int, he: int, np: int, i: int): D {
   if i >= np { return dok(); } else { }
   let pt: TR = pgm_hparam_ty(src, f, hs, he, i);
   if has_err(pt->d) { return pt->d; } else { }
-  if tbase(pt->t) == 1 { } else { if tbase(pt->t) == 4 { } else { return derr(25, f, hs); } }
+  if be_subset_ty(pt->t, src, f, 0, 1) == 1 { } else { return derr(25, f, hs); }
   return be_gate_hparams(src, f, hs, he, np, i + 1);
 }
 fn be_fn_count(src: str, f: int): int {
@@ -1169,6 +1220,7 @@ fn be_s_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int, dk: int, ds: 
 fn be_callee_ret_agg(src: str, f: int, ci: int): int {
   let rt: list<int,24> = be_callee_ret(src, f, ci);
   if tbase(rt) == 4 { return 1; } else { }
+  if tbase(rt) == 5 { return 1; } else { }
   return 0;
 }
 fn be_sret_size(dk: int, ragg: int): int {
@@ -1184,6 +1236,8 @@ fn be_s_callarg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int,
   let pt: TR = pgm_hparam_ty(src, f, cs->off, cs->off + cs->tl, i);
   if has_err(pt->d) { return BZ(p: pos, n: 0, c: 29, o: pos); } else { }
   if tbase(pt->t) == 4 { return be_s_callarg_rec(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
+  if tbase(pt->t) == 5 { return be_s_callarg_agg(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
+  if tbase(pt->t) == 6 { return be_s_callarg_agg(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
   let r: BZ = be_s_level(src, f, fs, fe, 0, pos, end);
   if r->c == 0 { } else { return r; }
   return be_s_callsep(src, f, fs, fe, r->p, end, np, i, acc + r->n + sz_push_rax(), ci, tb);
@@ -1191,6 +1245,12 @@ fn be_s_callarg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int,
 fn be_s_callarg_rec(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int, i: int, acc: int, ci: int, tb: int, pt: TR): BZ {
   let w: int = tslots(pt->t, src, f);
   let e: BZ = be_s_recx(src, f, fs, fe, 0, tb, pos, end);
+  if e->c == 0 { } else { return e; }
+  return be_s_callsep(src, f, fs, fe, e->p, end, np, i, acc + e->n + be_push_home_size(tb, w), ci, tb);
+}
+fn be_s_callarg_agg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int, i: int, acc: int, ci: int, tb: int, pt: TR): BZ {
+  let w: int = tslots(pt->t, src, f);
+  let e: BZ = be_s_aggex(src, f, fs, fe, 0, tb, pt->t, pos, end);
   if e->c == 0 { } else { return e; }
   return be_s_callsep(src, f, fs, fe, e->p, end, np, i, acc + e->n + be_push_home_size(tb, w), ci, tb);
 }
@@ -1239,6 +1299,8 @@ fn be_e_callarg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int,
   let pt: TR = pgm_hparam_ty(src, f, cs->off, cs->off + cs->tl, i);
   if has_err(pt->d) { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
   if tbase(pt->t) == 4 { return be_e_callarg_rec(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
+  if tbase(pt->t) == 5 { return be_e_callarg_agg(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
+  if tbase(pt->t) == 6 { return be_e_callarg_agg(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
   let r: BZ = be_e_level(src, f, fs, fe, 0, pos, end, acc);
   if r->c == 0 { } else { return r; }
   let a0: int = e_push_rax(r->n);
@@ -1247,6 +1309,13 @@ fn be_e_callarg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int,
 fn be_e_callarg_rec(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int, i: int, acc: int, ci: int, tb: int, pt: TR): BZ {
   let w: int = tslots(pt->t, src, f);
   let e: BZ = be_e_recx(src, f, fs, fe, 0, tb, pos, end, acc);
+  if e->c == 0 { } else { return e; }
+  let a0: int = be_push_home(tb, w, e->n);
+  return be_e_callsep(src, f, fs, fe, e->p, end, np, i, a0, ci, tb);
+}
+fn be_e_callarg_agg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int, i: int, acc: int, ci: int, tb: int, pt: TR): BZ {
+  let w: int = tslots(pt->t, src, f);
+  let e: BZ = be_e_aggex(src, f, fs, fe, 0, tb, pt->t, pos, end, acc);
   if e->c == 0 { } else { return e; }
   let a0: int = be_push_home(tb, w, e->n);
   return be_e_callsep(src, f, fs, fe, e->p, end, np, i, a0, ci, tb);
@@ -1954,7 +2023,84 @@ fn be_rec_width_ann(src: str, f: int, pos: int, end: int, depth: int, acc: int):
   return be_rec_width_fields(src, f, ty->p, end, depth, acc + w);
 }
 fn be_unit_maxrec(src: str, f: int): int {
-  return be_unit_maxrec_at(src, f, 0, len(src), 0, 0);
+  let r: int = be_unit_maxrec_at(src, f, 0, len(src), 0, 0);
+  let s: int = be_unit_maxsig(src, f, 0, len(src), 0);
+  if s <= r { return r; } else { }
+  return s;
+}
+fn be_temp_contrib(ty: list<int,24>, src: str, f: int): int {
+  let b: int = tbase(ty);
+  if b == 4 { return tslots(ty, src, f); } else { }
+  if b == 5 { return be_temp_listcontrib(ty, src, f); } else { }
+  if b == 6 { return tslots(ty, src, f); } else { }
+  return 0;
+}
+fn be_temp_listcontrib(ty: list<int,24>, src: str, f: int): int {
+  let w: int = tslots(ty, src, f);
+  return 2 + w;
+}
+fn be_unit_maxsig(src: str, f: int, pos: int, end: int, acc: int): int {
+  let it: TI = tl_next(src, f, pos, end);
+  if it->k == 0 { return acc; } else { }
+  if it->k == 1 { return be_unit_maxsig_fn(src, f, it, end, acc); } else { }
+  return be_unit_maxsig(src, f, it->p, end, acc);
+}
+fn be_unit_maxsig_fn(src: str, f: int, it: TI, end: int, acc: int): int {
+  let cs: int = it->s;
+  let ce: int = it->s + it->l;
+  let a0: int = be_unit_maxparams(src, f, cs, ce, pgm_hparam_count(src, cs, ce), 0, acc);
+  let kw: Tok = next_tok(src, cs);
+  let nm: Tok = next_tok(src, kw->p);
+  let lp: Tok = next_tok(src, nm->p);
+  let bo: int = pgm_body_open(src, lp->p, ce);
+  let rt: list<int,24> = pgm_body_ret(src, f, lp->p, bo);
+  let a1: int = be_temp_maxof(be_temp_contrib(rt, src, f), a0);
+  let a2: int = be_unit_maxlets(src, f, cs, ce, ce);
+  let a3: int = be_temp_maxof(a2, a1);
+  return be_unit_maxsig(src, f, it->p, end, a3);
+}
+fn be_temp_maxof(a: int, b: int): int {
+  if a <= b { return b; } else { }
+  return a;
+}
+fn be_unit_maxparams(src: str, f: int, cs: int, ce: int, np: int, i: int, acc: int): int {
+  if i >= np { return acc; } else { }
+  let pt: TR = pgm_hparam_ty(src, f, cs, ce, i);
+  if has_err(pt->d) { return be_unit_maxparams(src, f, cs, ce, np, i + 1, acc); } else { }
+  return be_unit_maxparams(src, f, cs, ce, np, i + 1, be_temp_maxof(be_temp_contrib(pt->t, src, f), acc));
+}
+fn be_unit_maxlets(src: str, f: int, cs: int, ce: int, bound: int): int {
+  let kw: Tok = next_tok(src, cs);
+  let nm: Tok = next_tok(src, kw->p);
+  let lp: Tok = next_tok(src, nm->p);
+  let bo: int = pgm_body_open(src, lp->p, ce);
+  return be_letmaxtemp_at(src, f, bo + 1, bound, 1, 0);
+}
+fn be_letmaxtemp_at(src: str, f: int, pos: int, end: int, depth: int, acc: int): int {
+  if depth > 8 { return acc; } else { }
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 0 { return acc; } else { }
+  if t->k == 4 { return be_letmaxtemp_punct(src, f, t, end, depth, acc); } else { }
+  if t->k == 1 { return be_letmaxtemp_kw(src, f, t, end, depth, acc); } else { }
+  return be_letmaxtemp_at(src, f, t->p, end, depth, acc);
+}
+fn be_letmaxtemp_punct(src: str, f: int, t: Tok, end: int, depth: int, acc: int): int {
+  if t->l == 1 { if tok_byte(src, t->s) == 123 { return be_letmaxtemp_at(src, f, t->p, end, depth + 1, acc); } else { } } else { }
+  if t->l == 1 { if tok_byte(src, t->s) == 125 { return be_letmaxtemp_at(src, f, t->p, end, depth - 1, acc); } else { } } else { }
+  return be_letmaxtemp_at(src, f, t->p, end, depth, acc);
+}
+fn be_letmaxtemp_kw(src: str, f: int, t: Tok, end: int, depth: int, acc: int): int {
+  if t->l == 3 { if beq(src, t->s, "let", 0, 3) { if depth == 1 { return be_letmaxtemp_let(src, f, t->p, end, depth, acc); } else { } } else { } } else { }
+  return be_letmaxtemp_at(src, f, t->p, end, depth, acc);
+}
+fn be_letmaxtemp_let(src: str, f: int, pos: int, end: int, depth: int, acc: int): int {
+  let nm: Tok = pgm_tok(src, pos, end);
+  if nm->k == 1 { } else { return be_letmaxtemp_at(src, f, nm->p, end, depth, acc); }
+  let cn: Tok = pgm_tok(src, nm->p, end);
+  let ts: Tok = pgm_tok(src, cn->p, end);
+  let ty: TR = intern_ty(src, f, ts->s, end, 0);
+  if has_err(ty->d) { return be_letmaxtemp_at(src, f, ts->p, end, depth, acc); } else { }
+  return be_letmaxtemp_at(src, f, ty->p, end, depth, be_temp_maxof(be_temp_contrib(ty->t, src, f), acc));
 }
 fn be_unit_maxrec_at(src: str, f: int, pos: int, end: int, idx: int, acc: int): int {
   let it: TI = tl_next(src, f, pos, end);
@@ -2019,11 +2165,29 @@ fn be_gate_recftype(src: str, f: int, pos: int, end: int, depth: int): D {
 fn be_gate_recty(src: str, f: int, pos: int, end: int, depth: int): D {
   let ty: TR = intern_ty(src, f, pos, end, 0);
   if has_err(ty->d) { return ty->d; } else { }
-  let b: int = tbase(ty->t);
-  if b == 1 { return be_gate_recnext(src, f, ty->p, end, depth); } else { }
-  if b == 2 { return be_gate_recnext(src, f, ty->p, end, depth); } else { }
-  if b == 4 { return be_gate_recnest(src, f, ty, end, depth); } else { }
+  if be_subset_ty(ty->t, src, f, depth, 0) == 1 { return be_gate_recnext(src, f, ty->p, end, depth); } else { }
   return derr(25, f, pos);
+}
+fn be_subset_ty(ty: list<int,24>, src: str, f: int, depth: int, parret: int): int {
+  if depth > 8 { return 0; } else { }
+  let b: int = tbase(ty);
+  if b == 1 { return 1; } else { }
+  if b == 4 { return be_subset_rec(ty, src, f, depth); } else { }
+  if b == 5 { return be_subset_list(ty, src, f, depth); } else { }
+  if parret == 0 { if b == 2 { return 1; } else { } } else { }
+  return 0;
+}
+fn be_subset_rec(ty: list<int,24>, src: str, f: int, depth: int): int {
+  let rid: int = unwrap_or(ty[1], 0);
+  let sp: VS = be_rec_span(src, f, rid);
+  if sp->off == 0 - 1 { return 0; } else { }
+  let gd: D = be_gate_recfields(src, f, sp->off, sp->off + sp->tl, depth + 1);
+  if has_err(gd) { return 0; } else { }
+  return 1;
+}
+fn be_subset_list(ty: list<int,24>, src: str, f: int, depth: int): int {
+  let e: list<int,24> = pgm_mid(ty);
+  return be_subset_ty(e, src, f, depth + 1, 0);
 }
 fn be_gate_recnest(src: str, f: int, ty: TR, end: int, depth: int): D {
   let rid: int = unwrap_or(ty->t[1], 0);
@@ -2230,6 +2394,63 @@ fn be_s_recx_var(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, e
   let w: int = tslots(vt->t, src, f);
   return BZ(p: t->p, n: be_copy_size(base, dk, ds, w), c: 0, o: 0);
 }
+fn e_sub_rax_ib(v: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(131, a0);
+  let a2: int = e_b(232, a1);
+  let a3: int = e_b(v, a2);
+  return a3;
+}
+fn e_add_rax_ib(v: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(131, a0);
+  let a2: int = e_b(192, a1);
+  let a3: int = e_b(v, a2);
+  return a3;
+}
+fn e_load_rax_rax(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(139, a0);
+  let a2: int = e_b(0, a1);
+  return a2;
+}
+fn e_store_rax_rcx(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(137, a0);
+  let a2: int = e_b(8, a1);
+  return a2;
+}
+fn e_load_rcx_home(slot: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(139, a0);
+  let a2: int = e_b(141, a1);
+  let a3: int = e_le32(0 - be_home_disp(slot), a2);
+  return a3;
+}
+fn e_cmp_rcx_rax(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(57, a0);
+  let a2: int = e_b(193, a1);
+  return a2;
+}
+fn sz_jnz(): int {
+  return 6;
+}
+fn e_jnz(disp: int, acc: int): int {
+  let a0: int = e_b(15, acc);
+  let a1: int = e_b(133, a0);
+  let a2: int = e_le32(disp, a1);
+  return a2;
+}
+fn sz_jae(): int {
+  return 6;
+}
+fn e_jae(disp: int, acc: int): int {
+  let a0: int = e_b(15, acc);
+  let a1: int = e_b(131, a0);
+  let a2: int = e_le32(disp, a1);
+  return a2;
+}
 fn be_s_recx_paren(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, end: int): BZ {
   let e: BZ = be_s_recx(src, f, fs, fe, dk, ds, t->p, end);
   if e->c == 0 { } else { return e; }
@@ -2429,6 +2650,7 @@ fn be_sret_close(acc: int, ragg: int): int {
 }
 fn be_s_ident_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
   if be_is_print(src, t) == 1 { return be_s_print_tail(src, f, t, end); } else { }
+  if be_is_len(src, t) == 1 { return be_s_len(src, f, fs, fe, t, end); } else { }
   let ri: int = be_rec_index(src, f, t->s, t->l);
   if ri == 0 - 1 { } else { return be_s_ident_ctor(src, f, fs, fe, t, end, ri); }
   let ci: int = be_find_fn(src, f, t->s, t->l, fs);
@@ -2482,6 +2704,7 @@ fn be_s_ident_arrow(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
 }
 fn be_e_ident_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
   if be_is_print(src, t) == 1 { return be_e_print_tail(src, f, t, end, acc); } else { }
+  if be_is_len(src, t) == 1 { return be_e_len(src, f, fs, fe, t, end, acc); } else { }
   let ri: int = be_rec_index(src, f, t->s, t->l);
   if ri == 0 - 1 { } else { return be_e_ident_ctor(src, f, fs, fe, t, end, acc, ri); }
   let ci: int = be_find_fn(src, f, t->s, t->l, fs);
@@ -2550,4 +2773,306 @@ fn be_s_chain_load(src: str, f: int, ri: int, tb: int, pos: int, end: int): BZ {
   if has_err(ch->d) { return BZ(p: pos, n: 0, c: 29, o: ch->k); } else { }
   if ch->ts == 1 { } else { if ch->ts == 2 { } else { return BZ(p: pos, n: 0, c: 25, o: pos); } }
   return BZ(p: ch->k, n: sz_mov_rax_home(ch->slot), c: 0, o: 0);
+}
+fn be_s_aggex(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int): BZ {
+  let tb: int = tbase(ty);
+  if tb == 4 { return be_s_aggex_rec(src, f, fs, fe, dk, ds, ty, pos, end); } else { }
+  if tb == 5 { return be_s_aggex_list(src, f, fs, fe, dk, ds, ty, pos, end); } else { }
+  if tb == 6 { return be_s_aggex_status(src, f, fs, fe, dk, ds, ty, pos, end); } else { }
+  return BZ(p: pos, n: 0, c: 29, o: pos);
+}
+fn be_s_aggex_rec(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int): BZ {
+  return be_s_recx(src, f, fs, fe, dk, ds, pos, end);
+}
+fn be_s_aggex_list(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 91 { return be_s_listlit(src, f, fs, fe, dk, ds, ty, t, end); } else { } } else { } } else { }
+  if t->k == 1 { return be_s_aggex_var(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  return BZ(p: pos, n: 0, c: 29, o: pos);
+}
+fn be_s_aggex_var(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_s_aggex_call(src, f, fs, fe, dk, ds, ty, t, end); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return be_s_aggex_index(src, f, fs, fe, dk, ds, ty, t, end); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
+  if has_err(v->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if teq(vt->t, ty) { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let w: int = tslots(ty, src, f);
+  return BZ(p: t->p, n: be_copy_size(base, dk, ds, w), c: 0, o: 0);
+}
+fn be_is_push(src: str, t: Tok): int {
+  if t->l == 4 { if beq(src, t->s, "push", 0, 4) { return 1; } else { } } else { }
+  return 0;
+}
+fn be_is_unwrap(src: str, t: Tok): int {
+  if t->l == 9 { if beq(src, t->s, "unwrap_or", 0, 9) { return 1; } else { } } else { }
+  return 0;
+}
+fn be_is_len(src: str, t: Tok): int {
+  if t->l == 3 { if beq(src, t->s, "len", 0, 3) { return 1; } else { } } else { }
+  return 0;
+}
+fn be_is_isok(src: str, t: Tok): int {
+  if t->l == 5 { if beq(src, t->s, "is_ok", 0, 5) { return 1; } else { } } else { }
+  if t->l == 6 { if beq(src, t->s, "is_err", 0, 6) { return 1; } else { } } else { }
+  return 0;
+}
+fn be_is_byteat(src: str, t: Tok): int {
+  if t->l == 7 { if beq(src, t->s, "byte_at", 0, 7) { return 1; } else { } } else { }
+  return 0;
+}
+fn be_s_aggex_call(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  if be_is_push(src, t) == 1 { return be_s_push(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  if be_is_unwrap(src, t) == 1 { return be_s_unwrap(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  if be_is_print(src, t) == 1 { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if be_is_len(src, t) == 1 { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if be_is_isok(src, t) == 1 { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if be_is_byteat(src, t) == 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
+  let ci: int = be_find_fn(src, f, t->s, t->l, fs);
+  if ci == 0 - 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
+  return be_s_call(src, f, fs, fe, t, end, dk, ds);
+}
+fn be_s_aggex_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 1 { return be_s_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  return BZ(p: pos, n: 0, c: 29, o: pos);
+}
+fn be_s_aggex_svar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_s_aggex_call(src, f, fs, fe, dk, ds, ty, t, end); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return be_s_aggex_index(src, f, fs, fe, dk, ds, ty, t, end); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
+  if has_err(v->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if teq(vt->t, ty) { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let w: int = tslots(ty, src, f);
+  return BZ(p: t->p, n: be_copy_size(base, dk, ds, w), c: 0, o: 0);
+}
+fn be_s_listlit(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  let et: list<int,24> = pgm_mid(ty);
+  let cap: int = unwrap_or(ty[len(ty) - 1], 0);
+  let ew: int = tslots(et, src, f);
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 93 { return be_s_listdone(src, f, dk, ds, cap, ew, 0, nx->p, 0); } else { } } else { } } else { }
+  return be_s_listelems(src, f, fs, fe, dk, ds, ty, et, cap, ew, nx->s, end, 0, 0);
+}
+fn be_s_zerotail_size(dk: int, ds: int, off: int, rem: int): int {
+  if rem <= 0 { return 0; } else { }
+  return sz_mov_rax_imm(0) + be_store_size(dk, ds, off) + be_s_zerotail_size(dk, ds, off + 1, rem - 1);
+}
+fn be_s_listdone(src: str, f: int, dk: int, ds: int, cap: int, ew: int, count: int, pos: int, acc: int): BZ {
+  if count <= cap { } else { return BZ(p: pos, n: 0, c: 29, o: pos); }
+  let tail: int = (cap - count) * ew;
+  let zs: int = be_s_zerotail_size(dk, ds, 1 + count * ew, tail);
+  let ls: int = sz_mov_rax_imm(count) + be_store_size(dk, ds, 0);
+  return BZ(p: pos, n: acc + ls + zs, c: 0, o: 0);
+}
+fn be_s_listelems(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, et: list<int,24>, cap: int, ew: int, pos: int, end: int, idx: int, acc: int): BZ {
+  if idx >= cap { return BZ(p: pos, n: 0, c: 29, o: pos); } else { }
+  let b: int = tbase(et);
+  if b == 1 { return be_s_listelem_scalar(src, f, fs, fe, dk, ds, ty, et, cap, ew, pos, end, idx, acc); } else { }
+  if b == 2 { return be_s_listelem_scalar(src, f, fs, fe, dk, ds, ty, et, cap, ew, pos, end, idx, acc); } else { }
+  if b == 4 { return be_s_listelem_agg(src, f, fs, fe, dk, ds, ty, et, cap, ew, pos, end, idx, acc); } else { }
+  if b == 5 { return be_s_listelem_agg(src, f, fs, fe, dk, ds, ty, et, cap, ew, pos, end, idx, acc); } else { }
+  return BZ(p: pos, n: 0, c: 25, o: pos);
+}
+fn be_s_listelem_scalar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, et: list<int,24>, cap: int, ew: int, pos: int, end: int, idx: int, acc: int): BZ {
+  let e: BZ = be_s_level(src, f, fs, fe, 0, pos, end);
+  if e->c == 0 { } else { return BZ(p: e->p, n: 0, c: e->c, o: e->o); }
+  let off: int = 1 + idx * ew;
+  let acc2: int = acc + e->n + be_store_size(dk, ds, off);
+  return be_s_listsep(src, f, fs, fe, dk, ds, ty, et, cap, ew, e->p, end, idx, acc2);
+}
+fn be_s_listelem_agg(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, et: list<int,24>, cap: int, ew: int, pos: int, end: int, idx: int, acc: int): BZ {
+  let off: int = 1 + idx * ew;
+  let e: BZ = be_s_aggex(src, f, fs, fe, dk, ds + off, et, pos, end);
+  if e->c == 0 { } else { return e; }
+  return be_s_listsep(src, f, fs, fe, dk, ds, ty, et, cap, ew, e->p, end, idx, acc + e->n);
+}
+fn be_s_listsep(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, et: list<int,24>, cap: int, ew: int, pos: int, end: int, idx: int, acc: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 44 { return be_s_listelems(src, f, fs, fe, dk, ds, ty, et, cap, ew, t->p, end, idx + 1, acc); } else { } } else { } } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 93 { return be_s_listdone(src, f, dk, ds, cap, ew, idx + 1, t->p, acc); } else { } } else { } } else { }
+  return BZ(p: pos, n: 0, c: 29, o: pos);
+}
+fn be_s_push(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  return BZ(p: t->s, n: 0, c: 25, o: t->s);
+}
+fn be_s_unwrap(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  return BZ(p: t->s, n: 0, c: 25, o: t->s);
+}
+fn be_s_aggex_index(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  return BZ(p: t->s, n: 0, c: 25, o: t->s);
+}
+fn be_e_aggex(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int, acc: int): BZ {
+  let tb: int = tbase(ty);
+  if tb == 4 { return be_e_aggex_rec(src, f, fs, fe, dk, ds, ty, pos, end, acc); } else { }
+  if tb == 5 { return be_e_aggex_list(src, f, fs, fe, dk, ds, ty, pos, end, acc); } else { }
+  if tb == 6 { return be_e_aggex_status(src, f, fs, fe, dk, ds, ty, pos, end, acc); } else { }
+  return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+fn be_e_aggex_rec(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int, acc: int): BZ {
+  return be_e_recx(src, f, fs, fe, dk, ds, pos, end, acc);
+}
+fn be_e_aggex_list(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int, acc: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 91 { return be_e_listlit(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { } } else { } } else { }
+  if t->k == 1 { return be_e_aggex_var(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+fn be_e_aggex_var(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_e_aggex_call(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return be_e_aggex_index(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
+  if has_err(v->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if teq(vt->t, ty) { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let w: int = tslots(ty, src, f);
+  return BZ(p: t->p, n: be_copy_emit(base, dk, ds, w, acc), c: 0, o: 0);
+}
+fn be_e_aggex_call(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  if be_is_push(src, t) == 1 { return be_e_push(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  if be_is_unwrap(src, t) == 1 { return be_e_unwrap(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  if be_is_print(src, t) == 1 { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if be_is_len(src, t) == 1 { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if be_is_isok(src, t) == 1 { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if be_is_byteat(src, t) == 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
+  let ci: int = be_find_fn(src, f, t->s, t->l, fs);
+  if ci == 0 - 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
+  return be_e_call(src, f, fs, fe, t, end, acc, dk, ds);
+}
+fn be_e_aggex_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int, acc: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 1 { return be_e_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+fn be_e_aggex_svar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_e_aggex_call(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return be_e_aggex_index(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
+  if has_err(v->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if teq(vt->t, ty) { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let w: int = tslots(ty, src, f);
+  return BZ(p: t->p, n: be_copy_emit(base, dk, ds, w, acc), c: 0, o: 0);
+}
+fn be_e_push(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
+}
+fn be_e_unwrap(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
+}
+fn be_e_aggex_index(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
+}
+fn be_e_listlit(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  let et: list<int,24> = pgm_mid(ty);
+  let cap: int = unwrap_or(ty[len(ty) - 1], 0);
+  let ew: int = tslots(et, src, f);
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 93 { return be_e_listdone(src, f, dk, ds, cap, ew, 0, nx->p, acc); } else { } } else { } } else { }
+  return be_e_listelems(src, f, fs, fe, dk, ds, ty, et, cap, ew, nx->s, end, 0, acc);
+}
+fn be_e_zerotail(dk: int, ds: int, off: int, rem: int, acc: int): int {
+  if rem <= 0 { return acc; } else { }
+  let a0: int = e_mov_rax_imm(0, acc);
+  let a1: int = be_store_emit(dk, ds, off, a0);
+  return be_e_zerotail(dk, ds, off + 1, rem - 1, a1);
+}
+fn be_e_listdone(src: str, f: int, dk: int, ds: int, cap: int, ew: int, count: int, pos: int, acc: int): BZ {
+  if count <= cap { } else { return BZ(p: pos, n: acc, c: 29, o: pos); }
+  let a0: int = e_mov_rax_imm(count, acc);
+  let a1: int = be_store_emit(dk, ds, 0, a0);
+  let tail: int = (cap - count) * ew;
+  let a2: int = be_e_zerotail(dk, ds, 1 + count * ew, tail, a1);
+  return BZ(p: pos, n: a2, c: 0, o: 0);
+}
+fn be_e_listelems(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, et: list<int,24>, cap: int, ew: int, pos: int, end: int, idx: int, acc: int): BZ {
+  if idx >= cap { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  let b: int = tbase(et);
+  if b == 1 { return be_e_listelem_scalar(src, f, fs, fe, dk, ds, ty, et, cap, ew, pos, end, idx, acc); } else { }
+  if b == 2 { return be_e_listelem_scalar(src, f, fs, fe, dk, ds, ty, et, cap, ew, pos, end, idx, acc); } else { }
+  if b == 4 { return be_e_listelem_agg(src, f, fs, fe, dk, ds, ty, et, cap, ew, pos, end, idx, acc); } else { }
+  if b == 5 { return be_e_listelem_agg(src, f, fs, fe, dk, ds, ty, et, cap, ew, pos, end, idx, acc); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: pos);
+}
+fn be_e_listelem_scalar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, et: list<int,24>, cap: int, ew: int, pos: int, end: int, idx: int, acc: int): BZ {
+  let e: BZ = be_e_level(src, f, fs, fe, 0, pos, end, acc);
+  if e->c == 0 { } else { return e; }
+  let off: int = 1 + idx * ew;
+  let a0: int = be_store_emit(dk, ds, off, e->n);
+  return be_e_listsep(src, f, fs, fe, dk, ds, ty, et, cap, ew, e->p, end, idx, a0);
+}
+fn be_e_listelem_agg(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, et: list<int,24>, cap: int, ew: int, pos: int, end: int, idx: int, acc: int): BZ {
+  let off: int = 1 + idx * ew;
+  let e: BZ = be_e_aggex(src, f, fs, fe, dk, ds + off, et, pos, end, acc);
+  if e->c == 0 { } else { return e; }
+  return be_e_listsep(src, f, fs, fe, dk, ds, ty, et, cap, ew, e->p, end, idx, e->n);
+}
+fn be_e_listsep(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, et: list<int,24>, cap: int, ew: int, pos: int, end: int, idx: int, acc: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 44 { return be_e_listelems(src, f, fs, fe, dk, ds, ty, et, cap, ew, t->p, end, idx + 1, acc); } else { } } else { } } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 93 { return be_e_listdone(src, f, dk, ds, cap, ew, idx + 1, t->p, acc); } else { } } else { } } else { }
+  return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+fn be_s_len(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
+  let lp: Tok = pgm_tok(src, t->p, end);
+  if lp->k == 4 { if lp->l == 1 { if tok_byte(src, lp->s) == 40 { return be_s_len_arg(src, f, fs, fe, t, lp, end); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: t->s);
+}
+fn be_s_len_arg(src: str, f: int, fs: int, fe: int, t: Tok, lp: Tok, end: int): BZ {
+  let a: Tok = pgm_tok(src, lp->p, end);
+  if a->k == 1 { return be_s_len_var(src, f, fs, fe, t, a, end); } else { }
+  return BZ(p: t->s, n: 0, c: 25, o: t->s);
+}
+fn be_s_len_var(src: str, f: int, fs: int, fe: int, t: Tok, a: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, a->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, a->s, a->s, a->l);
+  if has_err(v->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 5 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let cp: Tok = pgm_tok(src, nx->s, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: sz_mov_rax_home(base), c: 0, o: 0); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: t->s);
+}
+fn be_e_len(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
+  let lp: Tok = pgm_tok(src, t->p, end);
+  if lp->k == 4 { if lp->l == 1 { if tok_byte(src, lp->s) == 40 { return be_e_len_arg(src, f, fs, fe, t, lp, end, acc); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: t->s);
+}
+fn be_e_len_arg(src: str, f: int, fs: int, fe: int, t: Tok, lp: Tok, end: int, acc: int): BZ {
+  let a: Tok = pgm_tok(src, lp->p, end);
+  if a->k == 1 { return be_e_len_var(src, f, fs, fe, t, a, end, acc); } else { }
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
+}
+fn be_e_len_var(src: str, f: int, fs: int, fe: int, t: Tok, a: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, a->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, a->s, a->s, a->l);
+  if has_err(v->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 5 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let cp: Tok = pgm_tok(src, nx->s, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: e_mov_rax_home(base, acc), c: 0, o: 0); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: t->s);
 }

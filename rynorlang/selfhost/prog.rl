@@ -691,8 +691,13 @@ fn x_index_list(src: str, f: int, fs: int, fe: int, base: list<int,24>, bs: int,
   if has_err(ix->d) { return ix; } else { }
   if tbase(ix->t) == 1 { } else { return TR(t: tscal(1), p: pos, d: derr(11, f, ist->s)); }
   let cb: Tok = pgm_tok(src, ix->p, end);
-  if cb->k == 4 { if cb->l == 1 { if tok_byte(src, cb->s) == 93 { return x_post_rest(src, f, fs, fe, tsub(base, 1, []), bs, cb->p, end, depth, fuel); } else { } } else { } } else { }
+  if cb->k == 4 { if cb->l == 1 { if tok_byte(src, cb->s) == 93 { return x_index_list_ok(src, f, fs, fe, base, bs, cb->p, end, depth, fuel); } else { } } else { } } else { }
   return TR(t: tscal(1), p: pos, d: derr(6, f, cb->s));
+}
+fn x_index_list_ok(src: str, f: int, fs: int, fe: int, base: list<int,24>, bs: int, pos: int, end: int, depth: int, fuel: int): TR {
+  let et: list<int,24> = tsub(base, 1, []);
+  let st: list<int,24> = tcons(6, et, 0, []);
+  return x_post_rest(src, f, fs, fe, st, bs, pos, end, depth, fuel);
 }
 fn x_primary(src: str, f: int, fs: int, fe: int, pos: int, end: int, depth: int, fuel: int): TR {
   let t: Tok = pgm_tok(src, pos, end);
