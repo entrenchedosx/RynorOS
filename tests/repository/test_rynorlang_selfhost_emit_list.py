@@ -1,16 +1,12 @@
-"""Stage 19e BE-F1 bounded list storage: literals, len, copies, params,
-returns (sret), and nested calls.
+"""Stage 19e BE-F2 bounded list index/push: dynamic reads, growing writes,
+status observation (is_ok/is_err/unwrap_or), status returns, and calls.
 
-Layout (frozen 19a): len@0, elems@1+i*ew, padding-free 8-byte slots;
-value copies everywhere; aggregate returns use caller sret at stack
-slot 0; frames reserve one unit-max-width temp area for call staging.
-Index/push/unwrap/is_ok/== stay backend-25 (deferred to F2); elem
-values are therefore projected through len here, with value checking
-deferred to F2 index proof.
-
-QEMU/native proof deferred to F2; here execution is proven by the
-test-only emulator (BE-E forms only: no new x86 forms in F1).
-Reference semantics come from the trusted host oracle.
+Layout (frozen 19a): len@0, elems@1+i*ew; status tag@0/code@1/payload@2;
+value copies; sret for aggregate/status returns; one temp area.
+New x86 (all caller-saved, no string ops): test rax,rax(64), js, imul
+rax,imm32, lea rsi,home, sub rsi,rax, sub rsi,ib, mov rax,[rsi],
+mov [rsi],rax, mov ecx,imm32, add rax,ib. Emulator extended below.
+`==` on lists, call-temp index, and non-scalar-elem index/push stay 25.
 """
 
 import struct
@@ -29,7 +25,83 @@ from tools.rynorlang import interp as oracle  # noqa: E402
 from tools.rynorlang import rir  # noqa: E402
 
 
-Emu = ber.Emu
+MASK64 = bea.MASK64
+CODE_BASE = bea.CODE_BASE
+
+
+class Emu(ber.Emu):
+    def step(self):
+        b0 = self._fetch(1)[0]
+        R = self.reg
+        if b0 == 0xB9:
+            R["rcx"] = int.from_bytes(self._fetch(4), "little") & 0xFFFFFFFF
+            return
+        if b0 == 0x0F:
+            b1 = self._fetch(1)[0]
+            if b1 == 0x88:
+                disp = int.from_bytes(self._fetch(4), "little", signed=True)
+                if self.sf:
+                    self.rip = (self.rip + disp) & MASK64
+                return
+            if b1 == 0x83:
+                disp = int.from_bytes(self._fetch(4), "little", signed=True)
+                if self.cf == 0:
+                    self.rip = (self.rip + disp) & MASK64
+                return
+            self.rip -= 2
+            super().step()
+            return
+        self.rip -= 1
+        super().step()
+
+    def _rex(self):
+        R = self.reg
+        off = self.rip - CODE_BASE
+        b1 = self.code[off]
+        if b1 == 0x85 and self.code[off + 1] == 0xC0:
+            self._fetch(2)
+            self._flags_logic(R["rax"])
+            return
+        if b1 == 0x83 and self.code[off + 1] == 0xC0:
+            self._fetch(2)
+            imm = self._fetch(1)[0]
+            imm = imm - 256 if imm >= 128 else imm
+            R["rax"] = self._flags_add(R["rax"], imm & MASK64)
+            return
+        if b1 == 0x8B and self.code[off + 1] == 0x8D:
+            self._fetch(2)
+            d = int.from_bytes(self._fetch(4), "little", signed=True)
+            R["rcx"] = self._sread((R["rbp"] + d) & MASK64, 8)
+            return
+        if b1 == 0x69 and self.code[off + 1] == 0xC0:
+            self._fetch(2)
+            imm = int.from_bytes(self._fetch(4), "little", signed=True)
+            R["rax"] = (R["rax"] * (imm & MASK64)) & MASK64
+            self.cf = self.of = 0
+            return
+        if b1 == 0x8D and self.code[off + 1] == 0xB5:
+            self._fetch(2)
+            d = int.from_bytes(self._fetch(4), "little", signed=True)
+            R["rsi"] = (R["rbp"] + d) & MASK64
+            return
+        if b1 == 0x29 and self.code[off + 1] == 0xC6:
+            self._fetch(2)
+            R["rsi"] = self._flags_sub(R["rsi"], R["rax"])
+            return
+        if b1 == 0x83 and self.code[off + 1] == 0xEE:
+            self._fetch(2)
+            imm = self._fetch(1)[0]
+            R["rsi"] = self._flags_sub(R["rsi"], imm & MASK64)
+            return
+        if b1 == 0x8B and self.code[off + 1] == 0x06:
+            self._fetch(2)
+            R["rax"] = self._sread(R["rsi"] & MASK64, 8)
+            return
+        if b1 == 0x89 and self.code[off + 1] == 0x06:
+            self._fetch(2)
+            self._swrite(R["rsi"] & MASK64, 8, R["rax"])
+            return
+        super()._rex()
 
 
 def _oracle_run(src):
@@ -48,7 +120,14 @@ def _oracle_run(src):
 
 
 def run_image_data(raw: bytes):
-    return ber.run_image_data(raw)
+    ver, arch, hlen, res, entry, csz, fsz, msz = struct.unpack("<HHHHIIII", raw[4:28])
+    assert (ver, arch, hlen, res, entry) == (2, 1, 28, 0, 0)
+    assert fsz == msz, (fsz, msz)
+    assert 1 <= csz <= 65536 and 0 <= fsz <= 32768, (csz, fsz)
+    code, data = raw[28:28 + csz], raw[28 + csz:28 + csz + fsz]
+    assert len(code) == csz and len(data) == fsz and len(raw) == 28 + csz + fsz
+    em = Emu(code, data)
+    return em.run(), bytes(em.stdout)
 
 
 def _combo_text(extra=""):
@@ -67,35 +146,36 @@ ACCEPT_CASES = [
     ("list-empty", "fn main(): int { let l: list<int,2> = []; return len(l); }\n"),
     ("list-one", "fn main(): int { let l: list<int,2> = [5]; return len(l); }\n"),
     ("list-full-2", "fn main(): int { let l: list<int,2> = [1, 2]; return len(l); }\n"),
-    ("list-full-3", "fn main(): int { let l: list<int,3> = [1, 2, 3]; return len(l); }\n"),
-    ("list-bool", "fn main(): int { let l: list<bool,2> = [true, false]; return len(l); }\n"),
-    ("list-bool-3", "fn main(): int { let l: list<bool,3> = [true, false, true]; return len(l); }\n"),
-    ("list-expr", "fn main(): int { let l: list<int,3> = [1 + 2, 3 * 4, 10 - 3]; return len(l); }\n"),
     ("list-copy", "fn main(): int { let l: list<int,2> = [1, 2]; let m: list<int,2> = l; return len(m); }\n"),
-    ("list-copy-both", "fn main(): int { let l: list<int,2> = [1, 2]; let m: list<int,2> = l; return len(l) + len(m); }\n"),
-    ("list-two", "fn main(): int { let a: list<int,2> = [1, 2]; let b: list<int,2> = [3, 4]; return len(a) + len(b); }\n"),
-    ("list-nested-outer", "fn main(): int { let l: list<list<int,2>,2> = [[1, 2]]; return len(l); }\n"),
-    ("list-nested-full", "fn main(): int { let l: list<list<int,2>,2> = [[1, 2], [3, 4]]; return len(l); }\n"),
-    ("list-rec-elem", "record Pair { a: int, b: int }\nfn main(): int { let l: list<Pair,2> = [Pair(a: 1, b: 2)]; return len(l); }\n"),
     ("list-param", "fn getlen(l: list<int,2>): int { return len(l); }\nfn main(): int { let l: list<int,2> = [1, 2]; return getlen(l); }\n"),
-    ("list-param-mix", "fn f(x: int, l: list<int,2>, y: int): int { return x + len(l) + y; }\nfn main(): int { let l: list<int,2> = [1, 2]; return f(1, l, 4); }\n"),
     ("list-ret-lit", "fn mk(): list<int,2> { return [3, 4]; }\nfn main(): int { let l: list<int,2> = mk(); return len(l); }\n"),
-    ("list-ret-var", "fn idl(l: list<int,2>): list<int,2> { return l; }\nfn main(): int { let a: list<int,2> = [1, 2]; let b: list<int,2> = idl(a); return len(b); }\n"),
-    ("list-nestcall", "fn llen(l: list<int,2>): int { return len(l); }\nfn mk(): list<int,2> { return [1, 2]; }\nfn main(): int { return llen(mk()); }\n"),
-    ("list-if-len", "fn main(): int { let l: list<int,2> = [1, 2]; if len(l) == 2 { return 17; } else { return 93; } }\n"),
-    ("list-while-len", "fn main(): int { let l: list<int,2> = [1, 2]; while len(l) == 0 { return 1; } return 2; }\n"),
-    ("list-temp-clobber", "fn mk(): list<int,2> { return [20, 22]; }\nfn llen(l: list<int,2>): int { return len(l); }\nfn main(): int { let z: int = 5; let s: int = llen(mk()); return s + z; }\n"),
-    ("list-bound-ok", "fn main(): int { " + " ".join("let v%d: list<int,2> = [%d, %d];" % (i, i, i) for i in range(20)) + " return len(v19); }\n"),
+    ("idx-0", "fn main(): int { let l: list<int,2> = [10, 20]; let s: status<int> = l[0]; return unwrap_or(s, 0); }\n"),
+    ("idx-1", "fn main(): int { let l: list<int,2> = [10, 20]; let s: status<int> = l[1]; return unwrap_or(s, 0); }\n"),
+    ("idx-dyn", "fn main(): int { let l: list<int,3> = [7, 8, 9]; let i: int = 1 + 1; let s: status<int> = l[i]; return unwrap_or(s, 0); }\n"),
+    ("idx-bool", "fn main(): int { let l: list<bool,2> = [true, false]; let s: status<bool> = l[1]; if unwrap_or(s, true) { return 1; } else { return 0; } }\n"),
+    ("idx-oob", "fn main(): int { let l: list<int,2> = [10, 20]; let s: status<int> = l[9]; if is_err(s) { return 1; } else { return 0; } }\n"),
+    ("idx-neg", "fn main(): int { let l: list<int,2> = [10, 20]; let i: int = 0 - 1; let s: status<int> = l[i]; if is_err(s) { return 1; } else { return 0; } }\n"),
+    ("idx-ok-flag", "fn main(): int { let l: list<int,2> = [10, 20]; let s: status<int> = l[0]; if is_ok(s) { return 7; } else { return 0; } }\n"),
+    ("idx-err-default", "fn main(): int { let l: list<int,2> = [10, 20]; let s: status<int> = l[9]; return unwrap_or(s, 99); }\n"),
+    ("idx-param", "fn at(l: list<int,3>, i: int): status<int> { return l[i]; }\nfn main(): int { let l: list<int,3> = [5, 6, 7]; let s: status<int> = at(l, 2); return unwrap_or(s, 0); }\n"),
+    ("idx-ret-status", "fn fetch(l: list<int,2>): status<int> { return l[1]; }\nfn main(): int { let l: list<int,2> = [4, 9]; let s: status<int> = fetch(l); return unwrap_or(s, 0); }\n"),
+    ("push-ok-len", "fn main(): int { let l: list<int,2> = [10]; let s: status<list<int,2>> = push(l, 20); let m: list<int,2> = unwrap_or(s, l); return len(m); }\n"),
+    ("push-ok-val", "fn main(): int { let l: list<int,2> = [10]; let s: status<list<int,2>> = push(l, 20); let m: list<int,2> = unwrap_or(s, l); let t: status<int> = m[1]; return unwrap_or(t, 0); }\n"),
+    ("push-full", "fn main(): int { let l: list<int,2> = [1, 2]; let s: status<list<int,2>> = push(l, 3); if is_err(s) { return 1; } else { return 0; } }\n"),
+    ("push-dyn", "fn main(): int { let l: list<int,3> = [1]; let x: int = 2 + 3; let s: status<list<int,3>> = push(l, x); let m: list<int,3> = unwrap_or(s, l); let t: status<int> = m[1]; return unwrap_or(t, 0); }\n"),
+    ("push-status-ret", "fn put(l: list<int,2>, v: int): status<list<int,2>> { let s: status<list<int,2>> = push(l, v); return s; }\nfn main(): int { let l: list<int,2> = [1]; let s: status<list<int,2>> = put(l, 2); let m: list<int,2> = unwrap_or(s, l); return len(m); }\n"),
+    ("unwrap-bool-err", "fn main(): int { let l: list<bool,2> = [true]; let s: status<bool> = l[5]; if unwrap_or(s, false) { return 1; } else { return 0; } }\n"),
 ]
 
 REJECT25_CASES = [
-    ("list-index", "fn main(): int { let l: list<int,2> = [1, 2]; let s: status<int> = l[0]; return 0; }\n"),
-    ("list-push", "fn main(): int { let l: list<int,2> = [1]; let s: status<list<int,2>> = push(l, 2); return 0; }\n"),
-    ("list-unwrap", "fn main(): int { let s: status<int> = byte_at(\"ab\", 9); return unwrap_or(s, 0); }\n"),
-    ("list-is-ok", "fn main(): int { let s: status<int> = byte_at(\"ab\", 9); if is_ok(s) { return 1; } else { return 0; } }\n"),
     ("list-eq", "fn main(): int { let a: list<int,2> = [1, 2]; let b: list<int,2> = [1, 2]; if a == b { return 1; } else { return 0; } }\n"),
     ("list-field", "record L { l: list<int,2> }\nfn main(): int { let r: L = L(l: [1, 2]); return 0; }\n"),
     ("list-str-elem", "fn main(): int { let l: list<str,2> = [\"a\", \"b\"]; return 0; }\n"),
+    ("call-temp-index", "fn mk(): list<int,2> { return [1, 2]; }\nfn main(): int { let s: status<int> = mk()[0]; return 0; }\n"),
+    ("return-push-sret", "fn put(l: list<int,2>, v: int): status<list<int,2>> { return push(l, v); }\nfn main(): int { return 0; }\n"),
+    ("nested-index", "fn main(): int { let o: list<list<int,2>,2> = [[1, 2], [3, 4]]; let s: status<list<int,2>> = o[1]; return 0; }\n"),
+    ("push-nested-val", "fn main(): int { let o: list<list<int,2>,2> = []; let s: status<list<list<int,2>,2>> = push(o, [1, 2]); return 0; }\n"),
+    ("idx-rec-elem", "record Pair { a: int, b: int }\nfn main(): int { let l: list<Pair,2> = [Pair(a: 1, b: 2)]; let s: status<Pair> = l[0]; return 0; }\n"),
 ]
 
 REJECT_CHECK_CASES = [
@@ -136,7 +216,7 @@ class BEListAcceptTests(unittest.TestCase):
         hexes = [h for _n, h, _w, _e in self.images]
         self.assertEqual(len(set(hexes)), len(hexes))
         outs = [(w, e) for _n, _h, w, e in self.images]
-        self.assertGreater(len(set(outs)), 3)
+        self.assertGreater(len(set(outs)), 5)
 
     def test_04_code_sizes_bounded(self):
         for name, hexstr, _w, _e in self.images:
@@ -146,12 +226,12 @@ class BEListAcceptTests(unittest.TestCase):
             self.assertLessEqual(csz, 65536)
             self.assertLessEqual(fsz, 32768)
 
-    def test_05_len_values(self):
+    def test_05_value_spots(self):
         by_name = {n: e for n, _h, _w, e in self.images}
-        self.assertEqual(by_name["list-empty"], 0)
-        self.assertEqual(by_name["list-one"], 1)
-        self.assertEqual(by_name["list-full-2"], 2)
-        self.assertEqual(by_name["list-copy-both"], 4)
+        self.assertEqual(by_name["idx-0"], 10)
+        self.assertEqual(by_name["idx-1"], 20)
+        self.assertEqual(by_name["push-ok-val"], 20)
+        self.assertEqual(by_name["push-full"], 1)
 
 
 class BEListRejectTests(unittest.TestCase):
@@ -232,44 +312,38 @@ class BEListMutantTests(unittest.TestCase):
                      "  let base: int = be_home_base(src, f, fs, fe, v);\n  let cp: Tok = pgm_tok(src, nx->s, end);\n  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: e_mov_rax_home(base + 1, acc), c: 0, o: 0); } else { } } else { } } else { }")
         self.assertTrue(self._red_on(combo, self._idx("list-full-2")))
 
-    def test_be_m2_len_always_zero(self):
+    def test_be_m2_idx_no_imul(self):
         combo = _mut(_combo_text(),
-                     "  let a0: int = e_mov_rax_imm(count, acc);",
-                     "  let a0: int = e_mov_rax_imm(0, acc);")
-        self.assertTrue(self._red_on(combo, self._idx("list-full-2")))
+                     "fn be_e_index_load(dk: int, ds: int, sbase: int, acc: int): int {\n  let a0: int = e_imul_rax_imm(8, acc);",
+                     "fn be_e_index_load(dk: int, ds: int, sbase: int, acc: int): int {\n  let a0: int = acc;")
+        self.assertTrue(self._red_on(combo, self._idx("idx-1")))
 
-    def test_be_m3_copy_src_plus1(self):
+    def test_be_m3_idx_no_bound_check(self):
         combo = _mut(_combo_text(),
-                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let w: int = tslots(ty, src, f);\n  return BZ(p: t->p, n: be_copy_size(base, dk, ds, w), c: 0, o: 0);\n}\nfn be_is_push",
-                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let w: int = tslots(ty, src, f);\n  return BZ(p: t->p, n: be_copy_size(base + 1, dk, ds, w), c: 0, o: 0);\n}\nfn be_is_push")
-        combo = _mut(combo,
-                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let w: int = tslots(ty, src, f);\n  return BZ(p: t->p, n: be_copy_emit(base, dk, ds, w, acc), c: 0, o: 0);\n}\nfn be_e_aggex_call",
-                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let w: int = tslots(ty, src, f);\n  return BZ(p: t->p, n: be_copy_emit(base + 1, dk, ds, w, acc), c: 0, o: 0);\n}\nfn be_e_aggex_call")
-        self.assertTrue(self._red_on(combo, self._idx("list-copy")))
+                     "  let a4: int = e_jae(jaed, a3);\n  let a5: int = be_e_index_ok(dk, ds, sbase, a4);",
+                     "  let a4: int = a3;\n  let a5: int = be_e_index_ok(dk, ds, sbase, a4);")
+        self.assertTrue(self._red_on(combo, self._idx("idx-oob")))
 
-    def test_be_m4_frame_bytes_omitted(self):
+    def test_be_m4_push_no_full_check(self):
+        combo = _mut(_combo_text(),
+                     "  let a4: int = e_jae(jaed, a3);\n  let a5: int = be_e_push_ok(src, f, dk, ds, w, sbase, a4);",
+                     "  let a4: int = a3;\n  let a5: int = be_e_push_ok(src, f, dk, ds, w, sbase, a4);")
+        self.assertTrue(self._red_on(combo, self._idx("push-full")))
+
+    def test_be_m5_unwrap_swapped(self):
+        combo = _mut(_combo_text(),
+                     "  let a4: int = e_pop_rax(a3);",
+                     "  let a4: int = e_pop_rcx(a3);")
+        self.assertTrue(self._red_on(combo, self._idx("idx-err-default")))
+
+    def test_be_m6_frame_bytes_omitted(self):
         combo = _mut(_combo_text(),
                      "  let fr: int = nl + be_unit_maxrec(src, f);",
                      "  let fr: int = nl - be_unit_maxrec(src, f);")
         combo = _mut(combo,
                      "  let fr: int = e_frame(nl + be_unit_maxrec(src, f), acc);",
                      "  let fr: int = e_frame(nl - be_unit_maxrec(src, f), acc);")
-        self.assertTrue(self._red_on(combo, self._idx("list-temp-clobber")))
-
-    def test_be_m5_param_wrong_offset(self):
-        combo = _mutated_combo(
-            "  if v->k == 1 { return be_param_base(src, f, fs, fe, v->slot) + 1; } else { }",
-            "  if v->k == 1 { return be_param_base(src, f, fs, fe, v->slot) + 2; } else { }")
-        self.assertTrue(self._red_on(combo, self._idx("list-param")))
-
-    def test_be_m6_arg_copy_removed(self):
-        combo = _mut(_combo_text(),
-                     "  let e: BZ = be_s_aggex(src, f, fs, fe, 0, tb, pt->t, pos, end);",
-                     "  let e: BZ = be_s_aggex(src, f, fs, fe, 0, tb + w, pos, end);")
-        combo = _mut(combo,
-                     "  let e: BZ = be_e_aggex(src, f, fs, fe, 0, tb, pt->t, pos, end, acc);",
-                     "  let e: BZ = be_e_aggex(src, f, fs, fe, 0, tb + w, pt->t, pos, end, acc);")
-        self.assertTrue(self._red_on(combo, self._idx("list-param-mix")))
+        self.assertTrue(self._red_on(combo, self._idx("list-ret-lit")))
 
     def test_be_m7_wrong_ret_dst(self):
         combo = _mut(_combo_text(),
@@ -279,6 +353,15 @@ class BEListMutantTests(unittest.TestCase):
                      "  let e: BZ = be_e_aggex(src, f, fs, fe, 1, 0, rt, nx->s, end, acc);",
                      "  let e: BZ = be_e_aggex(src, f, fs, fe, 0, 0, rt, nx->s, end, acc);")
         self.assertTrue(self._red_on(combo, self._idx("list-ret-lit")))
+
+    def test_be_m8_copy_src_plus1(self):
+        combo = _mut(_combo_text(),
+                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let w: int = tslots(ty, src, f);\n  return BZ(p: t->p, n: be_copy_size(base, dk, ds, w), c: 0, o: 0);\n}\nfn be_is_push",
+                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let w: int = tslots(ty, src, f);\n  return BZ(p: t->p, n: be_copy_size(base + 1, dk, ds, w), c: 0, o: 0);\n}\nfn be_is_push")
+        combo = _mut(combo,
+                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let w: int = tslots(ty, src, f);\n  return BZ(p: t->p, n: be_copy_emit(base, dk, ds, w, acc), c: 0, o: 0);\n}\nfn be_e_aggex_call",
+                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let w: int = tslots(ty, src, f);\n  return BZ(p: t->p, n: be_copy_emit(base + 1, dk, ds, w, acc), c: 0, o: 0);\n}\nfn be_e_aggex_call")
+        self.assertTrue(self._red_on(combo, self._idx("list-copy")))
 
 
 if __name__ == "__main__":
