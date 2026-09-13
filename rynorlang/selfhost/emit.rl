@@ -630,6 +630,9 @@ fn be_s_ident(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
   if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "::", 0, 2) { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
   let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
   if has_err(v->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 3 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
   return BZ(p: t->p, n: sz_mov_rax_home(be_home_base(src, f, fs, fe, v)), c: 0, o: 0);
 }
 fn be_s_punct(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
@@ -664,6 +667,9 @@ fn be_e_ident(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): B
   if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "::", 0, 2) { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
   let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
   if has_err(v->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 3 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
   return BZ(p: t->p, n: e_mov_rax_home(be_home_base(src, f, fs, fe, v), acc), c: 0, o: 0);
 }
 fn be_e_punct(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
@@ -747,6 +753,7 @@ fn be_s_let(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t:
 }
 fn be_s_let_aggsel(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR, ts: Tok): BZ {
   if tbase(ty->t) == 4 { return be_s_let_rec(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
+  if tbase(ty->t) == 3 { return be_s_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
   if tbase(ty->t) == 5 { return be_s_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
   if tbase(ty->t) == 6 { return be_s_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
   return BZ(p: pos, n: acc, c: 25, o: ts->s);
@@ -866,6 +873,7 @@ fn be_e_let(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t:
 }
 fn be_e_let_aggsel(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR, ts: Tok): BZ {
   if tbase(ty->t) == 4 { return be_e_let_rec(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
+  if tbase(ty->t) == 3 { return be_e_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
   if tbase(ty->t) == 5 { return be_e_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
   if tbase(ty->t) == 6 { return be_e_let_agg(src, f, fs, fe, pos, end, acc, t, nm, ty); } else { }
   return BZ(p: pos, n: acc, c: 25, o: ts->s);
@@ -1019,6 +1027,7 @@ fn be_gate_hparams(src: str, f: int, hs: int, he: int, np: int, i: int): D {
   if i >= np { return dok(); } else { }
   let pt: TR = pgm_hparam_ty(src, f, hs, he, i);
   if has_err(pt->d) { return pt->d; } else { }
+  if tbase(pt->t) == 3 { return be_gate_hparams(src, f, hs, he, np, i + 1); } else { }
   if be_subset_ty(pt->t, src, f, 0, 1) == 1 { } else { return derr(25, f, hs); }
   return be_gate_hparams(src, f, hs, he, np, i + 1);
 }
@@ -1238,6 +1247,7 @@ fn be_s_callarg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int,
   let cs: VS = be_fn_span(src, f, ci);
   let pt: TR = pgm_hparam_ty(src, f, cs->off, cs->off + cs->tl, i);
   if has_err(pt->d) { return BZ(p: pos, n: 0, c: 29, o: pos); } else { }
+  if tbase(pt->t) == 3 { return be_s_strarg(src, f, fs, fe, pos, end, np, i, acc, ci, tb); } else { }
   if tbase(pt->t) == 4 { return be_s_callarg_rec(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
   if tbase(pt->t) == 5 { return be_s_callarg_agg(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
   if tbase(pt->t) == 6 { return be_s_callarg_agg(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
@@ -1301,6 +1311,7 @@ fn be_e_callarg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int,
   let cs: VS = be_fn_span(src, f, ci);
   let pt: TR = pgm_hparam_ty(src, f, cs->off, cs->off + cs->tl, i);
   if has_err(pt->d) { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  if tbase(pt->t) == 3 { return be_e_strarg(src, f, fs, fe, pos, end, np, i, acc, ci, tb); } else { }
   if tbase(pt->t) == 4 { return be_e_callarg_rec(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
   if tbase(pt->t) == 5 { return be_e_callarg_agg(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
   if tbase(pt->t) == 6 { return be_e_callarg_agg(src, f, fs, fe, pos, end, np, i, acc, ci, tb, pt); } else { }
@@ -1577,20 +1588,21 @@ fn be_emit_str(src: str, pos: int, end: int, acc: int): int {
   return be_emit_str(src, pos + 1, end, e_b(b, acc));
 }
 fn be_data_len(src: str, f: int): int {
-  if be_has_print(src, f) == 0 { return 0; } else { }
+  if be_has_data(src, f) == 0 { return 0; } else { }
   return be_data_fns(src, f, 0, len(src), 0);
 }
-fn be_has_print(src: str, f: int): int {
-  return be_has_print_at(src, 0, len(src));
+fn be_has_data(src: str, f: int): int {
+  return be_has_data_at(src, 0, len(src));
 }
-fn be_has_print_at(src: str, pos: int, end: int): int {
+fn be_has_data_at(src: str, pos: int, end: int): int {
   if pos >= end { return 0; } else { }
   let t: Tok = next_tok(src, pos);
-  if t->k == 0 - 2 { return be_has_print_at(src, t->p, end); } else { }
+  if t->k == 0 - 2 { return be_has_data_at(src, t->p, end); } else { }
   if t->k == 0 { return 0; } else { }
   if t->k == 1 { if t->l == 5 { if beq(src, t->s, "print", 0, 5) { return 1; } else { } } else { } } else { }
+  if t->k == 3 { return 1; } else { }
   if t->p <= pos { return 0; } else { }
-  return be_has_print_at(src, t->p, end);
+  return be_has_data_at(src, t->p, end);
 }
 fn be_data_fns(src: str, f: int, pos: int, end: int, acc: int): int {
   let it: TI = tl_next(src, f, pos, end);
@@ -1633,7 +1645,7 @@ fn be_data_if(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, 
   if pgm_is_obrace(src, bo) { } else { return acc; }
   let be: int = pgm_brace_end(src, bo->s, end);
   if be == 0 - 1 { return acc; } else { }
-  let a0: int = be_data_block(src, f, fs, fe, bo->p, be, acc);
+  let a0: int = be_data_block(src, f, fs, fe, bo->p, be, acc + be_data_scanstr(src, t->p, c->p, 0));
   return be_data_else(src, f, fs, fe, be, end, a0);
 }
 fn be_data_else(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): int {
@@ -1656,47 +1668,26 @@ fn be_data_while(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: in
   if pgm_is_obrace(src, bo) { } else { return acc; }
   let be: int = pgm_brace_end(src, bo->s, end);
   if be == 0 - 1 { return acc; } else { }
-  return be_data_block(src, f, fs, fe, be, end, be_data_block(src, f, fs, fe, bo->p, be, acc));
+  return be_data_block(src, f, fs, fe, be, end, be_data_block(src, f, fs, fe, bo->p, be, acc + be_data_scanstr(src, t->p, c->p, 0)));
 }
 fn be_data_braced(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): int {
   let be: int = pgm_brace_end(src, t->s, end);
   if be == 0 - 1 { return acc; } else { }
   return be_data_block(src, f, fs, fe, be, end, be_data_block(src, f, fs, fe, t->p, be, acc));
 }
-fn be_data_plain(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): int {
-  let lit: VS = be_print_lit_at(src, pos, end);
-  if lit->off == 0 - 1 { return be_data_next(src, f, fs, fe, pos, end, acc); } else { }
-  return be_data_block(src, f, fs, fe, lit->ts, end, acc + be_str_len(src, lit->off, lit->tl));
-}
-fn be_data_next(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): int {
-  let s: BZ = be_s_stmt(src, f, fs, fe, pos, end, 0);
-  if s->c == 0 { return be_data_block(src, f, fs, fe, s->p, end, acc); } else { }
-  return acc;
-}
-fn be_print_lit_at(src: str, pos: int, end: int): VS {
+fn be_data_scanstr(src: str, pos: int, end: int, acc: int): int {
   let t: Tok = pgm_tok(src, pos, end);
-  if t->k == 1 { if t->l == 5 { if beq(src, t->s, "print", 0, 5) { return be_print_lit_open(src, t->p, end); } else { } } else { } } else { }
-  return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok());
+  if t->k == 0 { return acc; } else { }
+  if t->p <= pos { return acc; } else { }
+  if t->s >= end { return acc; } else { }
+  if t->k == 0 - 2 { return be_data_scanstr(src, t->p, end, acc); } else { }
+  if t->k == 3 { return be_data_scanstr(src, t->p, end, acc + be_str_len(src, t->s + 1, t->s + t->l - 1)); } else { }
+  return be_data_scanstr(src, t->p, end, acc);
 }
-fn be_print_lit_open(src: str, pos: int, end: int): VS {
-  let nx: Tok = pgm_tok(src, pos, end);
-  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_print_lit_arg(src, nx->p, end); } else { } } else { } } else { }
-  return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok());
-}
-fn be_print_lit_arg(src: str, pos: int, end: int): VS {
-  let st: Tok = pgm_tok(src, pos, end);
-  if st->k == 3 { return be_print_lit_close(src, st, end); } else { }
-  return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok());
-}
-fn be_print_lit_close(src: str, st: Tok, end: int): VS {
-  let cp: Tok = pgm_tok(src, st->p, end);
-  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return be_print_lit_semi(src, st, cp, end); } else { } } else { } } else { }
-  return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok());
-}
-fn be_print_lit_semi(src: str, st: Tok, cp: Tok, end: int): VS {
-  let sc: Tok = pgm_tok(src, cp->p, end);
-  if pgm_is_semi(src, sc) { return VS(off: st->s + 1, k: 0, ts: sc->p, tl: st->s + st->l - 1, slot: 0, d: dok()); } else { }
-  return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok());
+fn be_data_plain(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): int {
+  let s: BZ = be_s_stmt(src, f, fs, fe, pos, end, 0);
+  if s->c == 0 { } else { return acc; }
+  return be_data_block(src, f, fs, fe, s->p, end, acc + be_data_scanstr(src, pos, s->p, 0));
 }
 fn be_data_off(src: str, f: int, span: int): int {
   let r: int = be_data_off_fns(src, f, span, 0, len(src), 0);
@@ -1748,7 +1739,9 @@ fn be_data_off_if(src: str, f: int, fs: int, fe: int, span: int, pos: int, end: 
   if pgm_is_obrace(src, bo) { } else { return acc; }
   let be: int = pgm_brace_end(src, bo->s, end);
   if be == 0 - 1 { return acc; } else { }
-  let a0: int = be_data_off_block(src, f, fs, fe, span, bo->p, be, acc);
+  let q0: int = be_data_offscan(src, span, t->p, c->p, end, acc);
+  if q0 <= 0 - 2 { return q0; } else { }
+  let a0: int = be_data_off_block(src, f, fs, fe, span, bo->p, be, q0);
   if a0 <= 0 - 2 { return a0; } else { }
   return be_data_off_else(src, f, fs, fe, span, be, end, a0);
 }
@@ -1774,7 +1767,9 @@ fn be_data_off_while(src: str, f: int, fs: int, fe: int, span: int, pos: int, en
   if pgm_is_obrace(src, bo) { } else { return acc; }
   let be: int = pgm_brace_end(src, bo->s, end);
   if be == 0 - 1 { return acc; } else { }
-  let a0: int = be_data_off_block(src, f, fs, fe, span, bo->p, be, acc);
+  let q0: int = be_data_offscan(src, span, t->p, c->p, end, acc);
+  if q0 <= 0 - 2 { return q0; } else { }
+  let a0: int = be_data_off_block(src, f, fs, fe, span, bo->p, be, q0);
   if a0 <= 0 - 2 { return a0; } else { }
   return be_data_off_block(src, f, fs, fe, span, be, end, a0);
 }
@@ -1785,19 +1780,24 @@ fn be_data_off_braced(src: str, f: int, fs: int, fe: int, span: int, t: Tok, end
   if a0 <= 0 - 2 { return a0; } else { }
   return be_data_off_block(src, f, fs, fe, span, be, end, a0);
 }
-fn be_data_off_plain(src: str, f: int, fs: int, fe: int, span: int, pos: int, end: int, acc: int): int {
-  let lit: VS = be_print_lit_at(src, pos, end);
-  if lit->off == 0 - 1 { return be_data_off_next(src, f, fs, fe, span, pos, end, acc); } else { }
-  if lit->off - 1 == span { return 0 - acc - 2; } else { }
-  return be_data_off_block(src, f, fs, fe, span, lit->ts, end, acc + be_str_len(src, lit->off, lit->tl));
+fn be_data_offscan(src: str, span: int, pos: int, lim: int, end: int, acc: int): int {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 0 { return acc; } else { }
+  if t->p <= pos { return acc; } else { }
+  if t->s >= lim { return acc; } else { }
+  if t->k == 0 - 2 { return be_data_offscan(src, span, t->p, lim, end, acc); } else { }
+  if t->k == 3 { if t->s == span { return 0 - acc - 2; } else { } return be_data_offscan(src, span, t->p, lim, end, acc + be_str_len(src, t->s + 1, t->s + t->l - 1)); } else { }
+  return be_data_offscan(src, span, t->p, lim, end, acc);
 }
-fn be_data_off_next(src: str, f: int, fs: int, fe: int, span: int, pos: int, end: int, acc: int): int {
+fn be_data_off_plain(src: str, f: int, fs: int, fe: int, span: int, pos: int, end: int, acc: int): int {
   let s: BZ = be_s_stmt(src, f, fs, fe, pos, end, 0);
-  if s->c == 0 { return be_data_off_block(src, f, fs, fe, span, s->p, end, acc); } else { }
-  return acc;
+  if s->c == 0 { } else { return acc; }
+  let a0: int = be_data_offscan(src, span, pos, s->p, end, acc);
+  if a0 <= 0 - 2 { return a0; } else { }
+  return be_data_off_block(src, f, fs, fe, span, s->p, end, a0);
 }
 fn be_emit_data(src: str, f: int, acc: int): BZ {
-  if be_has_print(src, f) == 0 { return BZ(p: 0, n: acc, c: 0, o: 0); } else { }
+  if be_has_data(src, f) == 0 { return BZ(p: 0, n: acc, c: 0, o: 0); } else { }
   return be_emit_data_fns(src, f, 0, len(src), acc);
 }
 fn be_emit_data_fns(src: str, f: int, pos: int, end: int, acc: int): BZ {
@@ -1845,7 +1845,7 @@ fn be_emit_data_if(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: 
   if pgm_is_obrace(src, bo) { } else { return BZ(p: pos, n: acc, c: 29, o: bo->s); }
   let be: int = pgm_brace_end(src, bo->s, end);
   if be == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: bo->s); } else { }
-  let b: BZ = be_emit_data_block(src, f, fs, fe, bo->p, be, acc);
+  let b: BZ = be_emit_data_block(src, f, fs, fe, bo->p, be, be_emit_datascan(src, t->p, c->p, acc));
   if b->c == 0 { } else { return b; }
   return be_emit_data_else(src, f, fs, fe, be, end, b->n);
 }
@@ -1871,7 +1871,7 @@ fn be_emit_data_while(src: str, f: int, fs: int, fe: int, pos: int, end: int, ac
   if pgm_is_obrace(src, bo) { } else { return BZ(p: pos, n: acc, c: 29, o: bo->s); }
   let be: int = pgm_brace_end(src, bo->s, end);
   if be == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: bo->s); } else { }
-  let b: BZ = be_emit_data_block(src, f, fs, fe, bo->p, be, acc);
+  let b: BZ = be_emit_data_block(src, f, fs, fe, bo->p, be, be_emit_datascan(src, t->p, c->p, acc));
   if b->c == 0 { } else { return b; }
   return be_emit_data_block(src, f, fs, fe, be, end, b->n);
 }
@@ -1882,16 +1882,19 @@ fn be_emit_data_braced(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc
   if b->c == 0 { } else { return b; }
   return be_emit_data_block(src, f, fs, fe, be, end, b->n);
 }
-fn be_emit_data_plain(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): BZ {
-  let lit: VS = be_print_lit_at(src, pos, end);
-  if lit->off == 0 - 1 { return be_emit_data_next(src, f, fs, fe, pos, end, acc); } else { }
-  let a0: int = be_emit_str(src, lit->off, lit->tl, acc);
-  return be_emit_data_block(src, f, fs, fe, lit->ts, end, a0);
+fn be_emit_datascan(src: str, pos: int, end: int, acc: int): int {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 0 { return acc; } else { }
+  if t->p <= pos { return acc; } else { }
+  if t->s >= end { return acc; } else { }
+  if t->k == 0 - 2 { return be_emit_datascan(src, t->p, end, acc); } else { }
+  if t->k == 3 { return be_emit_datascan(src, t->p, end, be_emit_str(src, t->s + 1, t->s + t->l - 1, acc)); } else { }
+  return be_emit_datascan(src, t->p, end, acc);
 }
-fn be_emit_data_next(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): BZ {
+fn be_emit_data_plain(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): BZ {
   let s: BZ = be_s_stmt(src, f, fs, fe, pos, end, 0);
-  if s->c == 0 { return be_emit_data_block(src, f, fs, fe, s->p, end, acc); } else { }
-  return BZ(p: pos, n: acc, c: 29, o: pos);
+  if s->c == 0 { } else { return BZ(p: pos, n: acc, c: 29, o: pos); }
+  return be_emit_data_block(src, f, fs, fe, s->p, end, be_emit_datascan(src, pos, s->p, acc));
 }
 fn be_rec_count(src: str, f: int): int {
   return be_rec_count_at(src, f, 0, len(src), 0);
@@ -2875,6 +2878,7 @@ fn be_s_chain_load(src: str, f: int, ri: int, tb: int, pos: int, end: int): BZ {
 }
 fn be_s_aggex(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int): BZ {
   let tb: int = tbase(ty);
+  if tb == 3 { return be_s_strx(src, f, fs, fe, dk, ds, pos, end); } else { }
   if tb == 4 { return be_s_aggex_rec(src, f, fs, fe, dk, ds, ty, pos, end); } else { }
   if tb == 5 { return be_s_aggex_list(src, f, fs, fe, dk, ds, ty, pos, end); } else { }
   if tb == 6 { return be_s_aggex_status(src, f, fs, fe, dk, ds, ty, pos, end); } else { }
@@ -3156,6 +3160,7 @@ fn be_s_index_err_size(dk: int, ds: int): int {
 }
 fn be_e_aggex(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int, acc: int): BZ {
   let tb: int = tbase(ty);
+  if tb == 3 { return be_e_strx(src, f, fs, fe, dk, ds, pos, end, acc); } else { }
   if tb == 4 { return be_e_aggex_rec(src, f, fs, fe, dk, ds, ty, pos, end, acc); } else { }
   if tb == 5 { return be_e_aggex_list(src, f, fs, fe, dk, ds, ty, pos, end, acc); } else { }
   if tb == 6 { return be_e_aggex_status(src, f, fs, fe, dk, ds, ty, pos, end, acc); } else { }
@@ -3687,4 +3692,153 @@ fn be_e_unwrap_emit(base: int, acc: int, pos: int, jzd: int, jmpd: int): BZ {
   let a6: int = e_pop_rcx(a5);
   let a7: int = e_mov_rax_home(base + 2, a6);
   return BZ(p: pos, n: a7, c: 0, o: 0);
+}
+fn be_s_strx(src: str, f: int, fs: int, fe: int, dk: int, ds: int, pos: int, end: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 3 { return be_s_strlit(src, f, dk, ds, t); } else { }
+  if t->k == 1 { return be_s_strvar(src, f, fs, fe, dk, ds, t, end); } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 40 { return be_s_strparen(src, f, fs, fe, dk, ds, t, end); } else { } } else { } } else { }
+  return BZ(p: pos, n: 0, c: 29, o: pos);
+}
+fn be_s_strlit(src: str, f: int, dk: int, ds: int, t: Tok): BZ {
+  let a0: int = sz_mov_rax_imm(0) + be_store_size(dk, ds, 0);
+  return BZ(p: t->p, n: a0 + sz_mov_rax_imm(0) + be_store_size(dk, ds, 1), c: 0, o: 0);
+}
+fn be_s_strvar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
+  if has_err(v->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 3 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  return BZ(p: t->p, n: be_copy_size(base, dk, ds, 2), c: 0, o: 0);
+}
+fn be_s_strparen(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, end: int): BZ {
+  let e: BZ = be_s_strx(src, f, fs, fe, dk, ds, t->p, end);
+  if e->c == 0 { } else { return e; }
+  let cb: Tok = pgm_tok(src, e->p, end);
+  if cb->k == 4 { if cb->l == 1 { if tok_byte(src, cb->s) == 41 { return BZ(p: cb->p, n: e->n, c: 0, o: 0); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: cb->s);
+}
+fn be_e_strx(src: str, f: int, fs: int, fe: int, dk: int, ds: int, pos: int, end: int, acc: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 3 { return be_e_strlit(src, f, dk, ds, t, acc); } else { }
+  if t->k == 1 { return be_e_strvar(src, f, fs, fe, dk, ds, t, end, acc); } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 40 { return be_e_strparen(src, f, fs, fe, dk, ds, t, end, acc); } else { } } else { } } else { }
+  return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+fn be_e_strlit(src: str, f: int, dk: int, ds: int, t: Tok, acc: int): BZ {
+  let off: int = be_data_off(src, f, t->s);
+  if off == 0 - 1 { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let len: int = be_str_len(src, t->s + 1, t->s + t->l - 1);
+  let a0: int = e_mov_rax_imm(be_data_base() + off, acc);
+  let a1: int = be_store_emit(dk, ds, 0, a0);
+  let a2: int = e_mov_rax_imm(len, a1);
+  let a3: int = be_store_emit(dk, ds, 1, a2);
+  return BZ(p: t->p, n: a3, c: 0, o: 0);
+}
+fn be_e_strvar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
+  if has_err(v->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 3 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  return BZ(p: t->p, n: be_copy_emit(base, dk, ds, 2, acc), c: 0, o: 0);
+}
+fn be_e_strparen(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, end: int, acc: int): BZ {
+  let e: BZ = be_e_strx(src, f, fs, fe, dk, ds, t->p, end, acc);
+  if e->c == 0 { } else { return e; }
+  let cb: Tok = pgm_tok(src, e->p, end);
+  if cb->k == 4 { if cb->l == 1 { if tok_byte(src, cb->s) == 41 { return BZ(p: cb->p, n: e->n, c: 0, o: 0); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: cb->s);
+}
+fn be_s_strarg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int, i: int, acc: int, ci: int, tb: int): BZ {
+  let e: BZ = be_s_strval(src, f, fs, fe, pos, end);
+  if e->c == 0 { } else { return e; }
+  return be_s_callsep(src, f, fs, fe, e->p, end, np, i, acc + e->n, ci, tb);
+}
+fn be_s_strval(src: str, f: int, fs: int, fe: int, pos: int, end: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 3 { return be_s_strval_lit(t); } else { }
+  if t->k == 1 { return be_s_strval_var(src, f, fs, fe, t, end); } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 40 { return be_s_strval_paren(src, f, fs, fe, t, end); } else { } } else { } } else { }
+  return BZ(p: pos, n: 0, c: 29, o: pos);
+}
+fn be_s_strval_lit(t: Tok): BZ {
+  return BZ(p: t->p, n: sz_mov_rax_imm(0) + sz_push_rax() + sz_mov_rax_imm(0) + sz_push_rax(), c: 0, o: 0);
+}
+fn be_s_strval_var(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
+  if has_err(v->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 3 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  return BZ(p: t->p, n: sz_mov_rax_home(base) + sz_push_rax() + sz_mov_rax_home(base + 1) + sz_push_rax(), c: 0, o: 0);
+}
+fn be_s_strval_paren(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
+  let e: BZ = be_s_strval(src, f, fs, fe, t->p, end);
+  if e->c == 0 { } else { return e; }
+  let cb: Tok = pgm_tok(src, e->p, end);
+  if cb->k == 4 { if cb->l == 1 { if tok_byte(src, cb->s) == 41 { return BZ(p: cb->p, n: e->n, c: 0, o: 0); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: cb->s);
+}
+fn be_e_strarg(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int, i: int, acc: int, ci: int, tb: int): BZ {
+  let e: BZ = be_e_strval(src, f, fs, fe, pos, end, acc);
+  if e->c == 0 { } else { return e; }
+  return be_e_callsep(src, f, fs, fe, e->p, end, np, i, e->n, ci, tb);
+}
+fn be_e_strval(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int): BZ {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 3 { return be_e_strval_lit(src, f, t, acc); } else { }
+  if t->k == 1 { return be_e_strval_var(src, f, fs, fe, t, end, acc); } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 40 { return be_e_strval_paren(src, f, fs, fe, t, end, acc); } else { } } else { } } else { }
+  return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+fn be_e_strval_lit(src: str, f: int, t: Tok, acc: int): BZ {
+  let off: int = be_data_off(src, f, t->s);
+  if off == 0 - 1 { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let len: int = be_str_len(src, t->s + 1, t->s + t->l - 1);
+  let a0: int = e_mov_rax_imm(be_data_base() + off, acc);
+  let a1: int = e_push_rax(a0);
+  let a2: int = e_mov_rax_imm(len, a1);
+  let a3: int = e_push_rax(a2);
+  return BZ(p: t->p, n: a3, c: 0, o: 0);
+}
+fn be_e_strval_var(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, t->s, t->s, t->l);
+  if has_err(v->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 3 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let a0: int = e_mov_rax_home(base, acc);
+  let a1: int = e_push_rax(a0);
+  let a2: int = e_mov_rax_home(base + 1, a1);
+  let a3: int = e_push_rax(a2);
+  return BZ(p: t->p, n: a3, c: 0, o: 0);
+}
+fn be_e_strval_paren(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
+  let e: BZ = be_e_strval(src, f, fs, fe, t->p, end, acc);
+  if e->c == 0 { } else { return e; }
+  let cb: Tok = pgm_tok(src, e->p, end);
+  if cb->k == 4 { if cb->l == 1 { if tok_byte(src, cb->s) == 41 { return BZ(p: cb->p, n: e->n, c: 0, o: 0); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: cb->s);
 }
