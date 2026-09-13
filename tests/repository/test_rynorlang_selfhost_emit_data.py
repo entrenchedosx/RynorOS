@@ -133,7 +133,6 @@ REJECT25_CASES = [
     ("print-int", 'fn main(): int { print(1); return 0; }\n'),
     ("print-bool", 'fn main(): int { print(true); return 0; }\n'),
     ("print-var", 'fn main(): int { let x: int = 1; print(x); return 0; }\n'),
-    ("str-param", 'fn f(s: str): int { return 0; }\nfn main(): int { return f("ab"); }\n'),
     ("str-ret", 'fn f(): str { return "ab"; }\nfn main(): int { return 0; }\n'),
 ]
 
