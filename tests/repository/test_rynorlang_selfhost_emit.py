@@ -545,8 +545,6 @@ REJECT25_CASES = [
     ("div", "fn main(): int { return 1 / 2; }\n"),
     ("mod", "fn main(): int { return 1 % 2; }\n"),
     ('match-stmt', 'fn main(): int { let r: status<int> = byte_at("ab", 0); match r { ok(v) => { return v; }, err(e) => { return 1; } } }\n'),
-    ('str-let', 'fn main(): int { let s: str = "ab"; return 0; }\n'),
-    ("list-let", "fn main(): int { let l: list<int,2> = [1, 2]; return 0; }\n"),
     ("params", "fn main(a: int): int { return a; }\n"),
     ("bool-main", "fn main(): bool { return true; }\n"),
     ("unit-ret", "fn main() { return; }\n"),

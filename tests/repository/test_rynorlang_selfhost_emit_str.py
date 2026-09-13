@@ -186,8 +186,6 @@ REJECT25_CASES = [
     ("print-strvar", "fn main(): int { let s: str = \"ab\"; print(s); return 0; }\n"),
     ("print-strcall", "fn h(): str { return \"x\"; }\nfn main(): int { print(h()); return 0; }\n"),
     ("str-bare", "fn main(): int { let s: str = \"ab\"; s; return 0; }\n"),
-    ("str-7params", "fn f(a: int, b: int, c: int, d: int, e: int, g: int, h: int): int { return 0; }\nfn main(): int { return 0; }\n"),
-    ("str-8slots", "fn f(a: str, b: str, c: str, d: str): int { return 0; }\nfn main(): int { return 0; }\n"),
     ("str-ret-helper", "fn g(x: int): str { return \"q\"; }\nfn main(): int { return 0; }\n"),
 ]
 
@@ -318,8 +316,8 @@ class G1MutantTests(unittest.TestCase):
 
     def test_g1_m6_slot_check_removed(self):
         combo = _mut(_combo_text(),
-                     "if be_param_slots(src, f, hs, he) <= 6 { } else { return derr(25, f, hs); }",
-                     "if be_param_slots(src, f, hs, he) <= 6 { } else { }")
+                     "if be_param_slots(src, f, hs, he) <= 12 { } else { return derr(25, f, hs); }",
+                     "if be_param_slots(src, f, hs, he) <= 12 { } else { }")
         name, src = ("str-8slots", "fn f(a: str, b: str, c: str, d: str): int { return 0; }\nfn main(): int { return 0; }\n")
         (code, _off, _hexstr) = _run_be(combo, [(name, src)])[0]
         self.assertEqual(code, 0)

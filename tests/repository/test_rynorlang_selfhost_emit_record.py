@@ -175,7 +175,6 @@ REJECT25_CASES = [
     ("rec-ne", "record Pair { a: int, b: int }\nfn main(): int { let p: Pair = Pair(a: 1, b: 2); if p != p { return 1; } else { return 0; } }\n"),
     ("str-field", "record S { s: str, n: int }\nfn main(): int { let r: S = S(s: \"hi\", n: 1); return r->n; }\n"),
     ("list-field", "record L { l: list<int,2> }\nfn main(): int { let r: L = L(l: [1, 2]); return 0; }\n"),
-    ("seven-slots", "record P { a: int, b: int }\nfn f(p: P, q: P, r: P, s: P): int { return 0; }\nfn main(): int { return f(P(a: 1, b: 1), P(a: 1, b: 1), P(a: 1, b: 1), P(a: 1, b: 1)); }\n"),
     ("paren-field", "record Pair { a: int, b: int }\nfn main(): int { let p: Pair = Pair(a: 1, b: 2); return (p)->a; }\n"),
 ]
 

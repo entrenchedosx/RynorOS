@@ -158,10 +158,8 @@ DIVERGE_CASES = [
 
 REJECT25_CASES = [
     ("while-match", "fn main(): int { while true { match 1 { 1 => { break; }, _ => { return 0; } } } return 2; }\n"),
-    ("helper-list-let", "fn f(): int { let l: list<int,2> = [1, 2]; return 0; }\nfn main(): int { if true { return f(); } return 1; }\n"),
     ("loop-recur", "fn foo(x: int): int { while x == 0 { return foo(x); } return 1; }\nfn main(): int { return foo(0); }\n"),
     ("cond-div", "fn main(): int { if 4 / 2 == 2 { return 1; } else { return 0; } }\n"),
-    ("helper-str", "fn f(): int { let s: str = \"ab\"; return 0; }\nfn main(): int { while true { return f(); } return 1; }\n"),
 ]
 
 REJECT_CHECK_CASES = [

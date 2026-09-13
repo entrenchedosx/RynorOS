@@ -1012,10 +1012,10 @@ fn be_gate_helper(src: str, f: int, it: TI, end: int, nfns: int, nmain: int): D 
   let hb: int = pgm_body_open(src, hp->p, he);
   if hb == 0 - 1 { return derr(29, f, hs); } else { }
   let np: int = pgm_hparam_count(src, hs, he);
-  if np <= 6 { } else { return derr(25, f, hs); }
+  if np <= 12 { } else { return derr(25, f, hs); }
   let gd: D = be_gate_hparams(src, f, hs, he, np, 0);
   if has_err(gd) { return gd; } else { }
-  if be_param_slots(src, f, hs, he) <= 6 { } else { return derr(25, f, hs); }
+  if be_param_slots(src, f, hs, he) <= 12 { } else { return derr(25, f, hs); }
   let hr: list<int,24> = pgm_body_ret(src, f, hp->p, hb);
   if be_subset_ty(hr, src, f, 0, 1) == 1 { } else { return derr(25, f, hs); }
   let hn: int = scope_slot(src, f, hs, he, he);
@@ -1088,7 +1088,7 @@ fn be_size_fn(src: str, f: int, cs: int, ce: int): BZ {
   let be: int = pgm_brace_end(src, bo, ce);
   let nl: int = scope_slot(src, f, cs, ce, ce);
   let fr: int = nl + be_unit_maxrec(src, f);
-  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, sz_frame(fr) + 4 * be_param_slots(src, f, cs, ce));
+  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, sz_frame(fr) + be_spill_size(src, f, cs, ce));
   if b->c == 0 { } else { return b; }
   return BZ(p: be, n: b->n + 1, c: 0, o: 0);
 }
@@ -1158,12 +1158,43 @@ fn be_e_spills(src: str, f: int, cs: int, ce: int, acc: int, i: int, regs: int):
   if has_err(pt->d) { return be_e_spills(src, f, cs, ce, acc, i + 1, regs + 1); } else { }
   let w: int = tslots(pt->t, src, f);
   let base: int = be_param_base(src, f, cs, ce, i) + 1;
-  let a0: int = be_e_spillw(acc, regs, base, w, 0);
+  let ns: int = be_param_slots(src, f, cs, ce);
+  let ragg: int = be_fn_ret_agg(src, f, cs, ce);
+  let a0: int = be_e_spillw(acc, regs, base, w, 0, ns, ragg);
   return be_e_spills(src, f, cs, ce, a0, i + 1, regs + w);
 }
-fn be_e_spillw(acc: int, reg: int, hs: int, w: int, j: int): int {
+fn be_e_spillw(acc: int, reg: int, hs: int, w: int, j: int, ns: int, ragg: int): int {
   if j >= w { return acc; } else { }
-  return be_e_spillw(e_spill_reg(reg + j, hs + j, acc), reg, hs, w, j + 1);
+  return be_e_spillw(be_e_spillword(acc, reg + j, hs + j, ns, ragg), reg, hs, w, j + 1, ns, ragg);
+}
+fn be_e_spillword(acc: int, g: int, hs: int, ns: int, ragg: int): int {
+  if g <= 5 { return e_spill_reg(g, hs, acc); } else { }
+  let k: int = g - 6;
+  let disp: int = 16 + 8 * (ns - 7 - k) + ragg * 24;
+  let a0: int = e_ld_rbp_off(disp, acc);
+  return e_mov_home_rax(hs, a0);
+}
+fn be_spill_size(src: str, f: int, cs: int, ce: int): int {
+  let ns: int = be_param_slots(src, f, cs, ce);
+  let ragg: int = be_fn_ret_agg(src, f, cs, ce);
+  return be_spillw_size(src, f, cs, ce, ns, ragg, 0, 0);
+}
+fn be_spillw_size(src: str, f: int, cs: int, ce: int, ns: int, ragg: int, i: int, regs: int): int {
+  let np: int = pgm_hparam_count(src, cs, ce);
+  if i >= np { return 0; } else { }
+  let pt: TR = pgm_hparam_ty(src, f, cs, ce, i);
+  if has_err(pt->d) { return be_spillw_size(src, f, cs, ce, ns, ragg, i + 1, regs + 1); } else { }
+  let w: int = tslots(pt->t, src, f);
+  let base: int = be_param_base(src, f, cs, ce, i) + 1;
+  return be_spillw_words(ns, ragg, regs, base, w, 0) + be_spillw_size(src, f, cs, ce, ns, ragg, i + 1, regs + w);
+}
+fn be_spillw_words(ns: int, ragg: int, reg: int, hs: int, w: int, j: int): int {
+  if j >= w { return 0; } else { }
+  return be_spillword_size(ns, ragg, reg + j, hs + j) + be_spillw_words(ns, ragg, reg, hs, w, j + 1);
+}
+fn be_spillword_size(ns: int, ragg: int, g: int, hs: int): int {
+  if g <= 5 { return 4; } else { }
+  return sz_ld_rbp_off() + sz_mov_home_rax(hs);
 }
 fn be_tempbase(src: str, f: int, cs: int, ce: int): int {
   return scope_slot(src, f, cs, ce, ce) + 1;
@@ -1174,6 +1205,23 @@ fn be_fn_ret(src: str, f: int, cs: int, ce: int): list<int,24> {
   let lp: Tok = next_tok(src, nm->p);
   let bo: int = pgm_body_open(src, lp->p, ce);
   return pgm_body_ret(src, f, lp->p, bo);
+}
+fn be_fn_ret_agg(src: str, f: int, cs: int, ce: int): int {
+  let rt: list<int,24> = be_fn_ret(src, f, cs, ce);
+  if tbase(rt) == 4 { return 1; } else { }
+  if tbase(rt) == 5 { return 1; } else { }
+  if tbase(rt) == 6 { return 1; } else { }
+  return 0;
+}
+fn sz_ld_rbp_off(): int {
+  return 7;
+}
+fn e_ld_rbp_off(disp: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(139, a0);
+  let a2: int = e_b(133, a1);
+  let a3: int = e_le32(disp, a2);
+  return a3;
 }
 fn e_pop_r8(acc: int): int {
   let a0: int = e_b(65, acc);
@@ -1192,6 +1240,43 @@ fn e_pop_reg(i: int, acc: int): int {
   if i == 3 { return e_b(89, acc); } else { }
   if i == 4 { return e_pop_r8(acc); } else { }
   return e_pop_r9(acc);
+}
+fn sz_load_rsp(): int {
+  return 5;
+}
+fn e_load_rsp(reg: int, disp: int, acc: int): int {
+  if reg == 0 { return e_load_rsp_op(124, disp, acc); } else { }
+  if reg == 1 { return e_load_rsp_op(116, disp, acc); } else { }
+  if reg == 2 { return e_load_rsp_op(84, disp, acc); } else { }
+  if reg == 3 { return e_load_rsp_op(76, disp, acc); } else { }
+  if reg == 4 { return e_load_rsp_r(68, disp, acc); } else { }
+  return e_load_rsp_r(76, disp, acc);
+}
+fn e_load_rsp_op(mod: int, disp: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(139, a0);
+  let a2: int = e_b(mod, a1);
+  let a3: int = e_b(36, a2);
+  let a4: int = e_b(disp, a3);
+  return a4;
+}
+fn e_load_rsp_r(mod: int, disp: int, acc: int): int {
+  let a0: int = e_b(76, acc);
+  let a1: int = e_b(139, a0);
+  let a2: int = e_b(mod, a1);
+  let a3: int = e_b(36, a2);
+  let a4: int = e_b(disp, a3);
+  return a4;
+}
+fn sz_add_rsp_ib(): int {
+  return 4;
+}
+fn e_add_rsp_ib(v: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(131, a0);
+  let a2: int = e_b(196, a1);
+  let a3: int = e_b(v, a2);
+  return a3;
 }
 fn be_arg_pop_size(i: int): int {
   if i <= 3 { return 1; } else { }
@@ -1219,14 +1304,15 @@ fn be_s_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int, dk: int, ds: 
   if ci == 0 - 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
   let cs: VS = be_fn_span(src, f, ci);
   let np: int = pgm_hparam_count(src, cs->off, cs->off + cs->tl);
-  if np <= 6 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  if np <= 12 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
   let ns: int = be_call_slots(src, f, ci);
-  if ns <= 6 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  if ns <= 12 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
   let ragg: int = be_callee_ret_agg(src, f, ci);
   let tb: int = be_tempbase(src, f, fs, fe);
   let a: BZ = be_s_callargs(src, f, fs, fe, nx->p, end, np, 0, 0, ci, tb);
   if a->c == 0 { } else { return a; }
-  return BZ(p: a->p, n: a->n + be_sret_size(dk, ragg) + be_pop_size(ns, 0) + sz_call_op(), c: 0, o: 0);
+  if ns <= 6 { return BZ(p: a->p, n: a->n + be_sret_size(dk, ragg) + be_pop_size(ns, 0) + sz_call_op(), c: 0, o: 0); } else { }
+  return BZ(p: a->p, n: a->n + be_sret_size(dk, ragg) + 6 * sz_load_rsp() + sz_add_rsp_ib() + sz_call_op(), c: 0, o: 0);
 }
 fn be_callee_ret_agg(src: str, f: int, ci: int): int {
   let rt: list<int,24> = be_callee_ret(src, f, ci);
@@ -1288,11 +1374,15 @@ fn be_e_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int, dk:
   if ci == 0 - 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
   let cs: VS = be_fn_span(src, f, ci);
   let np: int = pgm_hparam_count(src, cs->off, cs->off + cs->tl);
-  if np <= 6 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  if np <= 12 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
   let ns: int = be_call_slots(src, f, ci);
-  if ns <= 6 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  if ns <= 12 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
   let ragg: int = be_callee_ret_agg(src, f, ci);
   let tb: int = be_tempbase(src, f, fs, fe);
+  if ns <= 6 { return be_e_call_regs(src, f, fs, fe, nx, end, acc, dk, ds, ci, tb, np, ns, ragg); } else { }
+  return be_e_call_stack(src, f, fs, fe, nx, end, acc, dk, ds, ci, tb, np, ns, ragg);
+}
+fn be_e_call_regs(src: str, f: int, fs: int, fe: int, nx: Tok, end: int, acc: int, dk: int, ds: int, ci: int, tb: int, np: int, ns: int, ragg: int): BZ {
   let s0: int = be_sret_open(dk, ds, acc, ragg);
   let a: BZ = be_e_callargs(src, f, fs, fe, nx->p, end, np, 0, s0, ci, tb);
   if a->c == 0 { } else { return a; }
@@ -1302,6 +1392,26 @@ fn be_e_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int, dk:
   let q1: int = e_call_rel(dp, q0);
   let q2: int = be_sret_close(q1, ragg);
   return BZ(p: a->p, n: q2, c: 0, o: 0);
+}
+fn be_e_call_stack(src: str, f: int, fs: int, fe: int, nx: Tok, end: int, acc: int, dk: int, ds: int, ci: int, tb: int, np: int, ns: int, ragg: int): BZ {
+  let a: BZ = be_e_callargs(src, f, fs, fe, nx->p, end, np, 0, acc, ci, tb);
+  if a->c == 0 { } else { return a; }
+  let s0: int = be_sret_open(dk, ds, a->n, ragg);
+  let s1: int = be_e_loadregs(s0, ns, ragg);
+  let co: int = be_fn_codeoff(src, f, ci);
+  let dp: int = 28 + co - (s1 + sz_call_op());
+  let q1: int = e_call_rel(dp, s1);
+  let q2: int = be_sret_close(q1, ragg);
+  let q3: int = e_add_rsp_ib(ns * 8, q2);
+  return BZ(p: a->p, n: q3, c: 0, o: 0);
+}
+fn be_e_loadregs(acc: int, ns: int, ragg: int): int {
+  return be_e_loadregs_at(acc, ns, ragg, 0);
+}
+fn be_e_loadregs_at(acc: int, ns: int, ragg: int, j: int): int {
+  if j >= 6 { return acc; } else { }
+  let d: int = 8 * (ns - 1 - j) + ragg * 24;
+  return be_e_loadregs_at(e_load_rsp(j, d, acc), ns, ragg, j + 1);
 }
 fn be_e_callargs(src: str, f: int, fs: int, fe: int, pos: int, end: int, np: int, i: int, acc: int, ci: int, tb: int): BZ {
   if i >= np { return be_e_callclose(src, pos, end, acc); } else { }
