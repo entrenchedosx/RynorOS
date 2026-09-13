@@ -10,7 +10,9 @@ programs and direct calls are covered by BE-B in
 `test_rynorlang_selfhost_emit_calls.py`; the `call`/`second-fn` shapes
 graduated there. Control flow is covered by BE-C in
 `test_rynorlang_selfhost_emit_branch.py`; the `if-stmt`/`while-stmt`/
-`continue-stmt` shapes graduated there.) QEMU and a
+`continue-stmt` shapes graduated there. Record declarations are
+covered by BE-E in `test_rynorlang_selfhost_emit_record.py`; the
+`record` shape graduated there.) QEMU and a
 native toolchain are unavailable here, so execution is proven by the
 test-only emulator below (it EXECUTES baby bytes; it never generates
 code and cannot mask a broken backend). Reference semantics come from
@@ -545,7 +547,6 @@ REJECT25_CASES = [
     ('match-stmt', 'fn main(): int { let r: status<int> = byte_at("ab", 0); match r { ok(v) => { return v; }, err(e) => { return 1; } } }\n'),
     ('str-let', 'fn main(): int { let s: str = "ab"; return 0; }\n'),
     ("list-let", "fn main(): int { let l: list<int,2> = [1, 2]; return 0; }\n"),
-    ("record", "record P { a: int }\nfn main(): int { return 0; }\n"),
     ("params", "fn main(a: int): int { return a; }\n"),
     ("bool-main", "fn main(): bool { return true; }\n"),
     ("unit-ret", "fn main() { return; }\n"),
@@ -709,9 +710,12 @@ class BEMutantTests(unittest.TestCase):
         self.assertNotEqual(entry, 0)
 
     def test_be_m5_bound_disabled(self):
-        combo = _mutated_combo(
-            "  if nl <= 128 { } else { return derr(26, f, cs); }",
-            "  if nl <= 999999 { } else { return derr(26, f, cs); }")
+        combo = _mut(_combo_text(),
+                     "  if nl <= 128 { } else { return derr(26, f, cs); }",
+                     "  if nl <= 999999 { } else { return derr(26, f, cs); }")
+        combo = _mut(combo,
+                     "  if nl + be_unit_maxrec(src, f) <= 128 { } else { return derr(26, f, cs); }",
+                     "  if nl + be_unit_maxrec(src, f) <= 999999 { } else { return derr(26, f, cs); }")
         (code, _off, _hex) = _run_be(combo, [("frames-129", BOUND_CASES_129)])[0]
         self.assertNotEqual(code, 26)
 
