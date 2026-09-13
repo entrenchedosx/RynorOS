@@ -77,6 +77,16 @@ NATIVE_RECORD_CASES = [
     "record Pair { a: int, b: int }\nfn main(): int { let p: Pair = Pair(a: 1, b: 2); if p->a == 1 { return 17; } else { return 93; } }\n",
 ]
 
+NATIVE_LIST_CASES = [
+    "fn main(): int { let l: list<int,2> = [1, 2]; return len(l); }\n",
+    "fn main(): int { let l: list<int,2> = [10, 20]; let s: status<int> = l[0]; return unwrap_or(s, 0); }\n",
+    "fn main(): int { let l: list<int,2> = [10, 20]; let s: status<int> = l[9]; if is_err(s) { return 1; } else { return 0; } }\n",
+    "fn main(): int { let l: list<int,2> = [10]; let s: status<list<int,2>> = push(l, 20); let m: list<int,2> = unwrap_or(s, l); let t: status<int> = m[1]; return unwrap_or(t, 0); }\n",
+    "fn main(): int { let l: list<int,2> = [1, 2]; let s: status<list<int,2>> = push(l, 3); if is_err(s) { return 1; } else { return 0; } }\n",
+    "fn at(l: list<int,3>, i: int): status<int> { return l[i]; }\nfn main(): int { let l: list<int,3> = [5, 6, 7]; let s: status<int> = at(l, 2); return unwrap_or(s, 0); }\n",
+    "fn put(l: list<int,2>, v: int): status<list<int,2>> { let s: status<list<int,2>> = push(l, v); return s; }\nfn main(): int { let l: list<int,2> = [1]; let s: status<list<int,2>> = put(l, 2); let m: list<int,2> = unwrap_or(s, l); return len(m); }\n",
+]
+
 
 def _backend_bytes(combo_src, src):
     (code, off, hexstr) = bea._run_be(combo_src, [("prog", src)])[0]
@@ -127,9 +137,14 @@ class NativeBackendTests(unittest.TestCase):
         cls.natrec = []
         for i, src in enumerate(NATIVE_RECORD_CASES):
             cls.natrec.append(("natr%d" % i, _backend_bytes(combo, src)))
+        cls.natlist = []
+        for i, src in enumerate(NATIVE_LIST_CASES):
+            cls.natlist.append(("natl%d" % i, _backend_bytes(combo, src)))
         for name, raw in cls.natprint:
             entries.append(("/bin/" + name, raw))
         for name, raw in cls.natrec:
+            entries.append(("/bin/" + name, raw))
+        for name, raw in cls.natlist:
             entries.append(("/bin/" + name, raw))
         cls.drive = cls.work / "native.img"
         cls.drive.write_bytes(fs_build(entries))
@@ -190,6 +205,21 @@ class NativeBackendTests(unittest.TestCase):
         dones = self._boot(names, tag="natrec")
         self.assertEqual(len(dones), len(names) + 1)
         for name, src, got in zip(names, NATIVE_RECORD_CASES, dones):
+            result = analyzer.analyze(src, "t.rl", profile="core")
+            self.assertTrue(result.ok, name)
+            module, error = rir_mod.build_rir(result.ast, "t.rl")
+            self.assertIsNone(error, name)
+            outcome = oracle_mod.run_rir(module, out=[])
+            self.assertEqual(got, outcome["exit"] & 0xFFFFFFFF, name)
+
+    def test_native_lists_match_oracle(self):
+        from tools.rynorlang import analyze as analyzer
+        from tools.rynorlang import rir as rir_mod
+        from tools.rynorlang import interp as oracle_mod
+        names = ["natl%d" % i for i in range(len(NATIVE_LIST_CASES))]
+        dones = self._boot(names, tag="natlist")
+        self.assertEqual(len(dones), len(names) + 1)
+        for name, src, got in zip(names, NATIVE_LIST_CASES, dones):
             result = analyzer.analyze(src, "t.rl", profile="core")
             self.assertTrue(result.ok, name)
             module, error = rir_mod.build_rir(result.ast, "t.rl")
