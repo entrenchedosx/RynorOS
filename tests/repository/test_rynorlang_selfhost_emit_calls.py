@@ -294,8 +294,8 @@ class BEBMutantTests(unittest.TestCase):
 
     def test_bb_m2_swap_args(self):
         combo = _mutated_combo(
-            "  if i == 0 { return e_spill_4(72, 125, d, acc); } else { }",
-            "  if i == 0 { return e_spill_4(72, 117, d, acc); } else { }")
+            "  if reg == 0 { return e_spill_4(72, 125, d, acc); } else { }",
+            "  if reg == 0 { return e_spill_4(72, 117, d, acc); } else { }")
         self.assertTrue(self._red_on(combo, 10))
 
     def test_bb_m3_ignore_disp(self):
@@ -312,7 +312,7 @@ class BEBMutantTests(unittest.TestCase):
 
     def test_bb_m5_spill_omitted(self):
         combo = _mutated_combo(
-            "  let sp: int = be_e_spills(fr, np, 0);",
+            "  let sp: int = be_e_spills(src, f, cs, ce, fr, 0, 0);",
             "  let sp: int = fr;")
         self.assertTrue(self._red_on(combo, 8))
 
@@ -336,8 +336,8 @@ class BEBMutantTests(unittest.TestCase):
 
     def test_bb_m9_size_no_prologue(self):
         combo = _mutated_combo(
-            "  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, sz_frame(nl) + 4 * np);",
-            "  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, 4 * np);")
+            "  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, sz_frame(fr) + 4 * be_param_slots(src, f, cs, ce));",
+            "  let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, 4 * be_param_slots(src, f, cs, ce));")
         self.assertTrue(self._red_on(combo, 8))
 
 

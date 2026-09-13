@@ -67,6 +67,16 @@ NATIVE_PRINT_CASES = [
     ("natd5", 'fn h(): int { print("h"); return 0; }\nfn main(): int { h(); return 4; }\n', b"h", 4),
 ]
 
+NATIVE_RECORD_CASES = [
+    "record Pair { a: int, b: int }\nfn main(): int { let p: Pair = Pair(a: 10, b: 32); return p->b; }\n",
+    "record Inner { x: int }\nrecord Outer { a: int, inner: Inner, b: int }\nfn main(): int { let o: Outer = Outer(a: 1, inner: Inner(x: 2), b: 3); return o->a + o->inner->x + o->b; }\n",
+    "record Pair { a: int, b: int }\nfn get_x(p: Pair): int { return p->a; }\nfn main(): int { return get_x(Pair(a: 7, b: 8)); }\n",
+    "record Pair { a: int, b: int }\nfn mk(a: int, b: int): Pair { return Pair(a: a, b: b); }\nfn main(): int { let p: Pair = mk(3, 4); return p->a + p->b; }\n",
+    "record Pair { a: int, b: int }\nfn mk(a: int, b: int): Pair { return Pair(a: a, b: b); }\nfn sum(p: Pair): int { return p->a + p->b; }\nfn main(): int { return sum(mk(20, 22)); }\n",
+    "record B { x: int }\nrecord A { y: int, x: int }\nfn f(p: A): int { return p->x; }\nfn main(): int { return f(A(y: 5, x: 7)); }\n",
+    "record Pair { a: int, b: int }\nfn main(): int { let p: Pair = Pair(a: 1, b: 2); if p->a == 1 { return 17; } else { return 93; } }\n",
+]
+
 
 def _backend_bytes(combo_src, src):
     (code, off, hexstr) = bea._run_be(combo_src, [("prog", src)])[0]
@@ -114,7 +124,12 @@ class NativeBackendTests(unittest.TestCase):
         cls.natprint = []
         for name, src, _w, _e in NATIVE_PRINT_CASES:
             cls.natprint.append((name, _backend_bytes_data(combo, src)))
+        cls.natrec = []
+        for i, src in enumerate(NATIVE_RECORD_CASES):
+            cls.natrec.append(("natr%d" % i, _backend_bytes(combo, src)))
         for name, raw in cls.natprint:
+            entries.append(("/bin/" + name, raw))
+        for name, raw in cls.natrec:
             entries.append(("/bin/" + name, raw))
         cls.drive = cls.work / "native.img"
         cls.drive.write_bytes(fs_build(entries))
@@ -166,6 +181,21 @@ class NativeBackendTests(unittest.TestCase):
         blob = _slot_blob(collect_load_writes(out), 1)
         for _name, _src, want_out, _e in NATIVE_PRINT_CASES:
             self.assertIn(want_out.hex(), blob)
+
+    def test_native_records_match_oracle(self):
+        from tools.rynorlang import analyze as analyzer
+        from tools.rynorlang import rir as rir_mod
+        from tools.rynorlang import interp as oracle_mod
+        names = ["natr%d" % i for i in range(len(NATIVE_RECORD_CASES))]
+        dones = self._boot(names, tag="natrec")
+        self.assertEqual(len(dones), len(names) + 1)
+        for name, src, got in zip(names, NATIVE_RECORD_CASES, dones):
+            result = analyzer.analyze(src, "t.rl", profile="core")
+            self.assertTrue(result.ok, name)
+            module, error = rir_mod.build_rir(result.ast, "t.rl")
+            self.assertIsNone(error, name)
+            outcome = oracle_mod.run_rir(module, out=[])
+            self.assertEqual(got, outcome["exit"] & 0xFFFFFFFF, name)
 
 
 if __name__ == "__main__":
