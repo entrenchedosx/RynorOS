@@ -332,8 +332,8 @@ class BEListMutantTests(unittest.TestCase):
 
     def test_be_m5_unwrap_swapped(self):
         combo = _mut(_combo_text(),
-                     "  let a4: int = e_pop_rax(a3);",
-                     "  let a4: int = e_pop_rcx(a3);")
+                     "  let a4: int = e_pop_rax(a3);\n  let a5: int = e_jmp_rel(jmpd, a4);\n  let a6: int = e_pop_rcx(a5);",
+                     "  let a4: int = e_pop_rcx(a3);\n  let a5: int = e_jmp_rel(jmpd, a4);\n  let a6: int = e_pop_rcx(a5);")
         self.assertTrue(self._red_on(combo, self._idx("idx-err-default")))
 
     def test_be_m6_frame_bytes_omitted(self):
