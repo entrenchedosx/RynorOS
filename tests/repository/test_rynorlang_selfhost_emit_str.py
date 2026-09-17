@@ -181,7 +181,8 @@ class G1AcceptTests(unittest.TestCase):
 REJECT25_CASES = [
     ("str-eq", "fn f(s: str): int { return 7; }\nfn main(): int { let a: str = \"x\"; let b: str = \"x\"; if a == b { return 1; } else { return 0; } }\n"),
     ("str-byteat", "fn main(): int { let s: status<int> = byte_at(\"ab\", 0); return unwrap_or(s, 0); }\n"),
-    ("str-len", "fn main(): int { let s: str = \"ab\"; return len(s); }\n"),
+    # NOTE (G4): `len(s)` on str variables is now supported; its coverage
+    # lives in test_rynorlang_selfhost_emit_strbyte.py (g4-len-*).
     ("str-ret", "fn h(): str { return \"x\"; }\nfn main(): int { return 0; }\n"),
     ("print-strvar", "fn main(): int { let s: str = \"ab\"; print(s); return 0; }\n"),
     ("print-strcall", "fn h(): str { return \"x\"; }\nfn main(): int { print(h()); return 0; }\n"),
