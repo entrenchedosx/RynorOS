@@ -305,11 +305,11 @@ class BEListMutantTests(unittest.TestCase):
 
     def test_be_m1_len_plus1(self):
         combo = _mut(_combo_text(),
-                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let cp: Tok = pgm_tok(src, nx->s, end);\n  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: sz_mov_rax_home(base), c: 0, o: 0); } else { } } else { } } else { }",
-                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let cp: Tok = pgm_tok(src, nx->s, end);\n  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: sz_mov_rax_home(base + 1), c: 0, o: 0); } else { } } else { } } else { }")
+                     "if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { if tbase(vt->t) == 3 { return be_s_len_str(src, f, fs, fe, t, v, cp); } else { } return BZ(p: cp->p, n: sz_mov_rax_home(base), c: 0, o: 0); } else { } } else { } }",
+                     "if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { if tbase(vt->t) == 3 { return be_s_len_str(src, f, fs, fe, t, v, cp); } else { } return BZ(p: cp->p, n: sz_mov_rax_home(base + 1), c: 0, o: 0); } else { } } else { } }")
         combo = _mut(combo,
-                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let cp: Tok = pgm_tok(src, nx->s, end);\n  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: e_mov_rax_home(base, acc), c: 0, o: 0); } else { } } else { } } else { }",
-                     "  let base: int = be_home_base(src, f, fs, fe, v);\n  let cp: Tok = pgm_tok(src, nx->s, end);\n  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: e_mov_rax_home(base + 1, acc), c: 0, o: 0); } else { } } else { } } else { }")
+                     "if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { if tbase(vt->t) == 3 { return be_e_len_str(src, f, fs, fe, v, acc, cp->p); } else { } return BZ(p: cp->p, n: e_mov_rax_home(base, acc), c: 0, o: 0); } else { } } else { } }",
+                     "if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { if tbase(vt->t) == 3 { return be_e_len_str(src, f, fs, fe, v, acc, cp->p); } else { } return BZ(p: cp->p, n: e_mov_rax_home(base + 1, acc), c: 0, o: 0); } else { } } else { } }")
         self.assertTrue(self._red_on(combo, self._idx("list-full-2")))
 
     def test_be_m2_idx_no_imul(self):
