@@ -160,7 +160,9 @@ REJECT25_CASES = [
     ("byteat-agg-scrutinee", "fn main(): int { let l: list<int,2> = [1]; let m: list<int,2> = unwrap_or(push(l, 2), l); return unwrap_or(byte_at(\"hi\", 9), 7) + len(m); }\n"),
     ("byteat-scalar-scrutinee", "fn main(): int { return unwrap_or(byte_at(\"hi\", 0), 7); }\n"),
     ("return-push-sret", "fn mk(l: list<int,2>): list<int,2> { return unwrap_or(push(l, 7), l); }\nfn main(): int { let l: list<int,2> = [1]; return len(mk(l)); }\n"),
-    ("str-payload", "fn main(): int { let s: str = \"hi\"; return unwrap_or(byte_at(s, 0), 7); }\n"),
+    # NOTE (G4): `unwrap_or(byte_at(s, ...))` with a str-variable scrutinee
+    # is now supported; its coverage lives in
+    # test_rynorlang_selfhost_emit_strbyte.py (g4-byte-*, g4-str-payload).
 ]
 
 
