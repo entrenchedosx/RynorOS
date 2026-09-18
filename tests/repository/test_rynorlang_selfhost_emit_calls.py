@@ -39,6 +39,29 @@ class Emu(bea.Emu):
             R["rsi"] = self._pop()
         elif b0 == 0x5F:
             R["rdi"] = self._pop()
+        elif b0 == 0x85:
+            # M1: `if` on a bool lowers to test eax,eax + jz (same forms
+            # the branch suite executes; copied here so BE-B accepts can
+            # consume bool params/returns without an import cycle).
+            b1 = self._fetch(1)[0]
+            assert b1 == 0xC0, f"bad test {b1:#x}"
+            r = R["rax"] & 0xFFFFFFFF
+            self.cf = 0
+            self.of = 0
+            self.zf = 1 if r == 0 else 0
+            self.sf = 1 if r >= (1 << 31) else 0
+        elif b0 == 0xE9:
+            disp = int.from_bytes(self._fetch(4), "little", signed=True)
+            self.rip = (self.rip + disp) & MASK64
+        elif b0 == 0x0F:
+            b1 = self._fetch(1)[0]
+            if b1 != 0x84:
+                self.rip -= 2
+                super().step()
+                return
+            disp = int.from_bytes(self._fetch(4), "little", signed=True)
+            if self.zf:
+                self.rip = (self.rip + disp) & MASK64
         elif b0 == 0x41:
             b1 = self._fetch(1)[0]
             if b1 == 0x58:
@@ -142,12 +165,14 @@ ACCEPT_CASES = [
     ("param-plus-local", "fn f(a: int): int { let y: int = a * 2; return y + a; }\nfn main(): int { return f(5); }\n"),
     ("two-params-local", "fn f(a: int, b: int): int { let s: int = a + b; return s * s; }\nfn main(): int { return f(3, 4); }\n"),
     ("depth-8", "fn f1(x: int): int { return x + 1; }\nfn f2(x: int): int { return f1(x) + 1; }\nfn f3(x: int): int { return f2(x) + 1; }\nfn f4(x: int): int { return f3(x) + 1; }\nfn f5(x: int): int { return f4(x) + 1; }\nfn f6(x: int): int { return f5(x) + 1; }\nfn f7(x: int): int { return f6(x) + 1; }\nfn main(): int { return f7(0); }\n"),
+    # M1 promotes bool params/returns to compilable (1-word scalar, RAX
+    # return, canonical 0/1); recursion and main-with-param stay 25.
+    ("bool-param", "fn f(b: bool): int { if b { return 5; } return 0; }\nfn main(): int { return f(true); }\n"),
+    ("bool-ret-helper", "fn f(): bool { return true; }\nfn main(): int { if f() { return 3; } return 0; }\n"),
 ]
 
 REJECT25_CASES = [
     ("recur", "fn foo(x: int): int { return foo(x); }\nfn main(): int { return foo(1); }\n"),
-    ("bool-param", "fn f(b: bool): int { return 1; }\nfn main(): int { return f(true); }\n"),
-    ("bool-ret-helper", "fn f(): bool { return true; }\nfn main(): int { return 1; }\n"),
     ("main-with-param", "fn main(a: int): int { return a; }\n"),
 ]
 
@@ -203,6 +228,11 @@ class BEBAcceptTests(unittest.TestCase):
         by_name = {n: w for n, _h, _s, w in self.images}
         self.assertNotEqual(by_name["sub-order"], by_name["sub-rev"])
         self.assertNotEqual(by_name["param-reorder"], by_name["arg-order"])
+
+    def test_05b_m1_bool_values(self):
+        by_name = {n: w for n, _h, _s, w in self.images}
+        self.assertEqual(by_name["bool-param"], 5)
+        self.assertEqual(by_name["bool-ret-helper"], 3)
 
 
 class BEBRejectTests(unittest.TestCase):
