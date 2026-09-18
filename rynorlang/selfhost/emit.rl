@@ -2448,6 +2448,9 @@ fn be_subset_ty(ty: list<int,24>, src: str, f: int, depth: int, parret: int): in
   if depth > 8 { return 0; } else { }
   let b: int = tbase(ty);
   if b == 1 { return 1; } else { }
+  // M1: bool is a 1-word scalar (tslots == 1, host _param_width == 1,
+  // canonical 0/1 via setcc+movzx, RAX return, 1-word homes/slots like int).
+  if b == 2 { return 1; } else { }
   if b == 4 { return be_subset_rec(ty, src, f, depth); } else { }
   if b == 5 { return be_subset_list(ty, src, f, depth); } else { }
   if b == 6 { return be_subset_status(ty, src, f, depth); } else { }
