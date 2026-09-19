@@ -729,6 +729,7 @@ fn be_s_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int
   if t->l == 5 { if beq(src, t->s, "while", 0, 5) { return be_s_while(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
   if t->l == 5 { if beq(src, t->s, "break", 0, 5) { return be_s_jump(src, f, pos, end, acc, t); } else { } } else { }
   if t->l == 8 { if beq(src, t->s, "continue", 0, 8) { return be_s_jump(src, f, pos, end, acc, t); } else { } } else { }
+  if be_is_match(src, t) == 1 { return be_s_match(src, f, fs, fe, pos, end, acc, t); } else { }
   if be_s_ctrl(src, t) == 1 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   if t->l == 3 { if beq(src, t->s, "use", 0, 3) { return be_s_usevar(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
   return be_s_exprstmt(src, f, fs, fe, pos, end, acc);
@@ -896,6 +897,7 @@ fn be_e_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int
   if t->l == 5 { if beq(src, t->s, "while", 0, 5) { return be_e_while(src, f, fs, fe, pos, end, acc, bx, bc, t); } else { } } else { }
   if t->l == 5 { if beq(src, t->s, "break", 0, 5) { return be_e_break(src, f, pos, end, acc, bx, bc, t); } else { } } else { }
   if t->l == 8 { if beq(src, t->s, "continue", 0, 8) { return be_e_continue(src, f, pos, end, acc, bx, bc, t); } else { } } else { }
+  if be_is_match(src, t) == 1 { return be_e_match(src, f, fs, fe, pos, end, acc, bx, bc, t); } else { }
   if be_s_ctrl(src, t) == 1 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   if t->l == 3 { if beq(src, t->s, "use", 0, 3) { return be_e_usevar(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
   return be_e_exprstmt(src, f, fs, fe, pos, end, acc);
@@ -1083,7 +1085,7 @@ fn be_gate_main(src: str, f: int, it: TI, end: int, nfns: int, nmain: int): D {
   if tbase(rt) == 1 { } else { return derr(25, f, cs); }
   let nl: int = scope_slot(src, f, cs, ce, ce);
   if nl <= 128 { } else { return derr(26, f, cs); }
-  if nl + be_unit_maxrec(src, f) <= 128 { } else { return derr(26, f, cs); }
+  if be_temp_maxof(nl + be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce)) <= 128 { } else { return derr(26, f, cs); }
   return be_gate_items(src, f, it->p, end, nfns + 1, nmain + 1);
 }
 fn be_size_prog(src: str, f: int): BZ {
@@ -1123,7 +1125,7 @@ fn be_gate_helper(src: str, f: int, it: TI, end: int, nfns: int, nmain: int): D 
   if be_subset_ty(hr, src, f, 0, 1) == 1 { } else { return derr(25, f, hs); }
   let hn: int = scope_slot(src, f, hs, he, he);
   if hn <= 128 { } else { return derr(26, f, hs); }
-  if hn + be_unit_maxrec(src, f) <= 128 { } else { return derr(26, f, hs); }
+  if be_temp_maxof(hn + be_unit_maxrec(src, f), be_fn_maxarm(src, f, hs, he)) <= 128 { } else { return derr(26, f, hs); }
   return be_gate_items(src, f, it->p, end, nfns + 1, nmain);
 }
 fn be_gate_hparams(src: str, f: int, hs: int, he: int, np: int, i: int): D {
@@ -1190,7 +1192,7 @@ fn be_size_fn(src: str, f: int, cs: int, ce: int): BZ {
   let bo: int = pgm_body_open(src, lp->p, ce);
   let be: int = pgm_brace_end(src, bo, ce);
   let nl: int = scope_slot(src, f, cs, ce, ce);
-  let fr: int = nl + be_unit_maxrec(src, f);
+  let fr: int = be_temp_maxof(nl + be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce));
   let b: BZ = be_s_block(src, f, cs, ce, bo + 1, be, sz_frame(fr) + be_spill_size(src, f, cs, ce));
   if b->c == 0 { } else { return b; }
   return BZ(p: be, n: b->n + 1, c: 0, o: 0);
@@ -1224,7 +1226,7 @@ fn be_emit_fn(src: str, f: int, cs: int, ce: int, acc: int): BZ {
   let bo: int = pgm_body_open(src, lp->p, ce);
   let be: int = pgm_brace_end(src, bo, ce);
   let nl: int = scope_slot(src, f, cs, ce, ce);
-  let fr: int = e_frame(nl + be_unit_maxrec(src, f), acc);
+  let fr: int = e_frame(be_temp_maxof(nl + be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce)), acc);
   let sp: int = be_e_spills(src, f, cs, ce, fr, 0, 0);
   let b: BZ = be_e_block(src, f, cs, ce, bo + 1, be, sp, 0 - 1, 0 - 1);
   if b->c == 0 { } else { return b; }
@@ -1769,6 +1771,590 @@ fn be_e_while(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, 
   if bb->c == 0 { } else { return bb; }
   let ko: int = e_jmp_rel(be_rel32(acc, bb->n, sz_jmp()), bb->n);
   return BZ(p: be, n: ko, c: 0, o: 0);
+}
+// ---- M2: match lowering (status/int/bool scrutinees; str/result stay 25).
+// Scrutinee: variable/param home (status/int/bool) or int/bool/status call
+// evaluated once (status calls into a temp home below the first binding
+// slot; scalar calls into the same 1-word temp, reloaded per arm because
+// arm bodies clobber rax). Arms: ok(v)/err(e)/int-lit/bool-lit/_/bind.
+// Status uses a fixed two-path layout (err path inline, ok path after
+// jmp); int/bool uses a per-arm cmp/jne chain with per-arm reload.
+// Arm bindings resolve through the checker-shared res_var (exact homes);
+// the frame budget below covers the checker-assigned binding slots
+// (total + armidx + mdepth*8, stride 8, widths gated to 8).
+// Arm bodies must not write call-temp homes (record/list construction,
+// push, unwrap_*, aggregate-arg/aggregate-return calls stay 25);
+// scalar calls and scalar builtins use the machine stack / value homes.
+fn sz_cmp_rax_imm(): int {
+  return 6;
+}
+fn e_cmp_rax_imm(v: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(61, a0);
+  let a2: int = e_le32(v, a1);
+  return a2;
+}
+fn sz_jcc_nz(): int {
+  return 6;
+}
+fn e_jcc_nz(disp: int, acc: int): int {
+  let a0: int = e_b(15, acc);
+  let a1: int = e_b(133, a0);
+  let a2: int = e_le32(disp, a1);
+  return a2;
+}
+fn be_is_match(src: str, t: Tok): int {
+  if t->l == 5 { if beq(src, t->s, "match", 0, 5) { return 1; } else { } } else { }
+  return 0;
+}
+fn be_match_obrace(src: str, f: int, pos: int, end: int): int {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 0 { return 0 - 1; } else { }
+  if pgm_is_obrace(src, t) { return t->s; } else { }
+  return be_match_obrace(src, f, t->p, end);
+}
+fn be_match_skind(src: str, spos: int, bo: int, end: int): int {
+  let a: Tok = pgm_tok(src, spos, end);
+  if a->k == 1 { } else { return 0 - 1; }
+  let nx: Tok = pgm_tok(src, a->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_match_callq(src, nx->p, bo, end); } else { } } else { } } else { }
+  if pgm_is_obrace(src, nx) { if nx->s == bo { return 0; } else { } } else { }
+  return 0 - 1;
+}
+fn be_match_callq(src: str, pos: int, bo: int, end: int): int {
+  return be_match_paren(src, pos, bo, end, 1);
+}
+fn be_match_paren(src: str, pos: int, bo: int, end: int, depth: int): int {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 0 { return 0 - 1; } else { }
+  if t->s >= bo { return 0 - 1; } else { }
+  if t->k == 4 { if t->l == 1 {
+    if tok_byte(src, t->s) == 40 { return be_match_paren(src, t->p, bo, end, depth + 1); } else { }
+    if tok_byte(src, t->s) == 41 { if depth == 1 { return be_match_callend(src, t, bo, end); } else { } return be_match_paren(src, t->p, bo, end, depth - 1); } else { }
+  } else { } return be_match_paren(src, t->p, bo, end, depth); }
+  return be_match_paren(src, t->p, bo, end, depth);
+}
+fn be_match_callend(src: str, t: Tok, bo: int, end: int): int {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if pgm_is_obrace(src, nx) { if nx->s == bo { return 1; } else { } } else { }
+  return 0 - 1;
+}
+// Arm pattern kind: 0 ok, 1 err, 2 intlit, 3 boollit, 4 wild, 5 bind, -1 other.
+fn be_armp_kind(src: str, pos: int, me: int): int {
+  let t: Tok = pgm_tok(src, pos, me);
+  if t->k == 2 { return 2; } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 45 { return be_armp_neg(src, t, me); } else { } } else { } return 0 - 1; } else { }
+  if t->k == 1 { } else { return 0 - 1; }
+  if t->l == 2 { if beq(src, t->s, "ok", 0, 2) { return be_armp_ok(src, t, me, 0); } else { } } else { }
+  if t->l == 3 { if beq(src, t->s, "err", 0, 3) { return be_armp_ok(src, t, me, 1); } else { } } else { }
+  if t->l == 4 { if beq(src, t->s, "true", 0, 4) { return 3; } else { } } else { }
+  if t->l == 5 { if beq(src, t->s, "false", 0, 5) { return 3; } else { } } else { }
+  if t->l == 1 { if tok_byte(src, t->s) == 95 { return 4; } else { } } else { }
+  return 5;
+}
+fn be_armp_ok(src: str, t: Tok, me: int, which: int): int {
+  let nx: Tok = pgm_tok(src, t->p, me);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_armp_oknm(src, nx, me, which); } else { } } else { } } else { }
+  return 0 - 1;
+}
+fn be_armp_oknm(src: str, nx: Tok, me: int, which: int): int {
+  let nm: Tok = pgm_tok(src, nx->p, me);
+  if nm->k == 1 { } else { return 0 - 1; }
+  let cp: Tok = pgm_tok(src, nm->p, me);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return which; } else { } } else { } } else { }
+  return 0 - 1;
+}
+fn be_armp_neg(src: str, t: Tok, me: int): int {
+  let nx: Tok = pgm_tok(src, t->p, me);
+  if nx->k == 2 { return 2; } else { }
+  return 0 - 1;
+}
+// Literal value for kind 2/3 arms (bool true = 1, false = 0).
+fn be_armp_val(src: str, pos: int, me: int): int {
+  let t: Tok = pgm_tok(src, pos, me);
+  if t->k == 2 { return span_int(src, t->s, t->l); } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 45 { return 0 - be_armp_val(src, t->p, me); } else { } } else { } return 0; } else { }
+  if t->l == 4 { if beq(src, t->s, "true", 0, 4) { return 1; } else { } } else { }
+  return 0;
+}
+// Binding name span for kind 0/1/5 arms; ns = -1 when none.
+fn be_armp_bindns(src: str, pos: int, me: int): int {
+  let t: Tok = pgm_tok(src, pos, me);
+  if t->k == 1 { } else { return 0 - 1; }
+  if t->l == 2 { if beq(src, t->s, "ok", 0, 2) { return be_armp_okns(src, t, me); } else { } } else { }
+  if t->l == 3 { if beq(src, t->s, "err", 0, 3) { return be_armp_okns(src, t, me); } else { } } else { }
+  return t->s;
+}
+fn be_armp_okns(src: str, t: Tok, me: int): int {
+  let nx: Tok = pgm_tok(src, t->p, me);
+  let nm: Tok = pgm_tok(src, nx->p, me);
+  return nm->s;
+}
+fn be_armp_bindnl(src: str, pos: int, me: int): int {
+  let t: Tok = pgm_tok(src, pos, me);
+  if t->k == 1 { } else { return 0; }
+  if t->l == 2 { if beq(src, t->s, "ok", 0, 2) { return be_armp_oknl(src, t, me); } else { } } else { }
+  if t->l == 3 { if beq(src, t->s, "err", 0, 3) { return be_armp_oknl(src, t, me); } else { } } else { }
+  return t->l;
+}
+fn be_armp_oknl(src: str, t: Tok, me: int): int {
+  let nx: Tok = pgm_tok(src, t->p, me);
+  let nm: Tok = pgm_tok(src, nx->p, me);
+  return nm->l;
+}
+// Position after the pattern (at `=`), or -1.
+fn be_armp_end(src: str, pos: int, me: int): int {
+  let t: Tok = pgm_tok(src, pos, me);
+  if t->k == 2 { return t->p; } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 45 { return be_armp_end(src, t->p, me); } else { } } else { } return 0 - 1; } else { }
+  if t->k == 1 { } else { return 0 - 1; }
+  if t->l == 2 { if beq(src, t->s, "ok", 0, 2) { return be_armp_okend(src, t, me); } else { } } else { }
+  if t->l == 3 { if beq(src, t->s, "err", 0, 3) { return be_armp_okend(src, t, me); } else { } } else { }
+  return t->p;
+}
+fn be_armp_okend(src: str, t: Tok, me: int): int {
+  let nx: Tok = pgm_tok(src, t->p, me);
+  let nm: Tok = pgm_tok(src, nx->p, me);
+  let cp: Tok = pgm_tok(src, nm->p, me);
+  return cp->p;
+}
+// Arm body span as VS(off = body start, tl = body end); off = -1 on failure.
+fn be_armbody(src: str, pos: int, me: int, end: int): VS {
+  let e: Tok = pgm_tok(src, pos, me);
+  if e->k == 4 { if e->l == 1 { if tok_byte(src, e->s) == 61 { return be_armbody_gt(src, e, me, end); } else { } } else { } } else { }
+  return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok());
+}
+fn be_armbody_gt(src: str, e: Tok, me: int, end: int): VS {
+  if e->s + 1 >= me { return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok()); } else { }
+  if unwrap_or(byte_at(src, e->s + 1), 0) == 62 { } else { return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok()); }
+  let nx: Tok = pgm_tok(src, e->s + 2, end);
+  if pgm_is_obrace(src, nx) { } else { return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok()); }
+  let be: int = pgm_brace_end(src, nx->s, end);
+  if be == 0 - 1 { return VS(off: 0 - 1, k: 0, ts: 0, tl: 0, slot: 0, d: dok()); } else { }
+  return VS(off: nx->p, k: 0, ts: 0, tl: be, slot: 0, d: dok());
+}
+// Next arm start after a body ending at bend (skips optional `,`); me = done.
+fn be_armnext(src: str, bend: int, me: int, end: int): int {
+  let t: Tok = pgm_tok(src, bend, end);
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 44 { return t->p; } else { } } else { } return me; } else { }
+  return me;
+}
+// Arm-body temp discipline: reject constructs that write call-temp homes
+// (record ctors, list literals, push, unwrap_*, aggregate-arg or
+// aggregate-return calls). Scalar calls and scalar builtins use the
+// machine stack and value homes only. Over-approximate: safe arms may
+// stay 25, but no temp-writer is ever admitted.
+fn be_arm_clean(src: str, f: int, bs: int, be: int): int {
+  return be_arm_cleanto(src, f, bs, be, be);
+}
+fn be_arm_cleanto(src: str, f: int, pos: int, be: int, end: int): int {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 0 { return 1; } else { }
+  if t->s >= be { return 1; } else { }
+  if t->k == 3 { return be_arm_cleanto(src, f, t->p, be, end); } else { }
+  if t->k == 1 { return be_arm_cleanid(src, f, t, be, end); } else { }
+  if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 91 { return be_arm_cleanbr(src, t, be, end); } else { } } else { } return be_arm_cleanto(src, f, t->p, be, end); } else { }
+  return be_arm_cleanto(src, f, t->p, be, end);
+}
+fn be_arm_cleanbr(src: str, t: Tok, be: int, end: int): int {
+  if t->s == 0 { return 0; } else { }
+  let pb: int = unwrap_or(byte_at(src, t->s - 1), 0);
+  if pb == 95 { return 1; } else { }
+  if is_alnum(pb) { return 1; } else { }
+  if pb == 41 { return 1; } else { }
+  if pb == 93 { return 1; } else { }
+  return 0;
+}
+fn be_arm_cleanid(src: str, f: int, t: Tok, be: int, end: int): int {
+  if t->l == 5 { if beq(src, t->s, "match", 0, 5) { return be_arm_cleanmatch(src, f, t, be, end); } else { } } else { }
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_arm_cleancall(src, f, t, nx, be, end); } else { } } else { } return be_arm_cleanto(src, f, t->p, be, end); } else { }
+  return be_arm_cleanto(src, f, t->p, be, end);
+}
+fn be_arm_cleancall(src: str, f: int, t: Tok, nx: Tok, be: int, end: int): int {
+  if t->l == 4 { if beq(src, t->s, "push", 0, 4) { return 0; } else { } } else { }
+  if t->l == 9 { if beq(src, t->s, "unwrap_or", 0, 9) { return 0; } else { } } else { }
+  if t->l == 9 { if beq(src, t->s, "unwrap_ok", 0, 9) { return 0; } else { } } else { }
+  if t->l == 10 { if beq(src, t->s, "unwrap_err", 0, 10) { return 0; } else { } } else { }
+  let b0: int = unwrap_or(byte_at(src, t->s), 0);
+  if b0 >= 65 { if b0 <= 90 { return 0; } else { } } else { }
+  return be_arm_cleancallee(src, f, t, be, end);
+}
+fn be_arm_cleanmatch(src: str, f: int, t: Tok, be: int, end: int): int {
+  let bo: int = be_match_obrace(src, f, t->p, end);
+  if bo == 0 - 1 { return 0; } else { }
+  return be_arm_cleanto(src, f, bo, be, end);
+}
+fn be_arm_cleancallee(src: str, f: int, t: Tok, be: int, end: int): int {
+  let ci: int = be_find_fn(src, f, t->s, t->l, be);
+  if ci == 0 - 1 { return be_arm_cleanto(src, f, t->p, be, end); } else { }
+  let cs: VS = be_fn_span(src, f, ci);
+  if be_arm_cleanparams(src, f, cs->off, cs->off + cs->tl) == 1 { } else { return 0; }
+  let rt: list<int,24> = be_callee_ret(src, f, ci);
+  if tbase(rt) == 4 { return 0; } else { }
+  if tbase(rt) == 5 { return 0; } else { }
+  if tbase(rt) == 6 { return 0; } else { }
+  return be_arm_cleanto(src, f, t->p, be, end);
+}
+fn be_arm_cleanparams(src: str, f: int, cs: int, ce: int): int {
+  let np: int = pgm_hparam_count(src, cs, ce);
+  return be_arm_cleanparams_at(src, f, cs, ce, np, 0);
+}
+fn be_arm_cleanparams_at(src: str, f: int, cs: int, ce: int, np: int, i: int): int {
+  if i >= np { return 1; } else { }
+  let pt: TR = pgm_hparam_ty(src, f, cs, ce, i);
+  if has_err(pt->d) { return 0; } else { }
+  if tbase(pt->t) == 4 { return 0; } else { }
+  if tbase(pt->t) == 5 { return 0; } else { }
+  if tbase(pt->t) == 6 { return 0; } else { }
+  return be_arm_cleanparams_at(src, f, cs, ce, np, i + 1);
+}
+// ---- M2 match statement lowering ----
+fn be_s_match(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
+  let bo: int = be_match_obrace(src, f, t->p, end);
+  if bo == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: t->s); } else { }
+  let me: int = pgm_brace_end(src, bo, end);
+  if me == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: t->s); } else { }
+  let sk: int = be_match_skind(src, t->p, bo, end);
+  if sk == 0 { return be_s_matchvar(src, f, fs, fe, pos, me, end, acc, t, bo); } else { }
+  if sk == 1 { return be_s_matchcall(src, f, fs, fe, pos, me, end, acc, t, bo); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: t->s);
+}
+fn be_e_match(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, bx: int, bc: int, t: Tok): BZ {
+  let bo: int = be_match_obrace(src, f, t->p, end);
+  if bo == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: t->s); } else { }
+  let me: int = pgm_brace_end(src, bo, end);
+  if me == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: t->s); } else { }
+  let sk: int = be_match_skind(src, t->p, bo, end);
+  if sk == 0 { return be_e_matchvar(src, f, fs, fe, pos, me, end, acc, bx, bc, t, bo); } else { }
+  if sk == 1 { return be_e_matchcall(src, f, fs, fe, pos, me, end, acc, bx, bc, t, bo); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: t->s);
+}
+fn be_s_matchvar(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, t: Tok, bo: int): BZ {
+  let a: Tok = pgm_tok(src, t->p, end);
+  let v: VS = res_var(src, f, fs, fe, a->s, a->s, a->l);
+  if has_err(v->d) { return BZ(p: pos, n: acc, c: 29, o: a->s); } else { }
+  let ty: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(ty->d) { return BZ(p: pos, n: acc, c: 29, o: a->s); } else { }
+  let b: int = tbase(ty->t);
+  let base: int = be_home_base(src, f, fs, fe, v);
+  if b == 6 { return be_s_matchstatus(src, f, fs, fe, pos, me, end, acc, bo, base, tslots(tsub(ty->t, 1, []), src, f)); } else { }
+  if b == 1 { return be_s_matchscalar(src, f, fs, fe, pos, me, end, acc, bo, base, b); } else { }
+  if b == 2 { return be_s_matchscalar(src, f, fs, fe, pos, me, end, acc, bo, base, b); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: a->s);
+}
+fn be_e_matchvar(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, bx: int, bc: int, t: Tok, bo: int): BZ {
+  let a: Tok = pgm_tok(src, t->p, end);
+  let v: VS = res_var(src, f, fs, fe, a->s, a->s, a->l);
+  if has_err(v->d) { return BZ(p: pos, n: acc, c: 29, o: a->s); } else { }
+  let ty: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(ty->d) { return BZ(p: pos, n: acc, c: 29, o: a->s); } else { }
+  let b: int = tbase(ty->t);
+  let base: int = be_home_base(src, f, fs, fe, v);
+  if b == 6 { return be_e_matchstatus(src, f, fs, fe, pos, me, end, acc, bx, bc, bo, base, tslots(tsub(ty->t, 1, []), src, f)); } else { }
+  if b == 1 { return be_e_matchscalar(src, f, fs, fe, pos, me, end, acc, bx, bc, bo, base, b); } else { }
+  if b == 2 { return be_e_matchscalar(src, f, fs, fe, pos, me, end, acc, bx, bc, bo, base, b); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: a->s);
+}
+fn be_s_matchcall(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, t: Tok, bo: int): BZ {
+  let a: Tok = pgm_tok(src, t->p, end);
+  let ci: int = be_find_fn(src, f, a->s, a->l, fs);
+  if ci == 0 - 1 { return BZ(p: pos, n: acc, c: 25, o: a->s); } else { }
+  let rt: list<int,24> = be_callee_ret(src, f, ci);
+  let b: int = tbase(rt);
+  if b == 6 { return be_s_matchcallst(src, f, fs, fe, pos, me, end, acc, t, bo, a, ci, rt); } else { }
+  if b == 1 { return be_s_matchcallsc(src, f, fs, fe, pos, me, end, acc, t, bo, a, ci); } else { }
+  if b == 2 { return be_s_matchcallsc(src, f, fs, fe, pos, me, end, acc, t, bo, a, ci); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: a->s);
+}
+fn be_e_matchcall(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, bx: int, bc: int, t: Tok, bo: int): BZ {
+  let a: Tok = pgm_tok(src, t->p, end);
+  let ci: int = be_find_fn(src, f, a->s, a->l, fs);
+  if ci == 0 - 1 { return BZ(p: pos, n: acc, c: 25, o: a->s); } else { }
+  let rt: list<int,24> = be_callee_ret(src, f, ci);
+  let b: int = tbase(rt);
+  if b == 6 { return be_e_matchcallst(src, f, fs, fe, pos, me, end, acc, bx, bc, t, bo, a, ci, rt); } else { }
+  if b == 1 { return be_e_matchcallsc(src, f, fs, fe, pos, me, end, acc, bx, bc, t, bo, a, ci); } else { }
+  if b == 2 { return be_e_matchcallsc(src, f, fs, fe, pos, me, end, acc, bx, bc, t, bo, a, ci); } else { }
+  return BZ(p: pos, n: acc, c: 25, o: a->s);
+}
+// Status call scrutinee: result lands in a temp home below binding slots.
+fn be_s_matchcallst(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, t: Tok, bo: int, a: Tok, ci: int, rt: list<int,24>): BZ {
+  let w: int = tslots(rt, src, f);
+  if w <= 7 { } else { return BZ(p: pos, n: acc, c: 25, o: a->s); }
+  let tb: int = be_tempbase(src, f, fs, fe);
+  let c: BZ = be_s_call(src, f, fs, fe, a, end, 0, tb);
+  if c->c == 0 { } else { return c; }
+  return be_s_matchstatus(src, f, fs, fe, pos, me, end, acc + c->n, bo, tb, tslots(tsub(rt, 1, []), src, f));
+}
+fn be_e_matchcallst(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, bx: int, bc: int, t: Tok, bo: int, a: Tok, ci: int, rt: list<int,24>): BZ {
+  let w: int = tslots(rt, src, f);
+  if w <= 7 { } else { return BZ(p: pos, n: acc, c: 25, o: a->s); }
+  let tb: int = be_tempbase(src, f, fs, fe);
+  let c: BZ = be_e_call(src, f, fs, fe, a, end, acc, 0, tb);
+  if c->c == 0 { } else { return c; }
+  return be_e_matchstatus(src, f, fs, fe, pos, me, end, c->n, bx, bc, bo, tb, tslots(tsub(rt, 1, []), src, f));
+}
+// Scalar call scrutinee: value lands in the 1-word temp, reloaded per arm.
+fn be_s_matchcallsc(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, t: Tok, bo: int, a: Tok, ci: int): BZ {
+  let tb: int = be_tempbase(src, f, fs, fe);
+  let c: BZ = be_s_call(src, f, fs, fe, a, end, 0, tb);
+  if c->c == 0 { } else { return c; }
+  return be_s_matchscalar(src, f, fs, fe, pos, me, end, acc + c->n + sz_mov_home_rax(tb), bo, tb, tbase(be_callee_ret(src, f, ci)));
+}
+fn be_e_matchcallsc(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, bx: int, bc: int, t: Tok, bo: int, a: Tok, ci: int): BZ {
+  let tb: int = be_tempbase(src, f, fs, fe);
+  let c: BZ = be_e_call(src, f, fs, fe, a, end, acc, 0, tb);
+  if c->c == 0 { } else { return c; }
+  let sv: int = e_mov_home_rax(tb, c->n);
+  return be_e_matchscalar(src, f, fs, fe, pos, me, end, sv, bx, bc, bo, tb, tbase(be_callee_ret(src, f, ci)));
+}
+// ---- M2 status two-path lowering ----
+fn be_s_matchstatus(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, bo: int, base: int, pw: int): BZ {
+  let e: BZ = be_s_matchside(src, f, fs, fe, bo + 1, me, end, 1, base, pw);
+  if e->c == 0 { } else { return e; }
+  let o: BZ = be_s_matchside(src, f, fs, fe, bo + 1, me, end, 0, base, pw);
+  if o->c == 0 { } else { return o; }
+  let tn: int = sz_mov_rax_home(base) + sz_test_rax() + sz_jcc();
+  return BZ(p: me, n: acc + tn + e->n + sz_jmp() + o->n + sz_jmp(), c: 0, o: 0);
+}
+fn be_e_matchstatus(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, bx: int, bc: int, bo: int, base: int, pw: int): BZ {
+  let e: BZ = be_s_matchside(src, f, fs, fe, bo + 1, me, end, 1, base, pw);
+  if e->c == 0 { } else { return e; }
+  let o: BZ = be_s_matchside(src, f, fs, fe, bo + 1, me, end, 0, base, pw);
+  if o->c == 0 { } else { return o; }
+  let tn: int = sz_mov_rax_home(base) + sz_test_rax() + sz_jcc();
+  let done: int = acc + tn + e->n + sz_jmp() + o->n + sz_jmp();
+  let okat: int = acc + tn + e->n + sz_jmp();
+  let t0: int = e_mov_rax_home(base, acc);
+  let t1: int = e_test_rax(t0);
+  let t2: int = e_jcc_z(be_rel32(okat, t1, sz_jcc()), t1);
+  let eb: BZ = be_e_matchside(src, f, fs, fe, bo + 1, me, end, 1, base, pw, t2, bx, bc);
+  if eb->c == 0 { } else { return eb; }
+  let j0: int = e_jmp_rel(be_rel32(done, eb->n, sz_jmp()), eb->n);
+  let ob: BZ = be_e_matchside(src, f, fs, fe, bo + 1, me, end, 0, base, pw, j0, bx, bc);
+  if ob->c == 0 { } else { return ob; }
+  let j1: int = e_jmp_rel(be_rel32(done, ob->n, sz_jmp()), ob->n);
+  return BZ(p: me, n: j1, c: 0, o: 0);
+}
+// Side walk: side 1 = err path (err arm else wild), side 0 = ok path.
+fn be_s_matchside(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, side: int, base: int, pw: int): BZ {
+  return be_s_mss_at(src, f, fs, fe, pos, me, end, side, base, pw, 0, 0);
+}
+fn be_s_mss_at(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, side: int, base: int, pw: int, hit: int, n: int): BZ {
+  if pos >= me { if hit == 1 { return BZ(p: me, n: n, c: 0, o: 0); } else { } return BZ(p: pos, n: 0, c: 29, o: pos); } else { }
+  let k: int = be_armp_kind(src, pos, me);
+  if k == 0 { } else { if k == 1 { } else { if k == 4 { } else { return BZ(p: pos, n: 0, c: 25, o: pos); } } }
+  let pe: int = be_armp_end(src, pos, me);
+  if pe == 0 - 1 { return BZ(p: pos, n: 0, c: 29, o: pos); } else { }
+  let bd: VS = be_armbody(src, pe, me, end);
+  if bd->off == 0 - 1 { return BZ(p: pos, n: 0, c: 29, o: pos); } else { }
+  if be_arm_clean(src, f, bd->off, bd->tl) == 1 { } else { return BZ(p: pos, n: 0, c: 25, o: bd->off); }
+  return be_s_mss_arm(src, f, fs, fe, pos, me, end, side, base, pw, hit, n, k, bd);
+}
+fn be_s_mss_arm(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, side: int, base: int, pw: int, hit: int, n: int, k: int, bd: VS): BZ {
+  if hit == 1 { return be_s_mss_next(src, f, fs, fe, bd, me, end, side, base, pw, hit, n); } else { }
+  if side == 1 { if k == 1 { return be_s_mss_hit(src, f, fs, fe, pos, me, end, side, base, pw, k, bd); } else { } if k == 4 { return be_s_mss_hit(src, f, fs, fe, pos, me, end, side, base, pw, k, bd); } else { } } else { }
+  if side == 0 { if k == 0 { return be_s_mss_hit(src, f, fs, fe, pos, me, end, side, base, pw, k, bd); } else { } if k == 4 { return be_s_mss_hit(src, f, fs, fe, pos, me, end, side, base, pw, k, bd); } else { } } else { }
+  return be_s_mss_next(src, f, fs, fe, bd, me, end, side, base, pw, hit, n);
+}
+fn be_s_mss_hit(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, side: int, base: int, pw: int, k: int, bd: VS): BZ {
+  let bn: int = be_s_sidebind(src, f, fs, fe, pos, me, bd, base, pw, side, k);
+  if bn == 0 - 1 { return BZ(p: bd->off, n: 0, c: 29, o: bd->off); } else { }
+  let bb: BZ = be_s_block(src, f, fs, fe, bd->off, bd->tl, 0);
+  if bb->c == 0 { } else { return bb; }
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return be_s_mss_at(src, f, fs, fe, nx, me, end, side, base, pw, 1, bn + bb->n);
+}
+fn be_s_mss_next(src: str, f: int, fs: int, fe: int, bd: VS, me: int, end: int, side: int, base: int, pw: int, hit: int, n: int): BZ {
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return be_s_mss_at(src, f, fs, fe, nx, me, end, side, base, pw, hit, n);
+}
+// Bind size for the selected arm (wild = 0).
+fn be_s_sidebind(src: str, f: int, fs: int, fe: int, pos: int, me: int, bd: VS, base: int, pw: int, side: int, k: int): int {
+  if k == 4 { return 0; } else { }
+  let v: VS = res_var(src, f, fs, fe, bd->off, be_armp_bindns(src, pos, me), be_armp_bindnl(src, pos, me));
+  if has_err(v->d) { return 0 - 1; } else { }
+  let dh: int = be_home_base(src, f, fs, fe, v);
+  if side == 1 { return be_copy_size(base + 1, 0, dh, 1); } else { }
+  return be_copy_size(base + 2, 0, dh, pw);
+}
+// ---- M2 status emit side ----
+fn be_e_matchside(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, side: int, base: int, pw: int, acc: int, bx: int, bc: int): BZ {
+  return be_e_mss_at(src, f, fs, fe, pos, me, end, side, base, pw, acc, bx, bc, 0);
+}
+fn be_e_mss_at(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, side: int, base: int, pw: int, acc: int, bx: int, bc: int, hit: int): BZ {
+  if pos >= me { if hit == 1 { return BZ(p: me, n: acc, c: 0, o: 0); } else { } return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  let k: int = be_armp_kind(src, pos, me);
+  if k == 0 { } else { if k == 1 { } else { if k == 4 { } else { return BZ(p: pos, n: acc, c: 25, o: pos); } } }
+  let pe: int = be_armp_end(src, pos, me);
+  if pe == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  let bd: VS = be_armbody(src, pe, me, end);
+  if bd->off == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  if be_arm_clean(src, f, bd->off, bd->tl) == 1 { } else { return BZ(p: pos, n: acc, c: 25, o: bd->off); }
+  return be_e_mss_arm(src, f, fs, fe, pos, me, end, side, base, pw, acc, bx, bc, hit, k, bd);
+}
+fn be_e_mss_arm(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, side: int, base: int, pw: int, acc: int, bx: int, bc: int, hit: int, k: int, bd: VS): BZ {
+  if hit == 1 { return be_e_mss_next(src, f, fs, fe, bd, me, end, side, base, pw, acc, bx, bc, hit); } else { }
+  if side == 1 { if k == 1 { return be_e_mss_hit(src, f, fs, fe, pos, me, end, side, base, pw, acc, bx, bc, k, bd); } else { } if k == 4 { return be_e_mss_hit(src, f, fs, fe, pos, me, end, side, base, pw, acc, bx, bc, k, bd); } else { } } else { }
+  if side == 0 { if k == 0 { return be_e_mss_hit(src, f, fs, fe, pos, me, end, side, base, pw, acc, bx, bc, k, bd); } else { } if k == 4 { return be_e_mss_hit(src, f, fs, fe, pos, me, end, side, base, pw, acc, bx, bc, k, bd); } else { } } else { }
+  return be_e_mss_next(src, f, fs, fe, bd, me, end, side, base, pw, acc, bx, bc, hit);
+}
+fn be_e_mss_hit(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, side: int, base: int, pw: int, acc: int, bx: int, bc: int, k: int, bd: VS): BZ {
+  let eb: BZ = be_e_sidebind(src, f, fs, fe, pos, me, bd, base, pw, side, k, acc);
+  if eb->c == 0 { } else { return eb; }
+  let bb: BZ = be_e_block(src, f, fs, fe, bd->off, bd->tl, eb->n, bx, bc);
+  if bb->c == 0 { } else { return bb; }
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return be_e_mss_at(src, f, fs, fe, nx, me, end, side, base, pw, bb->n, bx, bc, 1);
+}
+fn be_e_mss_next(src: str, f: int, fs: int, fe: int, bd: VS, me: int, end: int, side: int, base: int, pw: int, acc: int, bx: int, bc: int, hit: int): BZ {
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return be_e_mss_at(src, f, fs, fe, nx, me, end, side, base, pw, acc, bx, bc, hit);
+}
+fn be_e_sidebind(src: str, f: int, fs: int, fe: int, pos: int, me: int, bd: VS, base: int, pw: int, side: int, k: int, acc: int): BZ {
+  if k == 4 { return BZ(p: bd->off, n: acc, c: 0, o: 0); } else { }
+  let v: VS = res_var(src, f, fs, fe, bd->off, be_armp_bindns(src, pos, me), be_armp_bindnl(src, pos, me));
+  if has_err(v->d) { return BZ(p: bd->off, n: acc, c: 29, o: bd->off); } else { }
+  let dh: int = be_home_base(src, f, fs, fe, v);
+  if side == 1 { return BZ(p: bd->off, n: be_copy_emit(base + 1, 0, dh, 1, acc), c: 0, o: 0); } else { }
+  return BZ(p: bd->off, n: be_copy_emit(base + 2, 0, dh, pw, acc), c: 0, o: 0);
+}
+// ---- M2 int/bool chain lowering (value reloaded to rax per arm:
+// arm bodies clobber rax, so every arm starts with a load) ----
+fn be_s_matchscalar(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, bo: int, base: int, stbase: int): BZ {
+  let ch: BZ = be_s_mchain(src, f, fs, fe, bo + 1, me, end, stbase, base, 0);
+  if ch->c == 0 { } else { return ch; }
+  return BZ(p: me, n: acc + ch->n, c: 0, o: 0);
+}
+fn be_e_matchscalar(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, acc: int, bx: int, bc: int, bo: int, base: int, stbase: int): BZ {
+  let ch: BZ = be_s_mchain(src, f, fs, fe, bo + 1, me, end, stbase, base, 0);
+  if ch->c == 0 { } else { return ch; }
+  let done: int = acc + ch->n;
+  return be_e_mchain(src, f, fs, fe, bo + 1, me, end, stbase, acc, done, bx, bc, base);
+}
+fn be_s_mchain(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, stbase: int, base: int, acc: int): BZ {
+  if pos >= me { return BZ(p: me, n: acc, c: 0, o: 0); } else { }
+  let k: int = be_armp_kind(src, pos, me);
+  if be_mchain_kindok(k, stbase) == 1 { } else { return BZ(p: pos, n: acc, c: 25, o: pos); }
+  let pe: int = be_armp_end(src, pos, me);
+  if pe == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  let bd: VS = be_armbody(src, pe, me, end);
+  if bd->off == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  if be_arm_clean(src, f, bd->off, bd->tl) == 1 { } else { return BZ(p: pos, n: acc, c: 25, o: bd->off); }
+  return be_s_mchain_arm(src, f, fs, fe, pos, me, end, stbase, base, acc, k, bd);
+}
+fn be_mchain_kindok(k: int, stbase: int): int {
+  if k == 4 { return 1; } else { }
+  if k == 5 { return 1; } else { }
+  if k == 2 { if stbase == 1 { return 1; } else { } return 0; } else { }
+  if k == 3 { if stbase == 2 { return 1; } else { } return 0; } else { }
+  return 0;
+}
+fn be_s_mchain_arm(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, stbase: int, base: int, acc: int, k: int, bd: VS): BZ {
+  if k == 4 { return be_s_mchain_body(src, f, fs, fe, pos, me, end, stbase, base, acc, 0, bd); } else { }
+  if k == 5 { return be_s_mchain_body(src, f, fs, fe, pos, me, end, stbase, base, acc, 1, bd); } else { }
+  let vv: int = be_armp_val(src, pos, me);
+  if k == 2 { if vv >= 0 { if vv <= 2147483647 { } else { return BZ(p: pos, n: acc, c: 25, o: pos); } } else { return BZ(p: pos, n: acc, c: 25, o: pos); } } else { }
+  let bb: BZ = be_s_block(src, f, fs, fe, bd->off, bd->tl, 0);
+  if bb->c == 0 { } else { return bb; }
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return be_s_mchain(src, f, fs, fe, nx, me, end, stbase, base, acc + sz_mov_rax_home(base) + sz_cmp_rax_imm() + sz_jcc_nz() + bb->n + sz_jmp());
+}
+fn be_s_mchain_body(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, stbase: int, base: int, acc: int, bind: int, bd: VS): BZ {
+  let bn: int = be_s_mchain_bind(src, f, fs, fe, pos, me, bd, bind);
+  if bn == 0 - 1 { return BZ(p: bd->off, n: acc, c: 29, o: bd->off); } else { }
+  let bb: BZ = be_s_block(src, f, fs, fe, bd->off, bd->tl, 0);
+  if bb->c == 0 { } else { return bb; }
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return be_s_mchain(src, f, fs, fe, nx, me, end, stbase, base, acc + sz_mov_rax_home(base) + bn + bb->n + sz_jmp());
+}
+fn be_s_mchain_bind(src: str, f: int, fs: int, fe: int, pos: int, me: int, bd: VS, bind: int): int {
+  if bind == 0 { return 0; } else { }
+  let v: VS = res_var(src, f, fs, fe, bd->off, be_armp_bindns(src, pos, me), be_armp_bindnl(src, pos, me));
+  if has_err(v->d) { return 0 - 1; } else { }
+  return sz_mov_home_rax(be_home_base(src, f, fs, fe, v));
+}
+// ---- M2 int/bool chain emit ----
+fn be_e_mchain(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, stbase: int, acc: int, done: int, bx: int, bc: int, base: int): BZ {
+  if pos >= me { return BZ(p: me, n: acc, c: 0, o: 0); } else { }
+  let k: int = be_armp_kind(src, pos, me);
+  if be_mchain_kindok(k, stbase) == 1 { } else { return BZ(p: pos, n: acc, c: 25, o: pos); }
+  let pe: int = be_armp_end(src, pos, me);
+  if pe == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  let bd: VS = be_armbody(src, pe, me, end);
+  if bd->off == 0 - 1 { return BZ(p: pos, n: acc, c: 29, o: pos); } else { }
+  if be_arm_clean(src, f, bd->off, bd->tl) == 1 { } else { return BZ(p: pos, n: acc, c: 25, o: bd->off); }
+  return be_e_mchain_arm(src, f, fs, fe, pos, me, end, stbase, acc, done, bx, bc, base, k, bd);
+}
+fn be_e_mchain_arm(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, stbase: int, acc: int, done: int, bx: int, bc: int, base: int, k: int, bd: VS): BZ {
+  if k == 4 { return be_e_mchain_body(src, f, fs, fe, pos, me, end, stbase, acc, done, bx, bc, base, 0, bd); } else { }
+  if k == 5 { return be_e_mchain_body(src, f, fs, fe, pos, me, end, stbase, acc, done, bx, bc, base, 1, bd); } else { }
+  let vv: int = be_armp_val(src, pos, me);
+  if k == 2 { if vv >= 0 { if vv <= 2147483647 { } else { return BZ(p: pos, n: acc, c: 25, o: pos); } } else { return BZ(p: pos, n: acc, c: 25, o: pos); } } else { }
+  let bb: BZ = be_s_block(src, f, fs, fe, bd->off, bd->tl, 0);
+  if bb->c == 0 { } else { return bb; }
+  let nxt: int = acc + sz_mov_rax_home(base) + sz_cmp_rax_imm() + sz_jcc_nz() + bb->n + sz_jmp();
+  let l0: int = e_mov_rax_home(base, acc);
+  let c0: int = e_cmp_rax_imm(vv, l0);
+  let j0: int = e_jcc_nz(be_rel32(nxt, c0, sz_jcc_nz()), c0);
+  let eb: BZ = be_e_block(src, f, fs, fe, bd->off, bd->tl, j0, bx, bc);
+  if eb->c == 0 { } else { return eb; }
+  let j1: int = e_jmp_rel(be_rel32(done, eb->n, sz_jmp()), eb->n);
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return be_e_mchain(src, f, fs, fe, nx, me, end, stbase, j1, done, bx, bc, base);
+}
+fn be_e_mchain_body(src: str, f: int, fs: int, fe: int, pos: int, me: int, end: int, stbase: int, acc: int, done: int, bx: int, bc: int, base: int, bind: int, bd: VS): BZ {
+  let l0: int = e_mov_rax_home(base, acc);
+  let eb: BZ = be_e_mchain_bind(src, f, fs, fe, pos, me, bd, bind, l0, bx, bc);
+  if eb->c == 0 { } else { return eb; }
+  let j1: int = e_jmp_rel(be_rel32(done, eb->n, sz_jmp()), eb->n);
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return be_e_mchain(src, f, fs, fe, nx, me, end, stbase, j1, done, bx, bc, base);
+}
+fn be_e_mchain_bind(src: str, f: int, fs: int, fe: int, pos: int, me: int, bd: VS, bind: int, acc: int, bx: int, bc: int): BZ {
+  if bind == 0 { return be_e_block(src, f, fs, fe, bd->off, bd->tl, acc, bx, bc); } else { }
+  let v: VS = res_var(src, f, fs, fe, bd->off, be_armp_bindns(src, pos, me), be_armp_bindnl(src, pos, me));
+  if has_err(v->d) { return BZ(p: bd->off, n: acc, c: 29, o: bd->off); } else { }
+  let s0: int = e_mov_home_rax(be_home_base(src, f, fs, fe, v), acc);
+  return be_e_block(src, f, fs, fe, bd->off, bd->tl, s0, bx, bc);
+}
+// ---- M2 frame budget for arm bindings ----
+// Checker-assigned binding slots (total + armidx + mdepth*8, stride 8,
+// widths gated to 8 below) must fit the frame. Over-approximate per fn:
+// total + narms + 8 * (mdepth + 1) + 8 covers every binding slot + width
+// and the call-scrutinee temp below the first binding.
+fn be_fn_maxarm(src: str, f: int, cs: int, ce: int): int {
+  let nl: int = scope_slot(src, f, cs, ce, ce);
+  return be_maxarm_at(src, f, cs, ce, nl, 0, nl);
+}
+fn be_maxarm_at(src: str, f: int, pos: int, bound: int, nl: int, mdepth: int, need: int): int {
+  let t: Tok = pgm_tok(src, pos, bound);
+  if t->k == 0 { return need; } else { }
+  if t->k == 1 { if be_is_match(src, t) == 1 { return be_maxarm_match(src, f, t, bound, nl, mdepth, need); } else { } } else { }
+  return be_maxarm_at(src, f, t->p, bound, nl, mdepth, need);
+}
+fn be_maxarm_match(src: str, f: int, t: Tok, bound: int, nl: int, mdepth: int, need: int): int {
+  let bo: int = be_match_obrace(src, f, t->p, bound);
+  if bo == 0 - 1 { return need; } else { }
+  let me: int = pgm_brace_end(src, bo, bound);
+  if me == 0 - 1 { return need; } else { }
+  let na: int = be_arm_count(src, bo + 1, me, bound);
+  let want: int = nl + na + 8 * (mdepth + 1) + 8;
+  let n2: int = be_temp_maxof(want, need);
+  let n3: int = be_maxarm_at(src, f, bo + 1, me, nl, mdepth + 1, n2);
+  return be_maxarm_at(src, f, me, bound, nl, mdepth, n3);
+}
+fn be_arm_count(src: str, pos: int, me: int, end: int): int {
+  if pos >= me { return 0; } else { }
+  let k: int = be_armp_kind(src, pos, me);
+  if k == 0 - 1 { return 0; } else { }
+  let pe: int = be_armp_end(src, pos, me);
+  if pe == 0 - 1 { return 0; } else { }
+  let bd: VS = be_armbody(src, pe, me, end);
+  if bd->off == 0 - 1 { return 0; } else { }
+  let nx: int = be_armnext(src, bd->tl, me, end);
+  return 1 + be_arm_count(src, nx, me, end);
 }
 fn be_data_base(): int {
   return 6291456;
