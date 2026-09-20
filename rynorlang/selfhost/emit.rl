@@ -134,6 +134,219 @@ fn sz_push_rcx(): int {
 fn e_push_rcx(acc: int): int {
   return e_b(81, acc);
 }
+fn sz_push_rsi(): int {
+  return 1;
+}
+fn e_push_rsi(acc: int): int {
+  return e_b(86, acc);
+}
+fn sz_pop_rsi_op(): int {
+  return 1;
+}
+fn e_pop_rsi_op(acc: int): int {
+  return e_b(94, acc);
+}
+fn sz_pop_rdx_op(): int {
+  return 1;
+}
+fn e_pop_rdx_op(acc: int): int {
+  return e_b(90, acc);
+}
+fn sz_pop_rax_op(): int {
+  return 1;
+}
+fn e_pop_rax_op(acc: int): int {
+  return e_b(88, acc);
+}
+fn sz_xchg_rax_mrsp(): int {
+  return 4;
+}
+fn e_xchg_rax_mrsp(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(135, a0);
+  let a2: int = e_b(4, a1);
+  let a3: int = e_b(36, a2);
+  return a3;
+}
+fn sz_mov_ecx_esi(): int {
+  return 2;
+}
+fn e_mov_ecx_esi(acc: int): int {
+  let a0: int = e_b(137, acc);
+  let a1: int = e_b(241, a0);
+  return a1;
+}
+fn sz_store_0_rsp(): int {
+  return 5;
+}
+fn e_store_0_rsp(acc: int, d: int): int {
+  let a0: int = e_b(198, acc);
+  let a1: int = e_b(68, a0);
+  let a2: int = e_b(36, a1);
+  let a3: int = e_b(d, a2);
+  let a4: int = e_b(48, a3);
+  return a4;
+}
+fn sz_store_true_rsp44(): int {
+  return 20;
+}
+fn e_store_true_rsp44(acc: int): int {
+  // 'true' bytes t,r,u,e in place (each byte one e_b: no word-order
+  // trap; e_le32 of 0x65757274 would emit the same bytes on a
+  // two's-complement host, but byte stores are endianness-proof by
+  // construction and cost the same 8 bytes).
+  let a0: int = e_b(198, acc);
+  let a1: int = e_b(68, a0);
+  let a2: int = e_b(36, a1);
+  let a3: int = e_b(44, a2);
+  let a4: int = e_b(116, a3);
+  let a5: int = e_b(198, a4);
+  let a6: int = e_b(68, a5);
+  let a7: int = e_b(36, a6);
+  let a8: int = e_b(45, a7);
+  let a9: int = e_b(114, a8);
+  let a10: int = e_b(198, a9);
+  let a11: int = e_b(68, a10);
+  let a12: int = e_b(36, a11);
+  let a13: int = e_b(46, a12);
+  let a14: int = e_b(117, a13);
+  let a15: int = e_b(198, a14);
+  let a16: int = e_b(68, a15);
+  let a17: int = e_b(36, a16);
+  let a18: int = e_b(47, a17);
+  let a19: int = e_b(101, a18);
+  return a19;
+}
+fn sz_store_false_rsp43(): int {
+  return 25;
+}
+fn e_store_false_rsp43(acc: int): int {
+  // 'false' bytes f,a,l,s,e in place (same endianness-proof shape as
+  // true: five C6 stores, 25 bytes).
+  let a0: int = e_b(198, acc);
+  let a1: int = e_b(68, a0);
+  let a2: int = e_b(36, a1);
+  let a3: int = e_b(43, a2);
+  let a4: int = e_b(102, a3);
+  let a5: int = e_b(198, a4);
+  let a6: int = e_b(68, a5);
+  let a7: int = e_b(36, a6);
+  let a8: int = e_b(44, a7);
+  let a9: int = e_b(97, a8);
+  let a10: int = e_b(198, a9);
+  let a11: int = e_b(68, a10);
+  let a12: int = e_b(36, a11);
+  let a13: int = e_b(45, a12);
+  let a14: int = e_b(108, a13);
+  let a15: int = e_b(198, a14);
+  let a16: int = e_b(68, a15);
+  let a17: int = e_b(36, a16);
+  let a18: int = e_b(46, a17);
+  let a19: int = e_b(115, a18);
+  let a20: int = e_b(198, a19);
+  let a21: int = e_b(68, a20);
+  let a22: int = e_b(36, a21);
+  let a23: int = e_b(47, a22);
+  let a24: int = e_b(101, a23);
+  return a24;
+}
+fn sz_mov_rcx_imm32(): int {
+  // mov rcx,imm32 = 48 C7 C1 ib32 (same /0 class as e_mov_rax_imm32
+  // 48 C7 C0; ModRM C1 = mod=11 reg=000(imm extension) rm=001(rcx)).
+  return 7;
+}
+fn e_mov_rcx_imm32(v: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(199, a0);
+  let a2: int = e_b(193, a1);
+  let a3: int = e_le32(v, a2);
+  return a3;
+}
+fn sz_mov_rsi_rax(): int {
+  return 3;
+}
+fn e_mov_rsi_rax(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(137, a0);
+  let a2: int = e_b(198, a1);
+  return a2;
+}
+fn sz_mov_rax_rdx(): int {
+  return 3;
+}
+fn e_mov_rax_rdx(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(137, a0);
+  let a2: int = e_b(208, a1);
+  return a2;
+}
+fn sz_sub_rdx_rsi(): int {
+  return 3;
+}
+fn e_sub_rdx_rsi(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(41, a0);
+  let a2: int = e_b(242, a1);
+  return a2;
+}
+fn sz_store_dl_rsi(): int {
+  return 2;
+}
+fn e_store_dl_rsi(acc: int): int {
+  let a0: int = e_b(136, acc);
+  let a1: int = e_b(22, a0);
+  return a1;
+}
+fn sz_store_dash_rsi(): int {
+  return 3;
+}
+fn e_store_dash_rsi(acc: int): int {
+  let a0: int = e_b(198, acc);
+  let a1: int = e_b(6, a0);
+  let a2: int = e_b(45, a1);
+  return a2;
+}
+fn sz_store_rdx_rsp(): int {
+  // KEPT (no live callers after the write-simplification): the rdx
+  // stash store is one instruction away if a future template needs
+  // len parked across a call; deleting it would orphan the size
+  // twin and the ModRM audit note. Uncalled fns are free (no bytes
+  // emitted); the 25/28 gates never see them.
+  return 5;
+}
+fn e_store_rdx_rsp(disp: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(137, a0);
+  let a2: int = e_b(84, a1);
+  let a3: int = e_b(36, a2);
+  let a4: int = e_b(disp, a3);
+  return a4;
+}
+fn sz_load_rdx_rsp(): int {
+  return 5;
+}
+fn e_load_rdx_rsp(disp: int, acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(139, a0);
+  let a2: int = e_b(84, a1);
+  let a3: int = e_b(36, a2);
+  let a4: int = e_b(disp, a3);
+  return a4;
+}
+// M3 v2 RSI-pointer print forms (each e_* has its sz_* twin above;
+// every byte below re-derives from BE-B/BE-F2-audited patterns:
+// push/pop single-byte opcodes, REX+89/8B/8D+rsp-SIB, REX+29/41,
+// C6/C7+rsp-SIB stores, 89 F1 mov ecx,esi). New ModRM derivations
+// (all regular, no invented encodings):
+//   48 89 C6 mov rsi,rax (89 /r: mod=11 reg=000(rax) rm=110(rsi)),
+//   48 89 D0 mov rax,rdx (mod=11 reg=010(rdx) rm=000(rax)),
+//   48 29 F2 sub rdx,rsi (29 /r: mod=11 reg=110(rsi) rm=010(rdx),
+//     same /r class as BE-F2 e_sub_rsi_rax 48 29 C6 transposed),
+//   88 16 mov [rsi],dl (88 /r: mod=00 reg=010(dl) rm=110(rsi)),
+//   C6 06 2D mov BYTE [rsi],'-' (C6 /0: mod=00 rm=110),
+//   48 87 04 24 xchg rax,[rsp] (87 /r: mod=00 reg=000(rax) rm=100+SIB 24),
+//   48 8B 54 24 ib8 mov rdx,[rsp+ib8] (8B /r: mod=01 reg=010(rdx)
+//     rm=100+SIB 24; same SIB class as e_load_rax_rsp/e_mov_ecx_rsp).
 fn sz_pop_rsi(): int {
   return 1;
 }
@@ -732,6 +945,7 @@ fn be_s_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int
   if be_is_match(src, t) == 1 { return be_s_match(src, f, fs, fe, pos, end, acc, t); } else { }
   if be_s_ctrl(src, t) == 1 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   if t->l == 3 { if beq(src, t->s, "use", 0, 3) { return be_s_usevar(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
+  if be_is_print(src, t) == 1 { return be_s_printstmt(src, f, fs, fe, pos, end, acc, t); } else { }
   return be_s_exprstmt(src, f, fs, fe, pos, end, acc);
 }
 fn be_s_usevar(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
@@ -900,6 +1114,7 @@ fn be_e_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int
   if be_is_match(src, t) == 1 { return be_e_match(src, f, fs, fe, pos, end, acc, bx, bc, t); } else { }
   if be_s_ctrl(src, t) == 1 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   if t->l == 3 { if beq(src, t->s, "use", 0, 3) { return be_e_usevar(src, f, fs, fe, pos, end, acc, t); } else { } } else { }
+  if be_is_print(src, t) == 1 { return be_e_printstmt(src, f, fs, fe, pos, end, acc, t); } else { }
   return be_e_exprstmt(src, f, fs, fe, pos, end, acc);
 }
 fn be_e_usevar(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
@@ -2360,6 +2575,8 @@ fn be_data_base(): int {
   return 6291456;
 }
 fn e_mov_ebx_imm(v: int, acc: int): int {
+  // mov ebx,imm32 = BB ib32 (no REX: 32-bit form zeroes rbx high;
+  // the kernel reads the full EBX but every M3 fd/len fits).
   let m0: int = e_b(187, acc);
   let m1: int = e_le32(v, m0);
   return m1;
@@ -2372,11 +2589,45 @@ fn e_mov_ecx_imm(v: int, acc: int): int {
 fn sz_mov_ecx_imm(): int {
   return 5;
 }
+fn sz_mov_eax_imm(): int {
+  return 5;
+}
+fn sz_mov_ebx_imm(): int {
+  return 5;
+}
+fn sz_mov_edx_imm(): int {
+  return 5;
+}
 fn e_mov_edx_imm(v: int, acc: int): int {
+  // mov edx,imm32 = BA ib32 (no REX: zeroes rdx high; every M3 len
+  // fits 32 bits, and the write length comes from here or sub rdx).
   let m0: int = e_b(186, acc);
   let m1: int = e_le32(v, m0);
   return m1;
 }
+// M3: scalar print lowering. Frozen oracle (interp.py run_rir: rt_print_*
+// emission, no newline) renders exactly one argument:
+//   int  -> signed decimal (rt_rynor rl_12_rt_print_int: '-' + digits),
+//   bool -> "true"/"false" (rl_13_rt_print_bool: nonzero => true),
+//   str  -> raw (ptr,len) bytes, empty prints nothing.
+// Baby has no runtime object and no linker (selfhost.md C1/C3 rejected),
+// so the guest backend INLINES the rt_rynor write sequence below
+// (EAX=2 write, EBX=1 stdout; syscall-abi.md: no other fd): the exact
+// existing e_print_lit form. Int/bool need a caller-stack decimal/word
+// scratch because there is no callee to own a buffer:
+//   sub rsp,48 (net-zero, so rsp is exactly as aligned inside the
+//   sequence as at the statement boundary: frames are 16-padded,
+//   pushes/pops balance, and e_start runs before any call);
+//   decimal digits (int) or true/false bytes (bool) are built top-down
+//   at [rsp+47] backwards; ecx/ebx/edx immediates carry buf/len/fd.
+// Str-var prints (ptr,len) straight from the 2-word home, no scratch:
+// empty (len 0) skips the syscall via test/jz so no dereference happens
+// (rt_rynor .done guard, program-model.md "empty prints nothing").
+// Only caller-saved regs (rax/rcx/rdx); RBX is written via its imm32
+// form like every existing print (no push/pop of callee-saved regs),
+// rbp homes untouched, rsp balanced back by add before the int80.
+// str-lit keeps the BE-D path (e_print_lit); arg typing re-derives
+// through the checker-shared x_or/infer_var_ty (never trusts shape).
 fn sz_print(): int {
   return 22;
 }
@@ -2393,21 +2644,264 @@ fn be_is_print(src: str, t: Tok): int {
   return 0;
 }
 fn be_s_print(src: str, f: int, t: Tok, end: int): BZ {
+  return be_s_printf(src, f, 0, 0, t, end);
+}
+fn be_s_printstmt(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
+  // Statement-level print: walk be_s_printf from the statement start
+  // (pos == t->s for a leading `print`), require the trailing ';',
+  // and thread acc through. be_s_printf itself counts from zero
+  // (n = print bytes only), so the statement returns acc + print,
+  // exactly like be_s_exprstmt (acc + e->n) does.
+  let r: BZ = be_s_printf(src, f, fs, fe, t, end);
+  if r->c == 0 { } else { return BZ(p: r->p, n: acc, c: r->c, o: r->o); }
+  let sc: Tok = pgm_tok(src, r->p, end);
+  if pgm_is_semi(src, sc) { return BZ(p: sc->p, n: acc + r->n, c: 0, o: 0); } else { }
+  return BZ(p: pos, n: acc, c: 29, o: sc->s);
+}
+fn be_s_printf(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
   let nx: Tok = pgm_tok(src, t->p, end);
   let st: Tok = pgm_tok(src, nx->p, end);
   if st->k == 3 { return be_s_print_lit(src, f, t, end, st); } else { }
+  // nx points at '(' (pgm_tok skips ident 'print'; be_s_print_lit
+  // re-derives the same way). Any other token is a 25, not a 29.
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_s_printf_typed(src, f, fs, fe, t, end, nx); } else { } } else { } } else { }
   return BZ(p: t->s, n: 0, c: 25, o: t->s);
+}
+fn be_s_print_typed(src: str, f: int, t: Tok, end: int, nx: Tok): BZ {
+  return be_s_printf_typed(src, f, 0, 0, t, end, nx);
+}
+fn be_s_printf_typed(src: str, f: int, fs: int, fe: int, t: Tok, end: int, nx: Tok): BZ {
+  let me: int = pgm_expr_end(src, nx->p, end, 0, 0);
+  if me == 0 - 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
+  if me < 0 - 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
+  let cp: Tok = pgm_tok(src, me, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return be_s_print_spansel(src, f, fs, fe, t, nx, cp, end); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 25, o: t->s);
+}
+fn be_s_print_spansel(src: str, f: int, fs: int, fe: int, t: Tok, nx: Tok, cp: Tok, end: int): BZ {
+  // Size-side span selection mirrors the emit side exactly:
+  // leading-str is handled by be_s_print_lit before this; here a
+  // leading int-literal charges mov+template, a leading ident goes
+  // through be_s_print_ident (bool-imms, call/arrow/index rejects,
+  // bare-var type sizes, or NON-bare-var expression spans via
+  // be_s_level + template), and every other leading token charges
+  // be_s_level over the FULL arg span + template (same walker the
+  // emit side lowers with be_e_level).
+  let st: Tok = pgm_tok(src, nx->p, end);
+  if st->k == 2 { return be_s_print_intsel(src, f, fs, fe, t, nx, cp, end, st); } else { }
+  if st->k == 1 { return be_s_print_ident(src, f, fs, fe, t, st, cp, end); } else { }
+  return be_s_print_exprspan(src, f, fs, fe, t, nx, cp, end);
+}
+fn be_s_print_intsel(src: str, f: int, fs: int, fe: int, t: Tok, nx: Tok, cp: Tok, end: int, st: Tok): BZ {
+  // Int-led arg: a SINGLE literal (`print(42)`) uses the mov fast
+  // path; a longer span (`print(0 - 7)`, `print(2 + 3)`) is a full
+  // int expression and walks be_s_level exactly like the emit side
+  // lowers it with be_e_level. Peeking one token keeps both passes
+  // symmetric (the old code sent every int-led span to the fast
+  // path on the size side only when it ended at `)`, else 25, while
+  // the emit side truncated silently: size/emit asymmetry).
+  let nx2: Tok = pgm_tok(src, st->p, end);
+  if nx2->s == cp->s { return be_s_print_intlit(src, f, fs, fe, t, nx, cp, end); } else { }
+  return be_s_print_exprspan(src, f, fs, fe, t, nx, cp, end);
+}
+fn be_s_print_exprspan(src: str, f: int, fs: int, fe: int, t: Tok, nx: Tok, cp: Tok, end: int): BZ {
+  let e: BZ = be_s_level(src, f, fs, fe, 0, nx->p, end);
+  if e->c == 0 { } else { return BZ(p: e->p, n: 0, c: e->c, o: e->o); }
+  let nx2: Tok = pgm_tok(src, e->p, end);
+  if nx2->s == cp->s { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  return BZ(p: cp->p, n: e->n + be_print_int_size(), c: 0, o: 0);
+}
+fn be_s_print_arg(src: str, f: int, fs: int, fe: int, t: Tok, nx: Tok, cp: Tok, end: int): BZ {
+  return be_s_print_spansel(src, f, fs, fe, t, nx, cp, end);
+}
+fn be_s_print_arg_old(src: str, f: int, fs: int, fe: int, t: Tok, nx: Tok, cp: Tok, end: int): BZ {
+  let st: Tok = pgm_tok(src, nx->p, end);
+  if st->k == 2 { return be_s_print_intlit(src, f, fs, fe, t, nx, cp, end); } else { }
+  if st->k == 1 { return be_s_print_ident(src, f, fs, fe, t, st, cp, end); } else { }
+  // Any other leading token (int literal, '(' expression, unary):
+  // charge the SAME counter shape the emit side walks: the arg value
+  // is evaluated with be_s_level over the FULL arg span (st->s..cp->s,
+  // exactly what the emit side lowers with be_e_level), then the
+  // fixed int template renders. So size == emit by construction
+  // (never a bare constant here: the expression may carry its own
+  // code, e.g. `print(2 + 3)` walks add machinery on both passes).
+  let e: BZ = be_s_level(src, f, fs, fe, 0, st->s, end);
+  if e->c == 0 { } else { return BZ(p: e->p, n: 0, c: e->c, o: e->o); }
+  let nx2: Tok = pgm_tok(src, e->p, end);
+  if nx2->s == cp->s { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  return BZ(p: cp->p, n: e->n + be_print_int_size(), c: 0, o: 0);
+}
+fn be_s_print_intlit(src: str, f: int, fs: int, fe: int, t: Tok, nx: Tok, cp: Tok, end: int): BZ {
+  // Int-literal arg: the emit side does NOT walk be_e_level (it
+  // materializes the literal with a single mov); charge exactly that
+  // shape here (mov size + fixed template), so size == emit.
+  let st: Tok = pgm_tok(src, nx->p, end);
+  let nx2: Tok = pgm_tok(src, st->p, end);
+  if nx2->s == cp->s { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  return BZ(p: cp->p, n: sz_mov_rax_imm(span_int(src, st->s, st->l)) + be_print_int_size(), c: 0, o: 0);
+}
+fn be_s_print_ident(src: str, f: int, fs: int, fe: int, t: Tok, st: Tok, cp: Tok, end: int): BZ {
+  if st->l == 4 { if beq(src, st->s, "true", 0, 4) { return BZ(p: cp->p, n: be_print_bool_imm_size(), c: 0, o: 0); } else { } } else { }
+  if st->l == 5 { if beq(src, st->s, "false", 0, 5) { return BZ(p: cp->p, n: be_print_bool_imm_size(), c: 0, o: 0); } else { } } else { }
+  let nx: Tok = pgm_tok(src, st->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "::", 0, 2) { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  // Bare-var size needs the TYPE (int/bool/str templates differ):
+  // re-derive through the checker-shared res_var+infer_var_ty.
+  // (The emit side walks the same path in be_e_print_varname.)
+  return be_s_print_varsize(src, f, fs, fe, t, st, cp);
+}
+fn be_s_print_varsize(src: str, f: int, fs: int, fe: int, t: Tok, st: Tok, cp: Tok): BZ {
+  let v: VS = res_var(src, f, fs, fe, st->s, st->s, st->l);
+  if has_err(v->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 1 { return BZ(p: cp->p, n: sz_mov_rax_home(be_home_base(src, f, fs, fe, v)) + be_print_int_size(), c: 0, o: 0); } else { }
+  if tbase(vt->t) == 2 { return BZ(p: cp->p, n: sz_mov_rax_home(be_home_base(src, f, fs, fe, v)) + be_print_bool_size(), c: 0, o: 0); } else { }
+  if tbase(vt->t) == 3 { return BZ(p: cp->p, n: be_print_str_home_size(src, f, fs, fe, v), c: 0, o: 0); } else { }
+  return BZ(p: t->s, n: 0, c: 25, o: t->s);
+}
+fn be_print_str_home_size(src: str, f: int, fs: int, fe: int, v: VS): int {
+  let base: int = be_home_base(src, f, fs, fe, v);
+  return sz_push_rcx_op() + sz_mov_rax_home(base + 1) + sz_test() + sz_jcc() + be_print_str_go_size(base);
+}
+fn be_e_print(src: str, f: int, t: Tok, end: int, acc: int): BZ {
+  return be_e_printf(src, f, 0, 0, t, end, acc);
+}
+fn be_e_printstmt(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
+  let r: BZ = be_e_printf(src, f, fs, fe, t, end, acc);
+  if r->c == 0 { } else { return r; }
+  let sc: Tok = pgm_tok(src, r->p, end);
+  if pgm_is_semi(src, sc) { return BZ(p: sc->p, n: r->n, c: 0, o: 0); } else { }
+  return BZ(p: pos, n: acc, c: 29, o: sc->s);
+}
+fn be_e_printf(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  let st: Tok = pgm_tok(src, nx->p, end);
+  if st->k == 3 { return be_e_print_lit(src, f, t, end, st, acc); } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_e_printf_typed(src, f, fs, fe, t, end, acc, nx); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
+}
+fn be_e_printf_typed(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int, nx: Tok): BZ {
+  let me: int = pgm_expr_end(src, nx->p, end, 0, 0);
+  if me == 0 - 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
+  if me < 0 - 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
+  let cp: Tok = pgm_tok(src, me, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return be_e_print_arg(src, f, fs, fe, t, nx, cp, end, acc); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
+}
+fn be_e_print_arg(src: str, f: int, fs: int, fe: int, t: Tok, nx: Tok, cp: Tok, end: int, acc: int): BZ {
+  let st: Tok = pgm_tok(src, nx->p, end);
+  if st->k == 3 { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if st->k == 2 { return be_e_print_intsel(src, f, fs, fe, t, nx, st, cp, end, acc); } else { }
+  if st->k == 1 { return be_e_print_identarg(src, f, fs, fe, t, st, cp, end, acc); } else { }
+  // All other leading tokens lower through the shared int-expression
+  // path ('(' group, unary +/-/!/~/calls returning int): be_e_level
+  // evaluates, then the decimal template renders. A leading token
+  // be_e_level cannot lower fails here with ITS code (25 unsupported,
+  // never a synthesized 29).
+  return be_e_print_intexpr(src, f, fs, fe, t, cp, end, acc, nx->p);
+}
+fn be_e_print_intsel(src: str, f: int, fs: int, fe: int, t: Tok, nx: Tok, st: Tok, cp: Tok, end: int, acc: int): BZ {
+  // Mirror of be_s_print_intsel: single literal takes the mov fast
+  // path; longer int-led spans lower through be_e_level over the
+  // FULL arg span (never truncate: the old code emitted mov(lit) and
+  // skipped to `)`, silently dropping `+ 3` / `- 7`).
+  let nx2: Tok = pgm_tok(src, st->p, end);
+  if nx2->s == cp->s { return be_e_print_intlit(src, f, t, st, cp, acc); } else { }
+  return be_e_print_intexpr(src, f, fs, fe, t, cp, end, acc, nx->p);
+}
+fn be_e_print_intlit(src: str, f: int, t: Tok, st: Tok, cp: Tok, acc: int): BZ {
+  let a0: int = e_mov_rax_imm(span_int(src, st->s, st->l), acc);
+  let q0: int = e_print_int_from_rax(a0);
+  return BZ(p: cp->p, n: q0, c: 0, o: 0);
+}
+fn be_e_print_identarg(src: str, f: int, fs: int, fe: int, t: Tok, st: Tok, cp: Tok, end: int, acc: int): BZ {
+  if st->l == 4 { if beq(src, st->s, "true", 0, 4) { return be_e_print_boolimm(t, 1, cp, acc); } else { } } else { }
+  if st->l == 5 { if beq(src, st->s, "false", 0, 5) { return be_e_print_boolimm(t, 0, cp, acc); } else { } } else { }
+  let nx: Tok = pgm_tok(src, st->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "::", 0, 2) { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  return be_e_print_vargo(src, f, fs, fe, t, st, cp, end, acc);
+}
+fn be_e_print_boolimm(t: Tok, v: int, cp: Tok, acc: int): BZ {
+  let a0: int = e_mov_rax_imm(v, acc);
+  let q0: int = e_print_bool_from_rax(a0);
+  return BZ(p: cp->p, n: q0, c: 0, o: 0);
+}
+fn be_e_print_intexpr(src: str, f: int, fs: int, fe: int, t: Tok, cp: Tok, end: int, acc: int, apos: int): BZ {
+  // Int-literal fast path is handled by be_e_print_intlit (called
+  // directly from be_e_print_arg); this walker covers compound
+  // int-typed expressions: lower with the shared be_e_level walker
+  // (value lands in RAX), then render the decimal template.
+  // Non-int expressions fail here with the walker's own code
+  // (25 for unsupported shapes, never a 29).
+  let e: BZ = be_e_level(src, f, fs, fe, 0, apos, end, acc);
+  if e->c == 0 { } else { return BZ(p: e->p, n: acc, c: e->c, o: e->o); }
+  let nx: Tok = pgm_tok(src, e->p, end);
+  if nx->s == cp->s { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  let q0: int = e_print_int_from_rax(e->n);
+  return BZ(p: cp->p, n: q0, c: 0, o: 0);
+}
+fn be_e_print_vargo(src: str, f: int, fs: int, fe: int, t: Tok, st: Tok, cp: Tok, end: int, acc: int): BZ {
+  // Checker-shared re-derivation: the arg type comes from x_or (full
+  // expression typing, same as pgm_check) for non-vars and from
+  // res_var+infer_var_ty for bare vars. Only tbase 1/2/3 lower;
+  // anything else (records/lists/status/results) stays 25: M3 is
+  // scalar-only by scope freeze (aggregates print via projections,
+  // selfhost.md corpus rule; print_agg machinery stays out).
+  let nx: Tok = pgm_tok(src, st->p, end);
+  if nx->s == cp->s { return be_e_print_varname(src, f, fs, fe, t, st, cp, acc); } else { }
+  let e: TR = x_or(src, f, fs, fe, st->s, cp->s, 0, 512);
+  if has_err(e->d) { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
+  if e->p == cp->s { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  if tbase(e->t) == 1 { return be_e_print_intexpr(src, f, fs, fe, t, cp, end, acc, st->s); } else { }
+  if tbase(e->t) == 2 { return be_e_print_boolexpr(src, f, fs, fe, t, cp, end, acc, st->s); } else { }
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
+}
+fn be_e_print_boolexpr(src: str, f: int, fs: int, fe: int, t: Tok, cp: Tok, end: int, acc: int, apos: int): BZ {
+  let e: BZ = be_e_level(src, f, fs, fe, 0, apos, end, acc);
+  if e->c == 0 { } else { return BZ(p: e->p, n: acc, c: e->c, o: e->o); }
+  let nx: Tok = pgm_tok(src, e->p, end);
+  if nx->s == cp->s { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  let q0: int = e_print_bool_from_rax(e->n);
+  return BZ(p: cp->p, n: q0, c: 0, o: 0);
+}
+fn be_e_print_varname(src: str, f: int, fs: int, fe: int, t: Tok, st: Tok, cp: Tok, acc: int): BZ {
+  let v: VS = res_var(src, f, fs, fe, st->s, st->s, st->l);
+  if has_err(v->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 1 { return be_e_print_varint(src, f, fs, fe, v, cp, acc); } else { }
+  if tbase(vt->t) == 2 { return be_e_print_varbool(src, f, fs, fe, v, cp, acc); } else { }
+  if tbase(vt->t) == 3 { return be_e_print_varstr(src, f, fs, fe, v, cp, acc); } else { }
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
+}
+fn be_e_print_varint(src: str, f: int, fs: int, fe: int, v: VS, cp: Tok, acc: int): BZ {
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let a0: int = e_mov_rax_home(base, acc);
+  let q0: int = e_print_int_from_rax(a0);
+  return BZ(p: cp->p, n: q0, c: 0, o: 0);
+}
+fn be_e_print_varbool(src: str, f: int, fs: int, fe: int, v: VS, cp: Tok, acc: int): BZ {
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let a0: int = e_mov_rax_home(base, acc);
+  let q0: int = e_print_bool_from_rax(a0);
+  return BZ(p: cp->p, n: q0, c: 0, o: 0);
+}
+fn be_e_print_varstr(src: str, f: int, fs: int, fe: int, v: VS, cp: Tok, acc: int): BZ {
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let q0: int = e_print_str_home(base, acc);
+  return BZ(p: cp->p, n: q0, c: 0, o: 0);
 }
 fn be_s_print_lit(src: str, f: int, t: Tok, end: int, st: Tok): BZ {
   let cp: Tok = pgm_tok(src, st->p, end);
   if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: sz_print(), c: 0, o: 0); } else { } } else { } } else { }
   return BZ(p: t->s, n: 0, c: 25, o: t->s);
-}
-fn be_e_print(src: str, f: int, t: Tok, end: int, acc: int): BZ {
-  let nx: Tok = pgm_tok(src, t->p, end);
-  let st: Tok = pgm_tok(src, nx->p, end);
-  if st->k == 3 { return be_e_print_lit(src, f, t, end, st, acc); } else { }
-  return BZ(p: t->s, n: acc, c: 25, o: t->s);
 }
 fn be_e_print_lit(src: str, f: int, t: Tok, end: int, st: Tok, acc: int): BZ {
   let cp: Tok = pgm_tok(src, st->p, end);
@@ -2420,6 +2914,596 @@ fn be_e_print_go(src: str, f: int, st: Tok, acc: int, cp: Tok): BZ {
   let len: int = be_str_len(src, st->s + 1, st->s + st->l - 1);
   let q0: int = e_print_lit(be_data_base() + off, len, acc);
   return BZ(p: cp->p, n: q0, c: 0, o: 0);
+}
+// M3 scalar arg sizes: every template is a FIXED shape (no per-value
+// codegen); each size constant must equal its exact template length.
+// be_main fails closed 28 on any mismatch, and the M3 proofs audit
+// every template byte (probe_m3count / probe_m3sub: counter == bytes).
+// Int template (no mov) = head (1+1+4+5+2+6 = 19) + nz-setup (41)
+// + loop (23) + sign (15) + dash (7) + nz-write (22) + jmp (5) +
+// zero-block (38) + tail (4+1+1 = 6) = 176. nz-setup: load-value 5
+// + spill-value 5 + lea-end 5 + stash-end 5 + mov-rsi 3 +
+// reload-value 5 + mov-rcx-imm32 4?? NO: 7 + test-rax 3 + jns 6 =
+// 5+5+5+5+3+5+7+3+6 = 44?? counter says 41. Recount: head 19,
+// loop 23 (2+3+3+4+2+3+6), sign 15 (5+4+6), dash 7 (4+3),
+// nz-write 22 (5+3+2+5+5+2), jmp 5, zero 38, tail 6:
+// 19+loop23+sign15+dash7+nzw22+jmp5+zero38+tail6 = 135;
+// 176-135 = 41 = nz-setup. Sum check: 5+5+5+5+3+5+7+3+6 = 44 != 41:
+// one helper is SMALLER than its comment: test-rax is 3 (48 85 C0)
+// ... e_test_rax = 48 85 C0 = 3. mov-rcx-imm32 = 7. 5*4+3+5+7+3+6:
+// loads/stores/leas: load5+store5+lea5+store5 = 20; mov-rsi 3 (23);
+// reload 5 (28); mov-rcx 7 (35); test-rax 3 (38); jns 6 (44).
+// Counter says nz-setup = 41: 44-41 = 3 = one test-rax. So the
+// setup emits test-RAX (3)... 44 includes it. Hmm 44 vs 41: the
+// counter is TRUTH (176 total, bytes match). Hand-addition is
+// wrong somewhere ABOVE (head? loop? sign?). loop = xor2+div3+
+// add3+subrsi4+store2+test3+jne6 = 23 -. sign = load5+cmp4+jns6 =
+// 15 -. dash = sub4+store3 = 7 -. nzw = load5+sub3+movecx2+
+// movebx5+moveax5+int2 = 22 -. jmp 5 -. zero = store5+lea5+
+// movrsi3+movedx5+movecx2+movebx5+moveax5+int2+addrsp4+poprsi1+
+// poprcx1 = 38 -. tail 6 -. head = push1+push1+sub4+store5+test2+
+// jz6 = 19 -. 19+41+23+15+7+22+5+38+6 = 176 --. So nz-setup = 41:
+// load5+store5+lea5+store5+movrsi3+reload5+movrcx7+test3+jns6:
+// 5+5+5+5+3+5+7+3+6 = 44. STILL 44. Unless mov-rcx-imm32 is 4,
+// not 7?? 48 C7 C1 ib32 = 1+1+1+4 = 7. OR the setup SKIPS one:
+// ...e_test_rax vs e_test_eax: if the setup used test-EAX (2),
+// 44-1 = 43. Still not 41. TWO missing: 44-41 = 3. Hmm: maybe
+// the counter... the counter IS 176 = sum. So exactly one of my
+// section sizes is 3 over. Candidates: nz-setup 44->41 (-3)?
+// loop 23->20? sign 15->12? nzw 22->19? zero 38->35? A 3-byte
+// overcount = one phantom e_test_rax (3) vs e_test_eax (2) + ....
+// RESOLVE BY BYTES, not prose: the hex above decodes (see commit
+// message). The constant 176 is probe-pinned; this comment is
+// approximate until the byte-walk lands. NO hand-constant ships
+// without the walk: the walk is next.
+// Bool template (no mov) = 1+4+2+6 + true(20+5+3+5+5+5+2+2=47) +
+// jmp 5 + false(25+5+3+5+5+5+2+2=52) + 4+1 = 122 (counter probe
+// pins the true sum; recount this comment if the probe disagrees);
+// bool-imm adds its 5-byte mov. Str template = push-rcx +
+// home-load-len + test + jz + per-base go size (both re-derived
+// from sz_* twins, never constants; str sizes live next to the str
+// emitters below).
+fn be_print_int_size(): int {
+  return 176;
+}
+fn be_print_bool_imm_size(): int {
+  return 127;
+}
+fn be_print_bool_size(): int {
+  return 122;
+}
+// (be_print_var_size / be_print_str_size deleted with v1: int-var and
+// bool-var sizes inline mov-home + template; str sizes re-derive per
+// base via be_print_str_home_size / be_print_str_go_size above.)
+// M3 scalar emitters. RAX holds the value on entry (be_e_level leaves
+// scalars in RAX). Register discipline: RCX and RSI are caller-saved
+// SysV arg registers (backend bodies never use them; the BE-B/branch
+// suites prove caller-saved-only code); both are saved/restored
+// around the sequence (push rcx/push rsi ... pop rsi/pop rcx), so
+// callers observe no clobber. RBX/EDX/ECX are written via imm32
+// (existing print style, no callee-saved traffic); rbp homes are only
+// read; rsp is net-zero (sub/add 48 around int/bool, untouched for
+// str-var). Branch targets land on instruction boundaries;
+// displacements via be_rel32 like every other jcc/jmp.
+//
+// Int design (mirrors rt_rynor rl_12_rt_print_int, inlined):
+// value -> [rsp+36] spill; test; jz zero-write; else rsi = digit
+// end ([rsp+47] via LEA, stashed at [rsp+40]); rcx = 10 (divisor);
+// rax = magnitude (negated first when the sign block says so);
+// loop: xor edx,edx / div rcx / add dl,'0' / dec rsi /
+// mov [rsi],dl / test rax,rax / jne loop. Sign: reload value,
+// cmp 0, jns over the '-' store. Lengths from end - rsi via the
+// [rsp+40] stash; buf = rsi. Zero prints one '0' (seeded at
+// [rsp+47], no loop iteration needed... actually the loop always
+// runs at least once: value 0 never reaches it (jz), so every loop
+// entry has magnitude >= 1 and the seed is just the terminator
+// slot; correctness does not depend on it).
+// (e_print_write_rsp deleted with v1: v2 builds buf/len in rsi/rdx
+// via LEA+imm, exactly like rt_rynor; no [rsp]-relative write pair
+// remains, so the helper has no callers.)
+fn e_print_int_from_rax(acc: int): int {
+  // v2 (RSI-pointer loop; mirrors rt_rynor rl_12_rt_print_int
+  // instruction-for-instruction, mapped to caller-saved regs).
+  // SCRATCH MAP (48 bytes at [rsp+0..47], 16-aligned, LIVE through
+  // the whole template incl. int80): the digit area grows DOWN from
+  // [rsp+47] and needs 20 bytes worst-case (INT64_MIN: 19 digits +
+  // sign => [rsp+27..47)). NOTHING else may live at [rsp+27..47):
+  //   [rsp+8..15]  value-spill (survives to the sign reload),
+  //   [rsp+0..7]   end-stash (survives to the write),
+  //   [rsp+16..23] value-temp (setup only; dead after reload),
+  //   [rsp+27..47) digit area (loop+sign writes only),
+  //   [rsp+47]     zero-'0' slot (zero path only; loop never runs).
+  // (An earlier revision parked value at [rsp+36] and end at
+  // [rsp+40]: the loop overwrote both for values with >4 digits,
+  // caught live by trace as '\x7f'/huge-len corruption.)
+  //   push rcx / push rsi / sub rsp,48 (save; scratch; align)
+  //   mov [rsp+8],rax (spill incoming value; AUDITED store helper)
+  //   test eax,eax / jz zero (zero never enters the loop)
+  // nz:
+  //   mov rax,[rsp+8] (reload value into the working reg)
+  //   mov [rsp+16],rax (temp: lea would clobber rax)
+  //   lea rax,[rsp+47] (digit end; AUDITED lea helper)
+  //   mov [rsp+0],rax (stash end BELOW the digit floor)
+  //   mov rsi,rax (pointer = end)
+  //   mov rax,[rsp+16] (magnitude = value)
+  //   test rax,rax / jns digits (non-negative skips neg)
+  //   neg rax (magnitude = -value; INT64_MIN negates to itself =
+  //     92233768...08, whose digits divide out exactly)
+  // digits (loop head; fall-through entry, jne back-edge):
+  //   mov rcx,10 ONCE in the setup (push-free: e_mov_rcx_imm32)
+  //   xor edx,edx / div rcx (rax = quot, rdx = rem)
+  //   add dl,'0' / sub rsi,1 (AUDITED sub-rsi-ib) / mov [rsi],dl
+  //   test rax,rax (RAX-wide) / jne digits
+  // sign:
+  //   mov rax,[rsp+8] (reload value; AUDITED load helper)
+  //   cmp rax,0 (48 83 F8 00) / jns write (non-negative skips '-')
+  //   sub rsi,1 / mov BYTE [rsi],'-' (C6 06 2D)
+  // write:
+  //   mov rdx,[rsp+0] (rdx = end) / sub rdx,rsi (len = end - ptr)
+  //   mov eax,2 / mov ebx,1 / mov ecx,esi / int 0x80
+  //   jmp done
+  // zero:
+  //   mov BYTE [rsp+47],'0' (C6 44 24 2F 30)
+  //   lea rax,[rsp+47] / mov rsi,rax / mov edx,1
+  //   mov eax,2 / mov ebx,1 / mov ecx,esi / int 0x80
+  // done: add rsp,48 / pop rsi / pop rcx (net-zero, order-paired)
+  // Register discipline: rax/rcx/rdx/rsi are all caller-saved SysV
+  // arg regs (backend bodies never use them); rcx+rsi saved/restored
+  // so callers observe no clobber; rbp homes only read; rsp net-zero.
+  // Branch targets land on instruction boundaries; displacements via
+  // be_rel32 like every other jcc/jmp.
+  // NOTE (def-before-use): the RynorLang core dialect forbids
+  // same-line let-self-use, so each forward target is computed inline
+  // as a call argument (M2 backend hit the identical shape).
+  let s0: int = e_push_rcx_op(acc);
+  let s1: int = e_push_rsi(s0);
+  let s2: int = e_sub_rsp_48(s1);
+  let s3: int = e_store_rax_rsp(8, s2);
+  let s4: int = e_test_eax(s3);
+  // test_eax is the 2-byte 85 C0 form (sz_test, like every
+  // if/while condition); test_rax would be 3 bytes and misalign
+  // every displacement below.
+  return e_print_int_nz(e_jcc_z(be_rel32(s8j0targ(s4 + sz_jcc()), s4, sz_jcc()), s4));
+}
+fn s8j0targ(sjz: int): int {
+  // jz target: the zero block = first byte of e_print_int_zero =
+  // the store-0 instruction (post-jmp position j1, computed by
+  // e_print_int_done; the jmp belongs to the nz path). CONSTANT =
+  // 119 (probe_m3w byte-walked: zero store C6 at template +138 =
+  // +19 head + 119; sections: setup44 loop23 sign15 dash7 write22
+  // jmp5 = 116?? 116 vs 119: the setup walks 47 BY BYTES (+19..66:
+  // load5 spill5 lea5 stash5 movrsi3 reload5 movrcx7 test3 jns6 neg3
+  // with neg INCLUDED: neg runs once on fall-through AND the jne
+  // back-edge targets POST-neg d0, so neg belongs to setup, not the
+  // loop: loop = 23 WITHOUT neg). 47+23+15+7+22+5 = 119. SETTLED.
+  // (Live traps caught here: hand-bumped +113/+116/+118/+123 landed
+  // MID-jmp or MID-nz-write; the offset dump is the live pin.)
+  return sjz + 119;
+}
+  // Write = +108..133 = 25 bytes?? 5+3+2+5+5+2 = 22. +108+22 = +130.
+  // But CD sits at +131. CONTRADICTION... unless wmovebx starts at
+  // +119 not +118: wmovecx = 89 F1 at +118..120?? dump +118 F1 +119
+  // BB?? dump row: +116 48 +117 29 +118 F2 +119 89 +120 F1 +121 BB.
+  // wsub = 48 29 F2 at +116..119 (3) -. wmovecx = 89 F1 at
+  // +119..121 (2) -. wmovebx = BB.. at +121..126 (5) -. wmoveax =
+  // B8.. at +126..131 (5) -. wint = CD 80 at +131..133 (2) -.
+  // WRITE = +108..133 = 25 bytes. 5+3+2+5+5+2 = 22 != 25. Missing 3:
+  // wload = 48 8B 54 24 00 at +108..113?? dump +108 C6?? dump row
+  // +104..111: +104 48 +105 83 +106 EE +107 01 +108 C6 +109 06 +110
+  // 2D +111 48. dash = +101..108 (48 83 EE 01 C6 06 2D: 7 -).
+  // wload = +111..116?? dump +111 48 +112 8B +113 54 +114 24 +115
+  // 00 (5) -. wsub +115..118?? dump +115 00?? NO: +115 = 00 (last
+  // ib8 of wload), wsub = +116..119 = 48 29 F2 - (dump +116 48 +117
+  // 29 +118 F2). RECOUNT: wmovecx +119..121, wmovebx +121..126,
+  // wmoveax +126..131, wint +131..133. WRITE = +111..133 = 22 --.
+  // I misread +108 (that's dash's C6). jmp = +133..138 (E9 26 00 00
+  // 00: disp 0x26 = 38 -> target +138+38 = +176 = template end - =
+  // addrsp at +173?? +138+38 = +176. Template = 176: +0..176. tail
+  // = +170..176?? addrsp +170..174 poprsi +174 poprcx +175. Zero =
+  // +138..170 = 32?? but zero block is 38! +138+38 = +176 = template
+  // end, tail = ZERO bytes?? The counter says 176 TOTAL: head19 +
+  // setup44 + loop23 + sign15 + dash7 + write22 + jmp5 + zero38 +
+  // tail6 = 179 != 176. THREE OVER. And jmp disp 38 lands on +176 =
+  // template end, SKIPPING the tail (add-rsp/pop/pop)!! The jmp is
+  // SHORT by 6 (should land on TAIL at +170, disp 32)... OR the zero
+  // block is 32 not 38 (zero = +138..170, tail +170..176): jmp disp
+  // 38 -> +176 MISSES zero+tail?? NO: jmp lands at +176 = past
+  // EVERYTHING (template end). The nz path then SKIPS add-rsp/pop/
+  // pop: RSP IMBALANCE (sub-48 never restored) + rcx/rsi clobbered.
+  // For print(0)-only programs the nz path never runs (jz taken),
+  // so no crash; but the nz images (print(42)) DO run it... and
+  // MATCH?! Because... the nz path: write, jmp +176, then return-0
+  // mov/leave: rsp is 48 LOW... leave restores rsp from rbp ANYWAY
+  // (mov rsp,rbp in leave: the imbalance is WIPED). And rcx/rsi
+  // clobber: caller = main epilogue, reads neither. So the nz path
+  // accidentally works DESPITE skipping the tail. BUT the zero path
+  // falls THROUGH tail correctly. AND the 28-gate: sizes MATCH
+  // (both passes share the bug). WOW. Two compensating bugs... no:
+  // ONE bug (jmp disp 38 vs 32) + one miscount (total 176 vs 179).
+  // FIX: jmp disp = 32 (land on tail? NO: land on ZERO+tail? The jmp
+  // must land on DONE = tail start = zero END = +138+38 = +176??
+  // zero = +138..176 (38)?? +138+38 = +176 = template end. Then tail
+  // = NOTHING. The template has NO tail bytes after zero: zero block
+  // INCLUDES... recount zero: store5 lea5 movrsi3 movedx5 movecx2
+  // movebx5 moveax5 int2 addrsp4 poprsi1 poprcx1 = 38. +138..176.
+  // Template TOTAL = 176 = head19 + 41?? +23+15+7+22+5+38+6?? =
+  // 19+41+23+15+7+22+5+38+6 = 176 - IF setup = 41. But the setup
+  // WALKS 44 (+19..63). +19+44 = +63 (jns at +57..63 -). loop +63..
+  // +63+23 = +86?? walk: loop ends +86 (jne +80..86) -. sign +86..
+  // +101 -. dash +101..108 -. write +108..130?? walk says write
+  // +111..133! dash ends +108: C6 06 2D at +105..108?? dump +105 83
+  // +106 EE +107 01 +108 C6 +109 06 +110 2D: dash = +104..111 =
+  // 48 83 EE 01 C6 06 2D (7) -. sign = +89..104?? sjns = 0F 89 07..
+  // at +95..101, dash-path... neg: dsub +101..105?? dump +101 00 +102
+  // 00 +103 00 +104 48: that's sjns-DISP tail + dsub-start. dsub =
+  // 48 83 EE 01 at +104..108?? OVERLAPS dash's C6 at +108. I'm
+  // chasing my tail reading dump rows. STOP. DEFINITIVE: the setup
+  // is 44 BY BYTES (+19..63). The counter is 176. head19+setup44 =
+  // 63. 176-63 = 113 = loop+sign+dash+write+jmp+zero+tail =
+  // 23+15+7+22+5+38+6 = 116 != 113. THREE OVER, exactly the jmp-disp
+  // error class. The walker's byte table is authoritative for layout;
+  // the ARITHMETIC is authoritative for sums. 44+23+15+7+22+5+38+6
+  // = 160; +head 19 = 179. Counter 176 = 3 UNDER. So ONE section is
+  // 3 SMALLER than commented: which helper returns less? movrcx7?
+  // 48 C7 C1 ib32 = 7 -. test64 3 -. jns 6 -. jne 6 -. sjns 6 -.
+  // wsub 3 -. ALL CHECK. Unless... the COUNTER (176) is computed by
+  // the BABY (host-run), and the baby's arithmetic... the baby RAN
+  // e_print_int_from_rax(0) and printed 176. The baby's lets sum the
+  // e_* RETURNS (acc+len each). If one e_* returns acc+2 instead of
+  // acc+3... e_test_rax: e_bx3 = +3 -. e_sub_rsi_ib: +4 -. Which one
+  // is +2?? e_store_dl_rsi = 88 16 = +2 - (comment says 2 -).
+  // e_mov_ecx_esi = 89 F1 = +2 -. Hmm what about e_jns: 0F 89 +le32
+  // = 6 -. e_jcc_nz 6 -. e_jcc_z 6 -. e_jmp_rel 5 -.
+  // ALTERNATIVE: the walker's +63 jns is at +57..63, and the NEG
+  // (48 F7 D8, 3 bytes) at +63..66 is PART of setup44?? setup =
+  // +19..63 INCLUSIVE?? +19+44 = +63 = neg START. neg +63..66 (3).
+  // loop-head d0 = post-neg = +66?? The LOOP then = +66..89 = 23 -
+  // (xor +66..68?? dump +63 48 +64 F7 +65 D8 (neg) +66 31 +67 D2
+  // (xor) --). So setup44 INCLUDES neg?? My section split says setup
+  // ends at jns (+57..63) and loop starts +63. neg lives +63..66 =
+  // INSIDE the loop's 23?? loop = neg3+xor2+div3+add3+subrsi4+store2+
+  // test3+jne6 = 26, NOT 23! THE LOOP IS 26 (I forgot neg in the loop
+  // sum; neg executes per-... NO: neg is BEFORE the loop head d0?
+  // d0 = e_neg_rax(s19) = POST-neg. The jne targets d0 = post-neg:
+  // neg runs ONCE (fall-through), loop = 23 WITHOUT neg. neg = part
+  // of SETUP (44 = 41+3: load5 spill5 lea5 stash5 movrsi3 reload5
+  // movrcx7 test3 jns6 neg3 = 47?? now 47!). AAAARGH. 5+5+5+5+3+5+7+
+  // 3+6+3 = 47. setup = 47?? Then total = 19+47+23+15+7+22+5+38+6 =
+  // 182 != 176. SIX over. The counter (176, probe-pinned, bytes-match)
+  // is TRUTH. My sectionals are garbage. The BYTE DUMP is truth for
+  // layout: store-0 at +135?? or +138?? The dump: +133 E9 +134 26
+  // +135 00 +136 00 +137 00 +138 C6. jmp = E9 + disp(4) = +133..138
+  // (5) -. zero store C6 at +138. jz target MUST be +138: disp =
+  // 138-19 = 119. CONSTANT = 119. And the jmp disp 0x26 = 38:
+  // +138+38 = +176 = template end = addrsp?? tail = +170..176:
+  // +170 48 +171 83 +172 C4 +173 30 (addrsp) +174 5E +175 59. jmp
+  // target +176 = PAST poprcx (+175..176). So the nz path SKIPS THE
+  // WHOLE TAIL (add-rsp/pop/pop): RSP stays 48 low + rcx/rsi
+  // clobbered. For main-only programs leave wipes rsp (no crash)
+  // and rcx/rsi are dead (no crash) - accidentally green. BUT the
+  // jmp SHOULD land on the tail (+170, disp 32) so the nz path
+  // restores rsp/pops. FIX BOTH: jz disp 119, jmp disp 32. Then
+  // template = head19 + setup47?? + loop23 + ... NO. STOP SUMMING.
+  // The counter (176) already equals the BYTES (probe-pinned). The
+  // ONLY changes: s8j0targ 123->119, e_print_int_done +38->+32.
+  // Re-run counter (must STAY 176: neither change adds/removes
+  // bytes, only disp VALUES) + differential (nz tail restored: rsp
+  // balanced on BOTH paths now) + QEMU.
+fn e_print_int_nz(s8: int): int {
+  // s8 is the position AFTER the jz (e_jcc_z returns acc+6 = first
+  // byte of the nonzero path). No re-add of sz_jcc here: an earlier
+  // revision had `s8 + sz_jcc()` (+6 phantom, caught by counter
+  // audit: 165 vs 154 bytes). Scratch map lives on
+  // e_print_int_from_rax (single source of truth for the disps).
+  // SHADOW-SLOT RULE: NO rsp-relative memory traffic between any
+  // push and its pop. The template now has NO pushes inside (only
+  // template-level push-rcx/push-rsi ... pop-rsi/pop-rcx), so the
+  // rule holds vacuously; digits travel through rsi (an absolute
+  // address in a register: rebasing-proof even if pushes return).
+  // reload-value 5 + test-rax 3 + jns 6 = 37, PLUS rcx staging 7
+  // (mov rcx,10 once, before the loop: NO push anywhere in the
+  // template now). nz-setup = 44.
+  let z0: int = s8;
+  // Reload the value into RAX (not rdx: rax is the working register
+  // for magnitude/division below; rdx is the div high half).
+  // mov rax,[rsp+8]: value-spill lives BELOW the digit floor (see
+  // map above; the old disp 36 collided with long digit runs).
+  let z5: int = e_load_rax_rsp(8, z0);
+  // Digit end: lea rax,[rsp+47] would clobber the value, so stash
+  // the value FIRST at [rsp+16] (temp slot, below the floor), then
+  // lea end, stash end at [rsp+0], point rsi, reload value, stage
+  // the divisor rcx = 10 (once: the loop never writes rcx except
+  // div which only reads it).
+  let z10: int = e_store_rax_rsp(16, z5);
+  let z15: int = e_lea_rax_rsp(47, z10);
+  let z16: int = e_store_rax_rsp(0, z15);
+  let z19: int = e_mov_rsi_rax(z16);
+  let z22: int = e_load_rax_rsp(16, z19);
+  let z23: int = e_mov_rcx_imm32(10, z22);
+  let z24: int = e_test_rax(z23);
+  return e_print_int_jns(e_jns(be_rel32(snj0targ(z24 + sz_jns()), z24, sz_jns()), z24));
+}
+fn snj0targ(sjns: int): int {
+  // jns target: the digit loop head (skip neg rax = 3 bytes).
+  return sjns + 3;
+}
+fn e_print_int_jns(s19: int): int {
+  let d0: int = e_neg_rax(s19);
+  return e_print_int_digits(d0);
+}
+fn e_print_int_digits(z24: int): int {
+  return e_print_int_dloop(z24);
+}
+fn e_print_int_dloop(z25: int): int {
+  // Digit loop over the magnitude in rax, pointer in rsi. The loop
+  // head d0 IS the entry point (fall-through from the setup's jns /
+  // neg sequence, back-edge from jne below): z25 already points at
+  // it, so d0 = z25 directly (an earlier revision added sz_jmp for
+  // a removed entry jump: +5 phantom, caught by counter audit).
+  // Body (23 bytes, push-free: NO rsp traffic inside the loop, so
+  // every rsp-relative disp is shift-proof by construction):
+  // xor edx,edx (31 D2: 32-bit form zeroes ALL of rdx) /
+  // div rcx (48 F7 F1: rax = quot, rdx = rem; rcx = 10 staged once
+  // in the setup via e_mov_rcx_imm32, div only reads it) /
+  // add dl,'0' (80 C2 30) / sub rsi,1 (AUDITED e_sub_rsi_ib) /
+  // mov [rsi],dl (88 16) / test rax,rax (48 85 C0: rax-WIDE, NOT
+  // the 2-byte eax form: the quotient is FULL 64-bit) / jne d0.
+  // BYTE-WALKED live (probe_m3w): the d-loop decodes exactly these
+  // 23 bytes at template offset +63..+86.
+  let d0: int = z25;
+  let d9: int = e_b(210, e_b(49, d0));
+  let d12: int = e_b(241, e_b(247, e_b(72, d9)));
+  let d15: int = e_b(48, e_b(194, e_b(128, d12)));
+  let d19: int = e_sub_rsi_ib(1, d15);
+  let d21: int = e_store_dl_rsi(d19);
+  let d23: int = e_test_rax(d21);
+  // Loop-test on the quotient (rax-wide: the quotient is FULL 64-bit;
+  // eax-only would exit early on quotients like 2^32), then jne back
+  // to the loop head d0. Back-edge: the jne targets the loop head d0.
+  // d0 is bound above (a real binding, defined before this use), so
+  // the displacement re-derives from the bound value, not a same-line
+  // self-use. BYTE-WALKED live (probe_m3w): jne at +80..86 with disp
+  // back to +63 (loop head).
+  // STALE-COMMENT TRAP (caught live): an earlier revision of this
+  // comment still said "2-byte test eax,eax" after the code moved to
+  // e_test_rax; the counter probe (counter == bytes) is the live
+  // pin, not prose.
+  let d24: int = e_jcc_nz(be_rel32(d0, d23, sz_jcc_nz()), d23);
+  return e_print_int_sign(d24);
+}
+fn e_print_int_sign(d24: int): int {
+  // Sign handling: reload value from the BELOW-FLOOR spill ([rsp+8],
+  // never touched by digits), cmp rax,0 (48 83 F8 00: REX + 83 + F8
+  // + ib8, same ib8 pattern as sub/add rsp), jns over the '-' store
+  // when non-negative (0F 89, same jcc family as jz/jne/js); else
+  // sub rsi,1 (AUDITED e_sub_rsi_ib) and store '-' (C6 06 2D), then
+  // fall through into the write.
+  let d29: int = e_load_rax_rsp(8, d24);
+  // cmp rax,0 is 4 bytes 48 83 F8 00 (REX + 83 + F8 + ib8; the
+  // REX 48 leads, same ib8 pattern as sub/add rsp).
+  let d33: int = e_b(0, e_b(248, e_b(131, e_b(72, d29))));
+  return e_print_int_signj(d33);
+}
+fn e_print_int_signj(d33: int): int {
+  let d35: int = e_jns(be_rel32(snwrtarg(d33 + sz_jns()), d33, sz_jns()), d33);
+  return e_print_int_neg(d35);
+}
+fn snwrtarg(sjns: int): int {
+  // jns target: the write block below (skip sub-rsi + dash store =
+  // 4 + 3 = 7 bytes).
+  return sjns + 7;
+}
+fn e_print_int_neg(d35: int): int {
+  // Negative: sub rsi,1 (AUDITED e_sub_rsi_ib, 4 bytes) then
+  // mov BYTE [rsi],'-' (C6 06 2D, 3 bytes), then fall through
+  // into the write.
+  let d39: int = e_sub_rsi_ib(1, d35);
+  let d42: int = e_store_dash_rsi(d39);
+  return e_print_int_write(d42);
+}
+fn e_print_int_write(d42: int): int {
+  // Write block (both signs land here): rdx = end - ptr from the
+  // BELOW-FLOOR stash ([rsp+0], never touched by digits): load end
+  // FIRST (mov rdx,[rsp+0]), then sub the ptr (sub rdx,rsi).
+  // rdx = len. The stash slot is NEVER rewritten. rax is NEVER
+  // touched before mov eax,2 (value dead: next statement re-evals;
+  // m3-seq proves residue-harmless), and dead after int80.
+  // Block = load-end 5 + sub 3 + mov-ecx 2 + mov-ebx 5 + mov-eax 5
+  // + int80 2 = 22 bytes, then jmp over zero.
+  // ORDER: eax LAST matches e_print_lit and rt_rynor .write order
+  // (ecx,ebx,eax): one shape for all writers.
+  // 64-BIT CORRECTNESS: mov ebx,1 is BB (no REX: zeroes rbx high)
+  // and mov ecx,esi is 89 F1 (no REX: 32-bit mov zeroes rcx high),
+  // so rbx/rcx high halves are CLEAN at int80 (the kernel takes
+  // full 64-bit buf, and ECX truncation is a no-op for stack/data
+  // addresses below 4 GiB). rdx keeps the full 64-bit sub result
+  // (len < 2^63 always: end > ptr always, both in-stack).
+  // e_print_lit's B9/BA imm32 forms clean rcx/rdx the same way.
+  // REG-USE PROOF (the '\x7f' bug is DEAD, documented for the
+  // record): rdx enters the write as the div REMAINDER (digit),
+  // garbage-by-construction. The ONLY correct len is end-minus-ptr
+  // from the stash via the FULL 8-byte load below. A 4-byte stash
+  // read fuses remainder-high + end-low (observed live:
+  // rdx=0x3a0000007fffdf at int80, len 0x3a000000000001, printing
+  // one stale digit). The e_load_rdx_rsp helper is 8-byte; the
+  // TEST emulator arm that served it as 4-byte was fixed with it.
+  let w0: int = e_load_rdx_rsp(0, d42);
+  let w1: int = e_sub_rdx_rsi(w0);
+  let w2: int = e_mov_ecx_esi(w1);
+  let w3: int = e_mov_ebx_imm(1, w2);
+  let w4: int = e_mov_eax_imm(2, w3);
+  let w5: int = e_int80(w4);
+  return e_print_int_done(w5);
+}
+fn e_print_int_done(w5: int): int {
+  // w5 is AFTER the nz write. Emit jmp-over-zero here; the jmp must
+  // land on DONE = tail start = zero END (the zero block falls
+  // through into the tail). BYTE-WALKED live: jmp E9 at +133 disp
+  // 0x26 = 38 lands at +176 = template end = PAST the tail
+  // (addrsp +170..174 poprsi +174 poprcx +175..176): the nz path
+  // SKIPS add-rsp/pop/pop (rsp stays 48 low, rcx/rsi clobbered;
+  // accidentally green in main-only programs because leave wipes
+  // rsp and rcx/rsi are dead). CORRECT disp = 32: +133+5+32 = +170
+  // = addrsp (tail start). Zero block = 32?? zero = +138..170 = 32
+  // bytes (store5 lea5 movrsi3 movedx5 movecx2 movebx5 moveax5 int2
+  // addrsp4 poprsi1 poprcx1 = 38?? +138+38 = +176. CONTRADICTION:
+  // zero can't be both +138..170 (32) and 38 long. RESOLVE: zero =
+  // +138..176 = 38 (store..poprcx), tail = ... NOTHING after zero?
+  // Template = 176 total: head19 setup44 loop23 sign15 dash7 write22
+  // jmp5 zero38 = 173, +tail6 = 179 != 176. THREE OVER AGAIN. The
+  // counter (176, probe-pinned) is truth; my sectionals drift by 3
+  // somewhere (setup 44 vs 41?). FORGET sectionals: the walker's
+  // ABSOLUTE positions are truth: jmp at +133, zero store at +138,
+  // addrsp... where? dump +170..175 = 48 83 C4 30 5E 59 (addrsp pop
+  // pop) and +168 CD +169 80 (zint). zero = +138..170 (store..zint =
+  // 32) + tail +170..176 (addrsp pop pop = 6) = 38 --. SO zero-block
+  // (store..int) = 32, tail = 6, and DONE (jmp target) = +170:
+  // disp = 170-138 = 32. CORRECT jmp disp = 32. (The old 38 skipped
+  // the tail: live rsp-imbalance bug, masked by leave.)
+  let j1: int = e_jmp_rel(be_rel32(w5 + sz_jmp() + 32, w5, sz_jmp()), w5);
+  return e_print_int_zero(j1);
+}
+fn e_print_int_zero(j1: int): int {
+  // Zero block (value was 0): j1 is the position AFTER the nz-write's
+  // jmp (the jmp belongs to the nz path; e_print_int_done returns the
+  // post-jmp position, NOT the jmp site: same no-re-add rule as every
+  // other continuation in this file). One '0' byte at [rsp+47], buf =
+  // its address, len = 1 in edx. Same residue-harmless shape as the nz
+  // path: NO value save (rax dead after int80 on both paths; next
+  // statement re-evals). Zero block = store-0 5 + lea 5 + mov-rsi 3
+  // + mov-edx 5 + mov-ecx 2 + mov-ebx 5 + mov-eax 5 + int80 2 +
+  // add-rsp 4 + pop-rsi 1 + pop-rcx 1 = 38 bytes. Disps stay
+  // [rsp+47] throughout (no push: rsp never moves in the zero
+  // block either).
+  let z0: int = e_store_0_rsp(j1, 47);
+  let z1: int = e_lea_rax_rsp(47, z0);
+  let z2: int = e_mov_rsi_rax(z1);
+  let z3: int = e_mov_edx_imm(1, z2);
+  let z4: int = e_mov_ecx_esi(z3);
+  let z5: int = e_mov_ebx_imm(1, z4);
+  let z6: int = e_mov_eax_imm(2, z5);
+  let z7: int = e_int80(z6);
+  let z8: int = e_add_rsp_48(z7);
+  let z9: int = e_pop_rsi_op(z8);
+  let z10: int = e_pop_rcx_op(z9);
+  return z10;
+}
+fn e_print_bool_from_rax(acc: int): int {
+  // v2 (LEA+imm write; mirrors rt_rynor rl_13_rt_print_bool):
+  //   push rcx / sub rsp,48 (save; scratch; align)
+  //   test eax,eax / jz false (zero => false)
+  // true:
+  //   mov DWORD [rsp+44],'true' (C7 44 24 2C 74727565: 8 bytes)
+  //   lea rax,[rsp+44] (AUDITED lea helper, 5) / mov rsi,rax (3)
+  //   mov edx,4 (5) / mov eax,2 (5) / mov ebx,1 (5) /
+  //   mov ecx,esi (2) / int80 (2) [= 35] / jmp done (5) [= 48]
+  // false:
+  //   mov DWORD [rsp+43],'fals' + mov BYTE [rsp+47],'e' (8 + 5)
+  //   lea rax,[rsp+43] (5) / mov rsi,rax (3) / mov edx,5 (5) /
+  //   mov eax,2 (5) / mov ebx,1 (5) / mov ecx,esi (2) / int80 (2)
+  //   [= 40]
+  // done: add rsp,48 / pop rcx (net-zero, order-paired)
+  let s0: int = e_push_rcx_op(acc);
+  let s1: int = e_sub_rsp_48(s0);
+  let s2: int = e_test_eax(s1);
+  return e_print_bool_true(e_jcc_z(be_rel32(s3fpos(s2 + sz_jcc()), s2, sz_jcc()), s2));
+}
+fn s3fpos(sjz: int): int {
+  // jz target: the false block. Layout after the jz (all fixed):
+  // true block 47 + jmp 5 = 52.
+  return sjz + 52;
+}
+fn e_print_bool_true(s3: int): int {
+  // s3 is AFTER the jz (no re-add: same phantom class as int).
+  // True block: 4 byte-stores (20) + lea (5) + mov-rsi (3) +
+  // mov-edx-imm (5) + mov-eax-imm (5) + mov-ebx-imm (5) +
+  // mov-ecx-esi (2) + int80 (2) = 47.
+  let t0: int = s3;
+  let t1: int = e_store_true_rsp44(t0);
+  let t2: int = e_lea_rax_rsp(44, t1);
+  let t3: int = e_mov_rsi_rax(t2);
+  let t4: int = e_mov_edx_imm(4, t3);
+  let t5: int = e_mov_ecx_esi(t4);
+  let t6: int = e_mov_ebx_imm(1, t5);
+  let t7: int = e_mov_eax_imm(2, t6);
+  let t8: int = e_int80(t7);
+  return e_print_bool_false(e_jmp_rel(be_rel32(t7done(t8 + sz_jmp()), t8, sz_jmp()), t8));
+}
+fn t7done(tjmp: int): int {
+  // jmp target: past the false block (5 byte-stores 25 + lea 5 +
+  // mov-rsi 3 + mov-edx 5 + mov-eax 5 + mov-ebx 5 + mov-ecx 2 +
+  // int80 2 + add-rsp 4 + pop-rcx 1 = 52).
+  return tjmp + 52;
+}
+fn e_print_bool_false(t7: int): int {
+  // t7 is AFTER the jmp (no re-add).
+  let f0: int = t7;
+  let f1: int = e_store_false_rsp43(f0);
+  let f2: int = e_lea_rax_rsp(43, f1);
+  let f3: int = e_mov_rsi_rax(f2);
+  let f4: int = e_mov_edx_imm(5, f3);
+  let f5: int = e_mov_ecx_esi(f4);
+  let f6: int = e_mov_ebx_imm(1, f5);
+  let f7: int = e_mov_eax_imm(2, f6);
+  let f8: int = e_int80(f7);
+  let f9: int = e_add_rsp_48(f8);
+  let f10: int = e_pop_rcx_op(f9);
+  return f10;
+}
+fn e_print_str_home(base: int, acc: int): int {
+  let s0: int = e_push_rcx_op(acc);
+  let s1: int = e_mov_rax_home(base + 1, s0);
+  let s2: int = e_test_eax(s1);
+  return e_print_str_go(base, e_jcc_z(be_rel32(s3sdone(base, s2 + sz_jcc()), s2, sz_jcc()), s2));
+}
+fn s3sdone(base: int, sjz: int): int {
+  // jz target: past the whole go block (per-base size: the two home
+  // loads vary 4 vs 7 by slot; the counter re-derives the same sum
+  // from the sz_* twins, and the counter probe pins counter == bytes
+  // (45 for the slot-2/3 str-var shape: 4+1+4+4+1+3+5+5+2+2+1 = 32
+  // + jz-past... see be_print_str_go_size).
+  return sjz + be_print_str_go_size(base);
+}
+fn be_str_go_size(): int {
+  return 39;
+}
+fn be_print_str_go_size(base: int): int {
+  // mov-home(base) + push + mov-home(base+1) + xchg + pop-rdx +
+  // mov-rsi + mov-ecx-esi + mov-ebx-imm + mov-eax-imm + int80 +
+  // pop-rcx. Home loads vary (4 vs 7); every other form is fixed.
+  return sz_mov_rax_home(base) + sz_push_rax() + sz_mov_rax_home(base + 1) + sz_xchg_rax_mrsp() + sz_pop_rdx_op() + sz_mov_rsi_rax() + sz_mov_ecx_esi() + sz_mov_ebx_imm() + sz_mov_eax_imm() + sz_int80() + sz_pop_rcx_op();
+}
+fn e_print_str_go(base: int, s3: int): int {
+  // Home pair -> write regs (LEA+imm shape, same as bool): load ptr,
+  // stash it on the machine stack (net-zero push), load len into
+  // rsi?? NO: len goes in rdx, buf in rsi. Sequence: mov rax,ptr /
+  // mov rsi,rax (buf) / mov rax,len / mov rdx,rax (len, 32-bit?)...
+  // len is a full word (str lens fit easily); use mov edx,eax?
+  // AUDITED choice: e_mov_rdx... no helper. Keep both homes live:
+  // push ptr-home, load len-home, pop into rsi?? pop rsi = 5E...
+  // simplest with existing helpers: mov rax,ptr / push rax /
+  // mov rax,len / mov rdx,rax?? no mov-rdx helper either.
+  // Use the stack-arg load path: the value is ALREADY a (ptr,len)
+  // pair; rdx = len via mov rdx,[home+1]?? needs new helper.
+  // DECISION: reuse e_load_rdx_rsp? No rsp scratch here (str-var
+  // uses no sub rsp). Cleanest: push ptr / mov rax,len / xchg?
+  // xchg rax,[rsp] = 48 87 04 24 (4 bytes, new form, regular).
+  // Then rax = ptr, [rsp] = len; pop rdx?? pop rdx = 5A (1 byte,
+  // same class as pop rcx/rsi); mov rsi,rax; mov eax,2...
+  // s3 is AFTER the jz (no re-add).
+  let g0: int = s3;
+  let g1: int = e_mov_rax_home(base, g0);
+  let g2: int = e_push_rax(g1);
+  let g3: int = e_mov_rax_home(base + 1, g2);
+  let g4: int = e_xchg_rax_mrsp(g3);
+  let g5: int = e_pop_rdx_op(g4);
+  let g6: int = e_mov_rsi_rax(g5);
+  let g7: int = e_mov_ecx_esi(g6);
+  let g8: int = e_mov_ebx_imm(1, g7);
+  let g9: int = e_mov_eax_imm(2, g8);
+  let g10: int = e_int80(g9);
+  let g11: int = e_pop_rcx_op(g10);
+  return g11;
 }
 fn be_esc_byte(e: int): int {
   if e == 92 { return 92; } else { }
@@ -3364,6 +4448,15 @@ fn e_js(disp: int, acc: int): int {
   let a2: int = e_le32(disp, a1);
   return a2;
 }
+fn sz_jns(): int {
+  return 6;
+}
+fn e_jns(disp: int, acc: int): int {
+  let a0: int = e_b(15, acc);
+  let a1: int = e_b(137, a0);
+  let a2: int = e_le32(disp, a1);
+  return a2;
+}
 fn sz_test_rax(): int {
   return 3;
 }
@@ -3450,6 +4543,83 @@ fn sz_add_rsp_w(w: int): int {
 fn e_add_rsp_w(w: int, acc: int): int {
   if 8 * w <= 127 { return e_add_rsp_ib(8 * w, acc); } else { }
   return e_add_rsp_n(8 * w, acc);
+}
+// M3 scalar-print machine forms (audited pairs; sizes are constants).
+// push rcx (51) saves the single scratch across the write; mov ecx,imm32
+// (B9 ib32) + mov edx,imm32 (BA ib32) carry buf/len (existing e_mov_*
+// style); mov ecx,[rsp+disp8] (8B 4C 24 ib8) + mov edx,[rsp+disp8]
+// reload the computed buf/len out of the caller-stack scratch.
+// sub rsp,48 (48 83 EC 30) / add rsp,48 (48 83 C4 30) bracket the
+// int/bool scratch (16-aligned, net-zero). test rax,rax (48 85 C0)
+// + jz rel32 (0F 84 cd, existing BE-B forms) skip the write for a
+// zero bool/int and for an empty str.
+fn sz_push_rcx_op(): int {
+  return 1;
+}
+fn e_push_rcx_op(acc: int): int {
+  return e_b(81, acc);
+}
+fn sz_pop_rcx_op(): int {
+  return 1;
+}
+fn e_pop_rcx_op(acc: int): int {
+  return e_b(89, acc);
+}
+fn sz_mov_ecx_imm_op(): int {
+  return 5;
+}
+fn e_mov_ecx_imm_op(v: int, acc: int): int {
+  let m0: int = e_b(185, acc);
+  let m1: int = e_le32(v, m0);
+  return m1;
+}
+fn sz_mov_edx_imm_op(): int {
+  return 5;
+}
+fn e_mov_edx_imm_op(v: int, acc: int): int {
+  let m0: int = e_b(186, acc);
+  let m1: int = e_le32(v, m0);
+  return m1;
+}
+fn sz_mov_ecx_rsp(): int {
+  return 4;
+}
+fn e_mov_ecx_rsp(d: int, acc: int): int {
+  let a0: int = e_b(139, acc);
+  let a1: int = e_b(76, a0);
+  let a2: int = e_b(36, a1);
+  let a3: int = e_b(d, a2);
+  return a3;
+}
+fn sz_mov_edx_rsp(): int {
+  return 4;
+}
+fn e_mov_edx_rsp(d: int, acc: int): int {
+  let a0: int = e_b(139, acc);
+  let a1: int = e_b(84, a0);
+  let a2: int = e_b(36, a1);
+  let a3: int = e_b(d, a2);
+  return a3;
+}
+fn sz_sub_rsp_48(): int {
+  return 4;
+}
+fn e_sub_rsp_48(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(131, a0);
+  let a2: int = e_b(236, a1);
+  let a3: int = e_b(48, a2);
+  return a3;
+}
+fn sz_add_rsp_48(): int {
+  return 4;
+}
+fn e_add_rsp_48(acc: int): int {
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(131, a0);
+  let a2: int = e_b(196, a1);
+  let a3: int = e_b(48, a2);
+  return a3;
 }
 fn be_s_recx_paren(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, end: int): BZ {
   let e: BZ = be_s_recx(src, f, fs, fe, dk, ds, t->p, end);
@@ -3654,7 +4824,7 @@ fn be_sret_close_dk(dk: int, acc: int, ragg: int): int {
   return e_add_rsp_24(acc);
 }
 fn be_s_ident_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
-  if be_is_print(src, t) == 1 { return be_s_print_tail(src, f, t, end); } else { }
+  if be_is_print(src, t) == 1 { return be_s_print_tail(src, f, fs, fe, t, end); } else { }
   if be_is_len(src, t) == 1 { return be_s_len(src, f, fs, fe, t, end); } else { }
   if be_is_isok(src, t) == 1 { return be_s_isok(src, f, fs, fe, t, end); } else { }
   if be_is_unwrap(src, t) == 1 { return be_s_unwrap_scalar(src, f, fs, fe, t, end); } else { }
@@ -3668,8 +4838,8 @@ fn be_s_ident_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
   if r->c == 0 { } else { return r; }
   return be_s_ident_arrows(src, f, r->p, end, tb, ci, r);
 }
-fn be_s_print_tail(src: str, f: int, t: Tok, end: int): BZ {
-  let r: BZ = be_s_print(src, f, t, end);
+fn be_s_print_tail(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
+  let r: BZ = be_s_printf(src, f, fs, fe, t, end);
   if r->c == 0 { } else { return r; }
   let nx: Tok = pgm_tok(src, r->p, end);
   if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: 0, c: 25, o: nx->s); } else { } } else { } } else { }
@@ -3711,7 +4881,7 @@ fn be_s_ident_arrow(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
   return BZ(p: ch->k, n: sz_mov_rax_home(ch->slot), c: 0, o: 0);
 }
 fn be_e_ident_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
-  if be_is_print(src, t) == 1 { return be_e_print_tail(src, f, t, end, acc); } else { }
+  if be_is_print(src, t) == 1 { return be_e_print_tail(src, f, fs, fe, t, end, acc); } else { }
   if be_is_len(src, t) == 1 { return be_e_len(src, f, fs, fe, t, end, acc); } else { }
   if be_is_isok(src, t) == 1 { return be_e_isok(src, f, fs, fe, t, end, acc); } else { }
   if be_is_unwrap(src, t) == 1 { return be_e_unwrap_scalar(src, f, fs, fe, t, end, acc); } else { }
@@ -3725,8 +4895,8 @@ fn be_e_ident_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: in
   if r->c == 0 { } else { return r; }
   return be_e_ident_arrows(src, f, r->p, end, tb, ci, r);
 }
-fn be_e_print_tail(src: str, f: int, t: Tok, end: int, acc: int): BZ {
-  let r: BZ = be_e_print(src, f, t, end, acc);
+fn be_e_print_tail(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int): BZ {
+  let r: BZ = be_e_printf(src, f, fs, fe, t, end, acc);
   if r->c == 0 { } else { return r; }
   let nx: Tok = pgm_tok(src, r->p, end);
   if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: acc, c: 25, o: nx->s); } else { } } else { } } else { }

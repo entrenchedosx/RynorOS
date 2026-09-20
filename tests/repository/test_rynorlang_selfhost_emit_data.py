@@ -5,8 +5,10 @@ decoded string literals (no dedup: every occurrence gets its own
 entry, consecutive order) into the normal RYNX v2 data section and
 lowers `print("literal")` to an inline write syscall (rax=2, rbx=1,
 rcx=DATA_BASE+offset, rdx=len, int 0x80). No NUL terminators are
-stored or scanned; lengths are explicit. `print(int/bool)` stays
-backend-25; string locals/params/returns stay backend-25.
+stored or scanned; lengths are explicit. M3 promotes `print(int)` /
+`print(bool)` / `print(int-var)` to compilable (inline rt_rynor
+decimal/word lowering over caller-stack scratch); string
+locals/params/returns stay backend-25.
 
 QEMU/native stdout proof lives in tests/integration/
 test_native_backend.py; here execution is proven by the test-only
@@ -42,6 +44,9 @@ class Emu(bec.Emu):
         self.stdout = bytearray()
 
     def step(self):
+        # NOTE: this layer FETCHES b0 first (unlike the M3 suite's
+        # peek style); the rewind on miss keeps multi-byte matches
+        # atomic against the layer below.
         b0 = self._fetch(1)[0]
         R = self.reg
         if b0 == 0xB9:
@@ -130,10 +135,18 @@ ACCEPT_CASES = [
 ]
 
 REJECT25_CASES = [
+    ("str-ret", 'fn f(): str { return "ab"; }\nfn main(): int { return 0; }\n'),
+]
+# M3-promoted shapes (print-int / print-bool / print-int-var) return
+# code 0 from the backend now, so the old BE-D 25-pins are dropped,
+# NOT re-asserted here: the M3 suite owns those shapes end-to-end
+# (differential + emulator + mutants + QEMU), and this suite's
+# data-window-only emulator cannot execute the M3 stack-scratch
+# template. Ownership note for the audit trail:
+M3_PROMOTED_PINS = [
     ("print-int", 'fn main(): int { print(1); return 0; }\n'),
     ("print-bool", 'fn main(): int { print(true); return 0; }\n'),
     ("print-var", 'fn main(): int { let x: int = 1; print(x); return 0; }\n'),
-    ("str-ret", 'fn f(): str { return "ab"; }\nfn main(): int { return 0; }\n'),
 ]
 
 REJECT_CHECK_CASES = [
@@ -191,6 +204,16 @@ class BEDRejectTests(unittest.TestCase):
         for (code, _off, hexstr), (name, _src) in zip(self.r25, REJECT25_CASES):
             self.assertEqual(code, 25, name)
             self.assertEqual(hexstr, "", name)
+
+    def test_05b_m3_promoted_pins_compile(self):
+        # Gate assertion only (no execution: this suite's emulator
+        # serves the data window, not the M3 stack-scratch template;
+        # full execution proof lives in the M3 suite). Every dropped
+        # pin must return code 0 from the current backend.
+        for name, src in M3_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
 
     def test_06_checker_passthrough(self):
         want_code = {"SEM_ARITY_MISMATCH": 12}

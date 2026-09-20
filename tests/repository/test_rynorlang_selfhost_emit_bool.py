@@ -17,9 +17,10 @@ convention); RAX return; false = 0, true = 1 canonical (host
 `1 if result else 0`); `&&`/`||` eager canonical (`and`/`or` on
 canonical inputs stays canonical); `!` canonical (xor 1).
 
-Out of scope (stay backend-25): match statements (M2), print(int)
-(M3), recursion relaxation (M4), condition-position byte_at (M5),
-fread/fjoin/argv/use (M6).
+Out of scope (stay backend-25): print(int/bool) (M3),
+recursion relaxation (M4), condition-position byte_at (M5),
+fread/fjoin/argv/use (M6). (M2 owns match: the stale match-stmt
+25-pin moved to the M2 suite as m2-inherit-status.)
 
 QEMU/native proof lives in probe_m1native.py (5/5 MATCH at M1
 commit); here execution is proven by the test-only emulator chain
@@ -113,8 +114,11 @@ ACCEPT_CASES = [
 ]
 
 REJECT25_CASES = [
-    # Match statements stay M2 work; int-typed match arms are not bool returns.
-    ("match-stmt", 'fn w(x: int): status<int> { let l: list<int,1> = [x]; return l[0]; }\nfn main(): int { let s: status<int> = w(5); match s { ok(v) => { return v; }, err(e) => { return 0 - 1; } }\n}\n'),
+    # Match statements are M2-compilable (status/int/bool scrutinee);
+    # the old 25-pin moved to the M2 suite at M2 commit. result-typed
+    # scrutinees fail closed at code 6 (match-gate: not status/int/
+    # bool), so no live 25-pin remains in this suite. Keep the class
+    # green over an empty pin list (documents the moved boundary).
 ]
 
 

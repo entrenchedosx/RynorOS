@@ -120,6 +120,12 @@ ACCEPT_CASES = [
     ("m2-scalar-call", 'fn h(x: int): int { return x + 1; }\nfn main(): int { match h(1) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 30; } }\n}\n'),
     ("m2-err-first", 'fn w(x: int): status<int> { let l: list<int,1> = [x]; return l[2]; }\nfn main(): int { let s: status<int> = w(5); match s { err(e) => { return e; }, ok(v) => { return v; } }\n}\n'),
     ("m2-wild-only", 'fn w(x: int): status<int> { let l: list<int,1> = [x]; return l[0]; }\nfn main(): int { let s: status<int> = w(5); match s { _ => { return 9; } }\n}\n'),
+    # M1-suite stale pin inherited at M2 commit: the old match-stmt
+    # 25-pin (status scrutinee) is M2-compilable; ownership moves
+    # here as a compilable accept. Textually distinct from
+    # m2-status-ok (different binding value) so the anti-canned pin
+    # (distinct hex per case) stays live.
+    ("m2-inherit-status", 'fn w(x: int): status<int> { let l: list<int,1> = [x]; return l[0]; }\nfn main(): int { let s: status<int> = w(9); match s { ok(v) => { return v; }, err(e) => { return 0 - 1; } }\n}\n'),
 ]
 
 REJECT25_CASES = [
@@ -178,6 +184,7 @@ class M2AcceptTests(unittest.TestCase):
         self.assertEqual(by_name["m2-scalar-call"], 20)
         self.assertEqual(by_name["m2-err-first"], 3)
         self.assertEqual(by_name["m2-wild-only"], 9)
+        self.assertEqual(by_name["m2-inherit-status"], 9)
 
     def test_06_no_callee_saved_scratch(self):
         for name, hexstr, _w, _e in self.images:
