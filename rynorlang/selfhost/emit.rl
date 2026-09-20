@@ -5127,8 +5127,17 @@ fn be_s_aggex_noindex(src: str, pos: int, end: int, r: BZ): BZ {
 }
 fn be_s_aggex_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int): BZ {
   let t: Tok = pgm_tok(src, pos, end);
-  if t->k == 1 { return be_s_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  if t->k == 1 { return be_s_aggex_sbyteat(src, f, fs, fe, dk, ds, ty, t, end); } else { }
   return BZ(p: pos, n: 0, c: 29, o: pos);
+}
+fn be_s_aggex_sbyteat(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_s_aggex_sbyteat_call(src, f, fs, fe, dk, ds, ty, t, end); } else { } } else { } } else { }
+  return be_s_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end);
+}
+fn be_s_aggex_sbyteat_call(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  if be_is_byteat(src, t) == 1 { return be_s_byteat_status(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  return be_s_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end);
 }
 fn be_s_aggex_svar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
   let nx: Tok = pgm_tok(src, t->p, end);
@@ -5511,8 +5520,17 @@ fn be_e_aggex_noindex(src: str, pos: int, end: int, r: BZ): BZ {
 }
 fn be_e_aggex_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, pos: int, end: int, acc: int): BZ {
   let t: Tok = pgm_tok(src, pos, end);
-  if t->k == 1 { return be_e_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  if t->k == 1 { return be_e_aggex_sbyteat(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
   return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+fn be_e_aggex_sbyteat(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_e_aggex_sbyteat_call(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { } } else { } } else { }
+  return be_e_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end, acc);
+}
+fn be_e_aggex_sbyteat_call(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  if be_is_byteat(src, t) == 1 { return be_e_byteat_status(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  return be_e_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end, acc);
 }
 fn be_e_aggex_svar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
   let nx: Tok = pgm_tok(src, t->p, end);
@@ -5771,6 +5789,78 @@ fn be_e_byteat_err_full(ds: int, acc: int): int {
   let a0: int = e_pop_rax(acc);
   if ds == 0 { return a0; } else { }
   return e_mov_home_rax(ds, a0);
+}
+fn be_e_byteat_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  if dk == 0 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  if tbase(ty) == 6 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  if tbase(tsub(ty, 1, [])) == 1 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  let lp: Tok = pgm_tok(src, t->p, end);
+  let a: Tok = pgm_tok(src, lp->p, end);
+  if a->k == 1 { return be_e_byteat_status_str(src, f, fs, fe, ds, t, a, end, acc); } else { }
+  return BZ(p: t->s, n: acc, c: 25, o: a->s);
+}
+fn be_e_byteat_status_str(src: str, f: int, fs: int, fe: int, ds: int, t: Tok, a: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, a->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, a->s, a->s, a->l);
+  if has_err(v->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: acc, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 3 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 44 { return be_e_byteat_status_idx(src, f, fs, fe, ds, t, v, nx->p, end, acc); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: nx->s);
+}
+fn be_e_byteat_status_idx(src: str, f: int, fs: int, fe: int, ds: int, t: Tok, v: VS, pos: int, end: int, acc: int): BZ {
+  let e: BZ = be_e_level(src, f, fs, fe, 0, pos, end, acc);
+  if e->c == 0 { } else { return e; }
+  let cp: Tok = pgm_tok(src, e->p, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return be_e_byteat_status_go(src, f, fs, fe, ds, v, e->n, cp->p); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: cp->s);
+}
+fn be_e_byteat_status_go(src: str, f: int, fs: int, fe: int, ds: int, v: VS, acc: int, pos: int): BZ {
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let spill: int = e_push_rax(acc);
+  let pre: int = be_g4_pre_size(base);
+  let ok: int = be_e_byteat_ok_full_size(base, ds + 2);
+  let er: int = be_e_byteat_sterr_size(ds);
+  let errstart: int = spill + pre + ok + sz_jmp();
+  let done: int = errstart + er;
+  let jsd: int = be_rel32(errstart, spill + sz_push_rax() + sz_pop_rcx() + sz_pop_rax() + sz_push_rcx() + sz_test_rax(), sz_js());
+  let jaed: int = be_rel32(errstart, spill + pre - sz_jae(), sz_jae());
+  let jmpd: int = be_rel32(done, errstart - sz_jmp(), sz_jmp());
+  return be_e_byteat_status_emit(src, f, fs, fe, base, ds, spill, pos, jsd, jaed, jmpd);
+}
+fn be_e_byteat_sterr_size(ds: int): int {
+  return sz_pop_rax() + sz_mov_rax_imm(1) + sz_mov_home_rax(ds) + sz_mov_rax_imm(3) + sz_mov_home_rax(ds + 1) + sz_mov_rax_imm(0) + sz_mov_home_rax(ds + 2);
+}
+fn be_e_byteat_status_emit(src: str, f: int, fs: int, fe: int, base: int, ds: int, acc: int, pos: int, jsd: int, jaed: int, jmpd: int): BZ {
+  let q0: int = e_push_rax(acc);
+  let q1: int = e_pop_rcx(q0);
+  let q2: int = e_pop_rax(q1);
+  let q3: int = e_push_rcx(q2);
+  let q4: int = e_test_rax(q3);
+  let q5: int = e_js(jsd, q4);
+  let q6: int = e_push_rax(q5);
+  let q7: int = e_mov_rax_home(base + 1, q6);
+  let q8: int = e_mov_rcx_rax(q7);
+  let q9: int = e_pop_rax(q8);
+  let q10: int = e_cmp_rax_rcx(q9);
+  let q11: int = e_jae(jaed, q10);
+  let q12: int = be_e_byteat_ok_full(base, ds + 2, q11);
+  let q13: int = e_jmp_rel(jmpd, q12);
+  let q14: int = be_e_byteat_sterr(ds, q13);
+  return BZ(p: pos, n: q14, c: 0, o: 0);
+}
+fn be_e_byteat_sterr(ds: int, acc: int): int {
+  let a0: int = e_pop_rax(acc);
+  let a1: int = e_mov_rax_imm(1, a0);
+  let a2: int = e_mov_home_rax(ds, a1);
+  let a3: int = e_mov_rax_imm(3, a2);
+  let a4: int = e_mov_home_rax(ds + 1, a3);
+  let a5: int = e_mov_rax_imm(0, a4);
+  return e_mov_home_rax(ds + 2, a5);
 }
 fn be_e_unwrap_agg_cdef(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, a: Tok, w: int, pos: int, end: int, acc: int): BZ {
   let nx: Tok = pgm_tok(src, pos, end);
@@ -6116,6 +6206,49 @@ fn be_s_byteat_lit(src: str, f: int, t: Tok, a: Tok, end: int): BZ {
 }
 fn be_s_byteat_lit_idx(src: str, f: int, t: Tok, pos: int, end: int): BZ {
   return BZ(p: t->s, n: 0, c: 25, o: t->s);
+}
+fn be_s_byteat_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  if dk == 0 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  if tbase(ty) == 6 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  if tbase(tsub(ty, 1, [])) == 1 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  let lp: Tok = pgm_tok(src, t->p, end);
+  let a: Tok = pgm_tok(src, lp->p, end);
+  if a->k == 1 { return be_s_byteat_status_str(src, f, fs, fe, ds, t, a, end); } else { }
+  return BZ(p: t->s, n: 0, c: 25, o: a->s);
+}
+fn be_s_byteat_status_str(src: str, f: int, fs: int, fe: int, ds: int, t: Tok, a: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, a->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 91 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  if nx->k == 4 { if nx->l == 2 { if beq(src, nx->s, "->", 0, 2) { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { } } else { } } else { }
+  let v: VS = res_var(src, f, fs, fe, a->s, a->s, a->l);
+  if has_err(v->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  let vt: TR = infer_var_ty(src, f, fs, fe, v);
+  if has_err(vt->d) { return BZ(p: t->s, n: 0, c: 29, o: t->s); } else { }
+  if tbase(vt->t) == 3 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 44 { return be_s_byteat_status_idx(src, f, fs, fe, ds, t, v, nx->p, end); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: nx->s);
+}
+fn be_s_byteat_status_idx(src: str, f: int, fs: int, fe: int, ds: int, t: Tok, v: VS, pos: int, end: int): BZ {
+  let e: BZ = be_s_level(src, f, fs, fe, 0, pos, end);
+  if e->c == 0 { } else { return e; }
+  let cp: Tok = pgm_tok(src, e->p, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return be_s_byteat_status_go(src, f, fs, fe, ds, v, e->n + sz_push_rax(), cp->p); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: cp->s);
+}
+fn be_s_byteat_status_go(src: str, f: int, fs: int, fe: int, ds: int, v: VS, idxn: int, pos: int): BZ {
+  let base: int = be_home_base(src, f, fs, fe, v);
+  let pre: int = be_g4_pre_size(base);
+  let ok: int = be_s_byteat_ok_full_size(base, ds + 2);
+  let errstart: int = idxn + pre + ok + sz_jmp();
+  let done: int = errstart + be_s_byteat_sterr_size(ds);
+  let jsd: int = be_rel32(errstart, idxn + sz_push_rax() + sz_pop_rcx() + sz_pop_rax() + sz_push_rcx() + sz_test_rax(), sz_js());
+  let jaed: int = be_rel32(errstart, idxn + pre - sz_jae(), sz_jae());
+  let jmpd: int = be_rel32(done, errstart - sz_jmp(), sz_jmp());
+  return BZ(p: pos, n: done, c: 0, o: 0);
+}
+fn be_s_byteat_sterr_size(ds: int): int {
+  return sz_pop_rax() + sz_mov_rax_imm(1) + sz_mov_home_rax(ds) + sz_mov_rax_imm(3) + sz_mov_home_rax(ds + 1) + sz_mov_rax_imm(0) + sz_mov_home_rax(ds + 2);
 }
 fn be_s_byteat_str(src: str, f: int, fs: int, fe: int, t: Tok, a: Tok, end: int): BZ {
   let nx: Tok = pgm_tok(src, a->p, end);

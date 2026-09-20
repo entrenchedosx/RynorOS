@@ -139,9 +139,15 @@ ACCEPT_CASES = [
 
 REJECT25_CASES = [
     ("standalone-stmt", 'fn main(): int { let s: str = "ab"; byte_at(s, 0); return 1; }\n'),
-    ("standalone-let-status", 'fn main(): int { let s: str = "ab"; let b: status<int> = byte_at(s, 0); return unwrap_or(b, 1); }\n'),
     ("lit-scrutinee-ret", 'fn main(): int { return unwrap_or(byte_at("hi", 0), 7); }\n'),
     ("lit-scrutinee-let", 'fn main(): int { let b: int = unwrap_or(byte_at("ab", 0), 7); return b; }\n'),
+]
+# M5-promoted shape (let status<int> = byte_at(s, i)) returns code 0
+# from the backend now, so the old G4 25-pin is dropped, NOT re-asserted
+# here: the M5 suite owns the status-let end-to-end (differential +
+# emulator + mutants + QEMU). Ownership note for the audit trail:
+M5_PROMOTED_PINS = [
+    ("standalone-let-status", 'fn main(): int { let s: str = "ab"; let b: status<int> = byte_at(s, 0); return unwrap_or(b, 1); }\n'),
 ]
 
 
@@ -228,6 +234,15 @@ class G4RejectTests(unittest.TestCase):
         for (code, _off, hexstr), (name, _src) in zip(self.r25, REJECT25_CASES):
             self.assertEqual(code, 25, name)
             self.assertEqual(hexstr, "", name)
+
+    def test_08b_m5_promoted_pins_compile(self):
+        # Gate assertion only (no execution): the dropped pin must
+        # return code 0 from the current backend. Value proof lives
+        # in the M5 suite (m5-let-ok brings oracle differentials).
+        for name, src in M5_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
 
 
 def _mut(base, old, new, count=1):
