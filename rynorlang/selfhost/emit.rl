@@ -152,6 +152,13 @@ fn sz_pop_rdx_op(): int {
 fn e_pop_rdx_op(acc: int): int {
   return e_b(90, acc);
 }
+fn sz_push_rdx(): int {
+  return 1;
+}
+fn e_push_rdx(acc: int): int {
+  // push rdx: 52.
+  return e_b(82, acc);
+}
 fn sz_pop_rax_op(): int {
   return 1;
 }
@@ -949,6 +956,22 @@ fn be_s_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int
   return be_s_exprstmt(src, f, fs, fe, pos, end, acc);
 }
 fn be_s_usevar(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
+  // M6: single-file backend owns no module graph: `use "path";` with a
+  // string literal validates the path shape (nonempty, rel, <=32, like
+  // the fjoin rel rule) and lowers to zero bytes (import elision).
+  // Anything else keeps the old expression-statement route (mirrors
+  // the pgm_usebody/pgm_exprstmt split in the checker exactly).
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 3 { return be_s_use_path(src, f, pos, end, acc, t, nx); } else { }
+  return be_s_usevar_name(src, f, fs, fe, pos, end, acc, t);
+}
+fn be_s_use_path(src: str, f: int, pos: int, end: int, acc: int, t: Tok, nx: Tok): BZ {
+  if be_use_path_ok(src, nx) == 1 { } else { return BZ(p: pos, n: acc, c: 25, o: nx->s); }
+  let sc: Tok = pgm_tok(src, nx->p, end);
+  if pgm_is_semi(src, sc) { return BZ(p: sc->p, n: acc, c: 0, o: 0); } else { }
+  return BZ(p: pos, n: acc, c: 29, o: sc->s);
+}
+fn be_s_usevar_name(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
   let nx: Tok = pgm_tok(src, t->p, end);
   if nx->k == 3 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   return be_s_exprstmt(src, f, fs, fe, pos, end, acc);
@@ -1118,9 +1141,28 @@ fn be_e_stmt_kw(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int
   return be_e_exprstmt(src, f, fs, fe, pos, end, acc);
 }
 fn be_e_usevar(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
+  // M6: emit twin of the size-side use-path route above (zero bytes).
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 3 { return be_e_use_path(src, f, pos, end, acc, t, nx); } else { }
+  return be_e_usevar_name(src, f, fs, fe, pos, end, acc, t);
+}
+fn be_e_use_path(src: str, f: int, pos: int, end: int, acc: int, t: Tok, nx: Tok): BZ {
+  if be_use_path_ok(src, nx) == 1 { } else { return BZ(p: pos, n: acc, c: 25, o: nx->s); }
+  let sc: Tok = pgm_tok(src, nx->p, end);
+  if pgm_is_semi(src, sc) { return BZ(p: sc->p, n: acc, c: 0, o: 0); } else { }
+  return BZ(p: pos, n: acc, c: 29, o: sc->s);
+}
+fn be_e_usevar_name(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok): BZ {
   let nx: Tok = pgm_tok(src, t->p, end);
   if nx->k == 3 { return BZ(p: pos, n: acc, c: 25, o: t->s); } else { }
   return be_e_exprstmt(src, f, fs, fe, pos, end, acc);
+}
+fn be_use_path_ok(src: str, nx: Tok): int {
+  let n: int = be_str_len(src, nx->s + 1, nx->s + nx->l - 1);
+  if n == 0 { return 0; } else { }
+  if n > 32 { return 0; } else { }
+  if unwrap_or(byte_at(src, nx->s + 1), 0) == 47 { return 0; } else { }
+  return 1;
 }
 fn be_e_block_in(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: int, bx: int, bc: int): BZ {
   let be: int = pgm_brace_end(src, t->s, end);
@@ -2564,7 +2606,43 @@ fn be_e_mchain_bind(src: str, f: int, fs: int, fe: int, pos: int, me: int, bd: V
 // and the call-scrutinee temp below the first binding.
 fn be_fn_maxarm(src: str, f: int, cs: int, ce: int): int {
   let nl: int = scope_slot(src, f, cs, ce, ce);
-  return be_maxarm_at(src, f, cs, ce, nl, 0, nl);
+  let arm: int = be_maxarm_at(src, f, cs, ce, nl, 0, nl);
+  return be_temp_maxof(arm, be_fn_maxfj(src, f, cs, ce, nl));
+}
+// M6: fjoin out-scratch budget. Each fjoin call site in the function
+// owns 9 private frame slots (72 bytes) above the temp base, so two
+// sites never clobber each other's joined bytes (site k: scratch
+// bytes cover slots tempbase+1+9*k .. tempbase+9+9*k; the lea slot
+// is the top one). The frame must cover slot nl+10+9*(n-1) when the
+// function holds n >= 1 fjoin calls (nl = scope slots, tempbase =
+// nl+1). Zero fjoin calls: no budget change (old programs keep
+// byte-identical frames).
+fn be_fn_maxfj(src: str, f: int, cs: int, ce: int, nl: int): int {
+  let n: int = be_fjoin_count(src, cs, ce);
+  if n == 0 { return nl; } else { }
+  return nl + 10 + 9 * (n - 1);
+}
+fn be_fjoin_count(src: str, pos: int, end: int): int {
+  let t: Tok = pgm_tok(src, pos, end);
+  if t->k == 0 { return 0; } else { }
+  if t->k == 1 { if t->l == 5 { if beq(src, t->s, "fjoin", 0, 5) { return be_fjoin_count_call(src, t, end); } else { } } else { } } else { }
+  return be_fjoin_count(src, t->p, end);
+}
+fn be_fjoin_count_call(src: str, t: Tok, end: int): int {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return 1 + be_fjoin_count(src, nx->p, end); } else { } } else { } } else { }
+  return be_fjoin_count(src, t->p, end);
+}
+fn be_fjoin_index(src: str, pos: int, callpos: int): int {
+  let t: Tok = pgm_tok(src, pos, callpos);
+  if t->k == 0 { return 0; } else { }
+  if t->k == 1 { if t->l == 5 { if beq(src, t->s, "fjoin", 0, 5) { return be_fjoin_index_call(src, t, callpos); } else { } } else { } } else { }
+  return be_fjoin_index(src, t->p, callpos);
+}
+fn be_fjoin_index_call(src: str, t: Tok, callpos: int): int {
+  let nx: Tok = pgm_tok(src, t->p, callpos);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return 1 + be_fjoin_index(src, nx->p, callpos); } else { } } else { } } else { }
+  return be_fjoin_index(src, t->p, callpos);
 }
 fn be_maxarm_at(src: str, f: int, pos: int, bound: int, nl: int, mdepth: int, need: int): int {
   let t: Tok = pgm_tok(src, pos, bound);
@@ -4444,6 +4522,9 @@ fn e_cmp_rcx_rax(acc: int): int {
   let a2: int = e_b(193, a1);
   return a2;
 }
+fn sz_cmp_rcx_rax(): int {
+  return 3;
+}
 fn sz_jnz(): int {
   return 6;
 }
@@ -4506,6 +4587,18 @@ fn e_lea_rsi_home(slot: int, acc: int): int {
   let a0: int = e_b(72, acc);
   let a1: int = e_b(141, a0);
   let a2: int = e_b(181, a1);
+  let a3: int = e_le32(0 - be_home_disp(slot), a2);
+  return a3;
+}
+fn sz_lea_rdi_home(): int {
+  return 7;
+}
+fn e_lea_rdi_home(slot: int, acc: int): int {
+  // lea rdi,[rbp-8*slot]: 48 8D BD ib32 (8D /r: mod=10 reg=111(rdi)
+  // rm=101+disp32, same disp32 class as e_lea_rsi_home 48 8D B5).
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(141, a0);
+  let a2: int = e_b(189, a1);
   let a3: int = e_le32(0 - be_home_disp(slot), a2);
   return a3;
 }
@@ -4852,6 +4945,9 @@ fn be_s_ident_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int): BZ {
   if be_is_isok(src, t) == 1 { return be_s_isok(src, f, fs, fe, t, end); } else { }
   if be_is_unwrap(src, t) == 1 { return be_s_unwrap_scalar(src, f, fs, fe, t, end); } else { }
   if be_is_byteat(src, t) == 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
+  if be_is_fjoin(src, t) == 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
+  if be_is_argv(src, t) == 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
+  if be_is_fread(src, t) == 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
   let ri: int = be_rec_index(src, f, t->s, t->l);
   if ri == 0 - 1 { } else { return be_s_ident_ctor(src, f, fs, fe, t, end, ri); }
   let ci: int = be_find_fn(src, f, t->s, t->l, fs);
@@ -4909,6 +5005,9 @@ fn be_e_ident_call(src: str, f: int, fs: int, fe: int, t: Tok, end: int, acc: in
   if be_is_isok(src, t) == 1 { return be_e_isok(src, f, fs, fe, t, end, acc); } else { }
   if be_is_unwrap(src, t) == 1 { return be_e_unwrap_scalar(src, f, fs, fe, t, end, acc); } else { }
   if be_is_byteat(src, t) == 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
+  if be_is_fjoin(src, t) == 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
+  if be_is_argv(src, t) == 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
+  if be_is_fread(src, t) == 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
   let ri: int = be_rec_index(src, f, t->s, t->l);
   if ri == 0 - 1 { } else { return be_e_ident_ctor(src, f, fs, fe, t, end, acc, ri); }
   let ci: int = be_find_fn(src, f, t->s, t->l, fs);
@@ -5029,6 +5128,18 @@ fn be_is_byteat(src: str, t: Tok): int {
   if t->l == 7 { if beq(src, t->s, "byte_at", 0, 7) { return 1; } else { } } else { }
   return 0;
 }
+fn be_is_fjoin(src: str, t: Tok): int {
+  if t->l == 5 { if beq(src, t->s, "fjoin", 0, 5) { return 1; } else { } } else { }
+  return 0;
+}
+fn be_is_argv(src: str, t: Tok): int {
+  if t->l == 4 { if beq(src, t->s, "argv", 0, 4) { return 1; } else { } } else { }
+  return 0;
+}
+fn be_is_fread(src: str, t: Tok): int {
+  if t->l == 5 { if beq(src, t->s, "fread", 0, 5) { return 1; } else { } } else { }
+  return 0;
+}
 fn sz_mov_rax_rbx(): int {
   return 3;
 }
@@ -5137,6 +5248,9 @@ fn be_s_aggex_sbyteat(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: 
 }
 fn be_s_aggex_sbyteat_call(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
   if be_is_byteat(src, t) == 1 { return be_s_byteat_status(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  if be_is_fjoin(src, t) == 1 { return be_s_fjoin_status(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  if be_is_argv(src, t) == 1 { return be_s_argv_status(src, f, fs, fe, dk, ds, ty, t, end); } else { }
+  if be_is_fread(src, t) == 1 { return BZ(p: t->s, n: 0, c: 25, o: t->s); } else { }
   return be_s_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end);
 }
 fn be_s_aggex_svar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
@@ -5286,7 +5400,7 @@ fn be_s_unwrap_agg_var(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty:
   let sp: list<int,24> = tsub(vt->t, 1, []);
   if teq(sp, ty) { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
   let sb: int = tbase(sp);
-  if sb == 5 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  if sb == 5 { } else { if sb == 3 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); } }
   if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 44 { return be_s_unwrap_agg_def(src, f, fs, fe, dk, ds, ty, v, nx->p, end, t); } else { } } else { } } else { }
   return BZ(p: t->s, n: 0, c: 29, o: nx->s);
 }
@@ -5299,6 +5413,9 @@ fn be_s_unwrap_agg_def(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty:
 }
 fn be_s_unwrap_agg_call(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, a: Tok, end: int): BZ {
   if be_is_byteat(src, a) == 1 { return be_s_unwrap_agg_byteat(src, f, fs, fe, dk, ds, ty, t, a, end); } else { }
+  if be_is_fjoin(src, a) == 1 { return BZ(p: t->s, n: 0, c: 25, o: a->s); } else { }
+  if be_is_argv(src, a) == 1 { return BZ(p: t->s, n: 0, c: 25, o: a->s); } else { }
+  if be_is_fread(src, a) == 1 { return BZ(p: t->s, n: 0, c: 25, o: a->s); } else { }
   let w: int = tslots(ty, src, f);
   if be_is_push(src, a) == 1 { return be_s_unwrap_agg_push(src, f, fs, fe, dk, ds, ty, t, a, w, end); } else { }
   let ci: int = be_find_fn(src, f, a->s, a->l, fs);
@@ -5370,6 +5487,248 @@ fn be_s_unwrap_agg_byteat_spill_go(src: str, f: int, fs: int, fe: int, idxn: int
 }
 fn be_s_unwrap_agg_byteat_spill(idxn: int): int {
   return idxn + sz_push_rax();
+}
+// ---- M6: fjoin/argv status<str> lowering (pure, no syscalls).
+// Frozen oracle (interp.py str_fjoin/str_argv, agtypes err codes):
+//   fjoin(dir, rel): rel empty or starting with '/' => (1, 3, "");
+//     else (0, 0, rel) when dir empty, (0, 0, dir + "/" + rel).
+//   argv(i): i < 0 or i >= argc => (1, 3, ""); else (0, 0, arg[i]).
+// Backend model: status<str> is a 4-word home (tag, code, ptr, len);
+// the ok path stores (0, 0, ptr, len), the err path (1, 3, 0, 0).
+// fjoin evaluates its two str operands (literal or var, each 2 words
+// pushed value-style), guards them (empty rel, absolute rel, either
+// operand longer than 32 bytes => err; the 32/33 bound is the FS path
+// cap from selfhost.md section 6/22, pinned with +-1 evidence), then
+// either stores rel directly (empty dir) or copies dir + '/' + rel
+// bytewise into this call site's private 72-byte frame scratch (at
+// most 32+1+32 = 65 bytes, so the copy never overflows) and stores
+// the scratch (ptr, len). argv is main-only (helpers stay 25) and
+// reads argc/argv straight off the startup stack. All caller-saved
+// regs; RSP balanced on every path; every arm consumes the 4 operand
+// words, so the shared tail is zero bytes. Direct `unwrap_or(fjoin
+// (...))` / `unwrap_or(argv(...))` without a status let stays 25:
+// the let-status + unwrap-var composition covers the need.
+fn be_s_fjoin_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  if dk == 0 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  if tbase(ty) == 6 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  if tbase(tsub(ty, 1, [])) == 3 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  let lp: Tok = pgm_tok(src, t->p, end);
+  if lp->k == 4 { if lp->l == 1 { if tok_byte(src, lp->s) == 40 { return be_s_fjoin_dir(src, f, fs, fe, dk, ds, t, t, lp, end); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: t->s);
+}
+fn be_s_fjoin_dir(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, a: Tok, lp: Tok, end: int): BZ {
+  let d: BZ = be_s_strval(src, f, fs, fe, lp->p, end);
+  if d->c == 0 { } else { return d; }
+  let cm: Tok = pgm_tok(src, d->p, end);
+  if cm->k == 4 { if cm->l == 1 { if tok_byte(src, cm->s) == 44 { return be_s_fjoin_rel(src, f, fs, fe, dk, ds, t, a, d->n, cm->p, end); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: cm->s);
+}
+fn be_s_fjoin_rel(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, a: Tok, dn: int, pos: int, end: int): BZ {
+  let e: BZ = be_s_strval(src, f, fs, fe, pos, end);
+  if e->c == 0 { } else { return e; }
+  let cp: Tok = pgm_tok(src, e->p, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return be_s_fjoin_go(src, f, fs, fe, dk, ds, dn + e->n, cp->p, a->s); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: cp->s);
+}
+fn be_s_fjoin_go(src: str, f: int, fs: int, fe: int, dk: int, ds: int, argsn: int, pos: int, apos: int): BZ {
+  return BZ(p: pos, n: argsn + be_s_fjoin_seq_size(src, f, fs, fe, dk, ds, apos), c: 0, o: 0);
+}
+// M6 fjoin sequence size. Stack on entry (bottom to top):
+//   [dirptr, dirlen, relptr, rellen]. Guards peek via [rsp+disp]
+// (no stack motion, so every guard sees the same 4 words):
+//   rellen at +0, relptr at +8, dirlen at +16, dirptr at +24.
+// Branch skeleton (each guard jumps forward to err; the dirlen
+// zero-test jumps forward to direct; join and err jump to done;
+// direct falls through into done; copy loops jump backward):
+//   load[0]/test/jz err | load[8]/movzx/cmp47/je err |
+//   load[0]/cmp33/jae err | load[16]/cmp33/jae err |
+//   load[16]/test/jz direct | <join> / jmp done |
+//   err: pop x4 + 4 stores / jmp done | direct: pop/store x4 |
+//   done: (zero bytes; every arm consumed the 4 operand words).
+fn be_s_fjoin_seq_size(src: str, f: int, fs: int, fe: int, dk: int, ds: int, apos: int): int {
+  let chk: int = sz_load_rax_rsp() + sz_test_rax() + sz_jcc();
+  let rl: int = sz_load_rax_rsp() + sz_mov_rsi_rax() + sz_movzx_eax_rsi() + sz_cmp_rax_imm() + sz_jcc();
+  let cap: int = 2 * (sz_load_rax_rsp() + sz_cmp_rax_imm() + sz_jcc());
+  let dz: int = sz_load_rax_rsp() + sz_test_rax() + sz_jcc();
+  let jn: int = be_s_fjoin_join_size(src, f, fs, fe, dk, ds, apos) + sz_jmp();
+  let er: int = be_s_fjoin_err_size(dk, ds) + sz_jmp();
+  let dr: int = be_s_fjoin_direct_size(dk, ds);
+  return chk + rl + cap + dz + jn + er + dr;
+}
+fn be_s_fjoin_err_size(dk: int, ds: int): int {
+  let pops: int = 4 * sz_pop_rax();
+  return pops + sz_mov_rax_imm(1) + be_store_size(dk, ds, 0) + sz_mov_rax_imm(3) + be_store_size(dk, ds, 1) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 2) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 3);
+}
+fn be_s_fjoin_direct_size(dk: int, ds: int): int {
+  let pops: int = 4 * sz_pop_rax();
+  return pops + be_store_size(dk, ds, 3) + be_store_size(dk, ds, 2) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 0) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 1);
+}
+// One count-driven copy loop body (rcx iterations, rcx >= 1):
+//   movzx eax,[rsi] / mov [rdi],al / inc rsi / inc rdi / dec rcx /
+//   jnz loop.
+fn be_s_fjoin_loop_size(): int {
+  return sz_movzx_eax_rsi() + sz_store_al_rdi() + sz_inc_rsi() + sz_inc_rdi() + sz_dec_rcx() + sz_jnz();
+}
+// Join arm size. Pops rellen/relptr/dirlen/dirptr into regs (saving
+// rel/dir lens on the stack), copies dir bytes, stores '/', copies
+// rel bytes, then stores (0, 0, scratchptr, dirlen+1+rellen).
+// 6 pushes / 10 pops against 4 entry words: RSP balanced.
+fn be_s_fjoin_join_size(src: str, f: int, fs: int, fe: int, dk: int, ds: int, apos: int): int {
+  // apos threads through for emit-side pairing only: both lea forms
+  // below are slot-independent (always 7 bytes), so the size side
+  // needs no scratch computation of its own.
+  let setup: int = sz_pop_rcx() + sz_pop_rdx_op() + sz_pop_rax() + sz_pop_rsi() + sz_push_rdx() + sz_push_rcx() + sz_push_rax() + sz_mov_rcx_rax() + sz_lea_rdi_home();
+  let sep: int = sz_mov_rax_imm(47) + sz_store_al_rdi() + sz_inc_rdi();
+  let mid: int = sz_pop_rax() + sz_pop_rcx() + sz_pop_rsi() + sz_push_rcx() + sz_push_rax();
+  let tail: int = sz_pop_rax() + sz_pop_rcx() + sz_add_rax_rcx() + sz_add_rax_ib() + sz_push_rax();
+  let stores: int = sz_mov_rax_imm(0) + be_store_size(dk, ds, 0) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 1) + sz_lea_rax_home() + be_store_size(dk, ds, 2) + sz_pop_rax() + be_store_size(dk, ds, 3);
+  return setup + be_s_fjoin_loop_size() + sep + mid + be_s_fjoin_loop_size() + tail + stores;
+}
+// Scratch lea slot for the fjoin call at apos: tempbase+9+9*index,
+// where index counts fjoin calls before apos in this function (each
+// site owns 9 private slots; the frame budget in be_fn_maxfj covers
+// the top site). Bytes land at [rbp-8*slot .. +72).
+fn be_fjoin_scratch(src: str, f: int, fs: int, fe: int, apos: int): int {
+  return be_tempbase(src, f, fs, fe) + 9 + 9 * be_fjoin_index(src, fs, apos);
+}
+// M6 argv status<str> lowering (main-only: argv reads [rbp+16]/argv
+// off the startup stack, which only main's frame can address; helper
+// calls stay 25). Index arrives in rax (scalar level value, nothing
+// on the stack): negative or >= argc => err; else load argv[i],
+// NUL-scan its length, store (0, 0, ptr, len). The argv strings live
+// above the startup RSP, which no frame ever touches, so the stored
+// (ptr, len) stays valid for the program's whole run.
+fn be_s_argv_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int): BZ {
+  if dk == 0 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  if tbase(ty) == 6 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  if tbase(tsub(ty, 1, [])) == 3 { } else { return BZ(p: t->s, n: 0, c: 29, o: t->s); }
+  if be_fn_is_main(src, fs, fe) == 1 { } else { return BZ(p: t->s, n: 0, c: 25, o: t->s); }
+  let lp: Tok = pgm_tok(src, t->p, end);
+  if lp->k == 4 { if lp->l == 1 { if tok_byte(src, lp->s) == 40 { return be_s_argv_idx(src, f, fs, fe, dk, ds, t, lp, end); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: t->s);
+}
+fn be_fn_is_main(src: str, fs: int, fe: int): int {
+  let kw: Tok = next_tok(src, fs);
+  if kw->p >= fe { return 0; } else { }
+  let nm: Tok = next_tok(src, kw->p);
+  if nm->k == 1 { if nm->l == 4 { if beq(src, nm->s, "main", 0, 4) { return 1; } else { } } else { } } else { }
+  return 0;
+}
+fn be_s_argv_idx(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, lp: Tok, end: int): BZ {
+  let e: BZ = be_s_level(src, f, fs, fe, 0, lp->p, end);
+  if e->c == 0 { } else { return e; }
+  let cp: Tok = pgm_tok(src, e->p, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return BZ(p: cp->p, n: e->n + be_s_argv_go_size(dk, ds), c: 0, o: 0); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 29, o: cp->s);
+}
+// argv sequence size: [neg: test/js err][bounds: mov/load/cmp/jae
+// err][ptr: load/push/mov/xor][strlen loop][ok stores/jmp done]
+// [err stores/jmp done][done: zero bytes].
+fn be_s_argv_go_size(dk: int, ds: int): int {
+  let neg: int = sz_test_rax() + sz_js();
+  let bnd: int = sz_mov_rcx_rax() + sz_load_rax_argc() + sz_cmp_rcx_rax() + sz_jae();
+  let ptr: int = sz_load_rax_rbp_idx() + sz_push_rax() + sz_mov_rsi_rax() + sz_xor_ecx_ecx();
+  let sl: int = sz_movzx_eax_rsi() + sz_test() + sz_jcc() + sz_inc_rsi() + sz_inc_rcx() + sz_jmp();
+  let ok: int = sz_pop_rax() + sz_push_rax() + sz_push_rcx() + sz_mov_rax_imm(0) + be_store_size(dk, ds, 0) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 1) + sz_pop_rax() + be_store_size(dk, ds, 3) + sz_pop_rax() + be_store_size(dk, ds, 2) + sz_jmp();
+  let er: int = sz_mov_rax_imm(1) + be_store_size(dk, ds, 0) + sz_mov_rax_imm(3) + be_store_size(dk, ds, 1) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 2) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 3) + sz_jmp();
+  return neg + bnd + ptr + sl + ok + er;
+}
+fn sz_inc_rsi(): int {
+  return 3;
+}
+fn e_inc_rsi(acc: int): int {
+  // inc rsi: 48 FF C6 (REX + FF /0: mod=11 reg=000 rm=110(rsi)).
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(255, a0);
+  let a2: int = e_b(198, a1);
+  return a2;
+}
+fn sz_inc_rdi(): int {
+  return 3;
+}
+fn e_inc_rdi(acc: int): int {
+  // inc rdi: 48 FF C7 (REX + FF /0: mod=11 reg=000 rm=111(rdi)).
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(255, a0);
+  let a2: int = e_b(199, a1);
+  return a2;
+}
+fn sz_dec_rcx(): int {
+  return 3;
+}
+fn e_dec_rcx(acc: int): int {
+  // dec rcx: 48 FF C9 (REX + FF /1: mod=11 reg=001 rm=001(rcx)).
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(255, a0);
+  let a2: int = e_b(201, a1);
+  return a2;
+}
+fn sz_movzx_eax_rsi(): int {
+  return 4;
+}
+fn e_movzx_eax_rsi(acc: int): int {
+  // movzx eax,byte [rsi]: 0F B6 04 26 (0F B6 /r: mod=00 rm=100
+  // forces SIB; SIB 26 = scale 00, index 100 (none), base 110 (rsi);
+  // base rsi is not the disp32 case, so no displacement follows).
+  // Sibling of e_movzx_eax_sib ([rsi+rax] via SIB 06).
+  let a0: int = e_b(15, acc);
+  let a1: int = e_b(182, a0);
+  let a2: int = e_b(4, a1);
+  let a3: int = e_b(38, a2);
+  return a3;
+}
+fn sz_store_al_rdi(): int {
+  return 2;
+}
+fn e_store_al_rdi(acc: int): int {
+  // mov [rdi],al: 88 07 (88 /r: mod=00 reg=000(al) rm=111(rdi)).
+  // Same 88/r class as e_store_dl_rsi (88 16).
+  let a0: int = e_b(136, acc);
+  let a1: int = e_b(7, a0);
+  return a1;
+}
+fn sz_inc_rcx(): int {
+  return 3;
+}
+fn e_inc_rcx(acc: int): int {
+  // inc rcx: 48 FF C1 (REX + FF /0: mod=11 reg=000 rm=001(rcx)).
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(255, a0);
+  let a2: int = e_b(193, a1);
+  return a2;
+}
+fn sz_load_rax_argc(): int {
+  return 4;
+}
+fn e_load_rax_argc(acc: int): int {
+  // mov rax,[rbp+16]: 48 8B 45 10 (8B /r: mod=01 reg=000(rax)
+  // rm=101(rbp), disp8=16). In main (whose prologue is push rbp and
+  // whose only entry is _start's single call), [rbp+16] is the
+  // startup-stack argc (stage18d-abi E). Same bytes as the sret
+  // loader, but a dedicated name: argv reads argc, not sret.
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(139, a0);
+  let a2: int = e_b(69, a1);
+  let a3: int = e_b(16, a2);
+  return a3;
+}
+fn sz_load_rax_rbp_idx(): int {
+  return 8;
+}
+fn e_load_rax_rbp_idx(disp: int, acc: int): int {
+  // mov rax,[rbp+rcx*8+disp32]: 48 8B 84 CD ib32 (8B /r: mod=10
+  // reg=000(rax) rm=100 forces SIB; SIB CD = scale 11 (x8),
+  // index 001 (rcx), base 101 (rbp); disp32 follows). argv[i]
+  // lives at [rbp+24+8*i] in main (argc at +16, argv[0] at +24).
+  let a0: int = e_b(72, acc);
+  let a1: int = e_b(139, a0);
+  let a2: int = e_b(132, a1);
+  let a3: int = e_b(205, a2);
+  let a4: int = e_le32(disp, a3);
+  return a4;
+}
+fn sz_lea_rax_home(): int {
+  return 7;
 }
 fn be_s_byteat_ok_full_size(base: int, ds: int): int {
   let n: int = sz_push_rax() + sz_mov_rax_home(base) + sz_push_rax() + sz_pop_rsi() + sz_pop_rax() + sz_movzx_eax_sib() + sz_pop_rcx();
@@ -5530,6 +5889,9 @@ fn be_e_aggex_sbyteat(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: 
 }
 fn be_e_aggex_sbyteat_call(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
   if be_is_byteat(src, t) == 1 { return be_e_byteat_status(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  if be_is_fjoin(src, t) == 1 { return be_e_fjoin_status(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  if be_is_argv(src, t) == 1 { return be_e_argv_status(src, f, fs, fe, dk, ds, ty, t, end, acc); } else { }
+  if be_is_fread(src, t) == 1 { return BZ(p: t->s, n: acc, c: 25, o: t->s); } else { }
   return be_e_aggex_svar(src, f, fs, fe, dk, ds, ty, t, end, acc);
 }
 fn be_e_aggex_svar(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
@@ -5654,7 +6016,7 @@ fn be_e_unwrap_agg_var(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty:
   let sp: list<int,24> = tsub(vt->t, 1, []);
   if teq(sp, ty) { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
   let sb: int = tbase(sp);
-  if sb == 5 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  if sb == 5 { } else { if sb == 3 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); } }
   if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 44 { return be_e_unwrap_agg_def(src, f, fs, fe, dk, ds, ty, v, nx->p, end, t, acc); } else { } } else { } } else { }
   return BZ(p: t->s, n: acc, c: 29, o: nx->s);
 }
@@ -5667,6 +6029,9 @@ fn be_e_unwrap_agg_def(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty:
 }
 fn be_e_unwrap_agg_call(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, a: Tok, end: int, acc: int): BZ {
   if be_is_byteat(src, a) == 1 { return be_e_unwrap_agg_byteat(src, f, fs, fe, dk, ds, ty, t, a, end, acc); } else { }
+  if be_is_fjoin(src, a) == 1 { return BZ(p: t->s, n: acc, c: 25, o: a->s); } else { }
+  if be_is_argv(src, a) == 1 { return BZ(p: t->s, n: acc, c: 25, o: a->s); } else { }
+  if be_is_fread(src, a) == 1 { return BZ(p: t->s, n: acc, c: 25, o: a->s); } else { }
   let w: int = tslots(ty, src, f);
   if be_is_push(src, a) == 1 { return be_e_unwrap_agg_push(src, f, fs, fe, dk, ds, ty, t, a, w, end, acc); } else { }
   let ci: int = be_find_fn(src, f, a->s, a->l, fs);
@@ -5789,6 +6154,258 @@ fn be_e_byteat_err_full(ds: int, acc: int): int {
   let a0: int = e_pop_rax(acc);
   if ds == 0 { return a0; } else { }
   return e_mov_home_rax(ds, a0);
+}
+// ---- M6 emit twins: fjoin/argv status<str> lowering ----
+fn be_e_fjoin_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  if dk == 0 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  if tbase(ty) == 6 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  if tbase(tsub(ty, 1, [])) == 3 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  let lp: Tok = pgm_tok(src, t->p, end);
+  if lp->k == 4 { if lp->l == 1 { if tok_byte(src, lp->s) == 40 { return be_e_fjoin_dir(src, f, fs, fe, dk, ds, t, t, lp, end, acc); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: t->s);
+}
+fn be_e_fjoin_dir(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, a: Tok, lp: Tok, end: int, acc: int): BZ {
+  let d: BZ = be_e_strval(src, f, fs, fe, lp->p, end, acc);
+  if d->c == 0 { } else { return d; }
+  let cm: Tok = pgm_tok(src, d->p, end);
+  if cm->k == 4 { if cm->l == 1 { if tok_byte(src, cm->s) == 44 { return be_e_fjoin_rel(src, f, fs, fe, dk, ds, t, a, d->n, cm->p, end); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: cm->s);
+}
+fn be_e_fjoin_rel(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, a: Tok, dn: int, pos: int, end: int): BZ {
+  let e: BZ = be_e_strval(src, f, fs, fe, pos, end, dn);
+  if e->c == 0 { } else { return e; }
+  let cp: Tok = pgm_tok(src, e->p, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return be_e_fjoin_go(src, f, fs, fe, dk, ds, e->n, cp->p, a->s); } else { } } else { } } else { }
+  return BZ(p: t->s, n: dn, c: 29, o: cp->s);
+}
+fn be_e_fjoin_go(src: str, f: int, fs: int, fe: int, dk: int, ds: int, acc: int, pos: int, apos: int): BZ {
+  // Stack on entry (bottom to top): [dirptr, dirlen, relptr, rellen].
+  // Mirrors be_s_fjoin_seq_size exactly; emission is split into
+  // small helpers (checks / join / err / direct) threaded on acc.
+  let chk0: int = acc;
+  let sc: int = be_fjoin_scratch(src, f, fs, fe, apos);
+  let chk: int = sz_load_rax_rsp() + sz_test_rax() + sz_jcc();
+  let rl: int = sz_load_rax_rsp() + sz_mov_rsi_rax() + sz_movzx_eax_rsi() + sz_cmp_rax_imm() + sz_jcc();
+  let cap1: int = sz_load_rax_rsp() + sz_cmp_rax_imm() + sz_jcc();
+  let dz: int = sz_load_rax_rsp() + sz_test_rax() + sz_jcc();
+  let jn: int = be_s_fjoin_join_size(src, f, fs, fe, dk, ds, apos) + sz_jmp();
+  let er: int = be_s_fjoin_err_size(dk, ds) + sz_jmp();
+  let dr: int = be_s_fjoin_direct_size(dk, ds);
+  let errstart: int = chk0 + chk + rl + 2 * cap1 + dz + jn;
+  let direct: int = errstart + er;
+  let done: int = direct + dr;
+  let d1: int = be_rel32(errstart, chk0 + chk - sz_jcc(), sz_jcc());
+  let d2: int = be_rel32(errstart, chk0 + chk + rl - sz_jcc(), sz_jcc());
+  let d3: int = be_rel32(errstart, chk0 + chk + rl + cap1 - sz_jcc(), sz_jcc());
+  let d4: int = be_rel32(errstart, chk0 + chk + rl + 2 * cap1 - sz_jcc(), sz_jcc());
+  let d5: int = be_rel32(direct, chk0 + chk + rl + 2 * cap1 + dz - sz_jcc(), sz_jcc());
+  let loop1: int = chk0 + chk + rl + 2 * cap1 + dz + sz_pop_rcx() + sz_pop_rdx_op() + sz_pop_rax() + sz_pop_rsi() + sz_push_rdx() + sz_push_rcx() + sz_push_rax() + sz_mov_rcx_rax() + sz_lea_rdi_home();
+  let loop2: int = loop1 + be_s_fjoin_loop_size() + sz_mov_rax_imm(47) + sz_store_al_rdi() + sz_inc_rdi() + sz_pop_rax() + sz_pop_rcx() + sz_pop_rsi() + sz_push_rcx() + sz_push_rax();
+  let jd1: int = be_rel32(done, chk0 + chk + rl + 2 * cap1 + dz + jn - sz_jmp(), sz_jmp());
+  let jd2: int = be_rel32(done, errstart + er - sz_jmp(), sz_jmp());
+  let a1: int = be_e_fjoin_checks(acc, d1, d2, d3, d4, d5);
+  let a2: int = be_e_fjoin_join(dk, ds, a1, sc, loop1, loop2, jd1);
+  let a3: int = be_e_fjoin_err(dk, ds, a2, jd2);
+  let a4: int = be_e_fjoin_direct(dk, ds, a3);
+  return BZ(p: pos, n: a4, c: 0, o: 0);
+}
+// Guards: rellen==0 / rel[0]=='/' / rellen>32 / dirlen>32 => err;
+// dirlen==0 => direct. Operands stay on the stack throughout.
+fn be_e_fjoin_checks(acc: int, d1: int, d2: int, d3: int, d4: int, d5: int): int {
+  let a0: int = e_load_rax_rsp(0, acc);
+  let a1: int = e_test_rax(a0);
+  let a2: int = e_jcc_z(d1, a1);
+  let a3: int = e_load_rax_rsp(8, a2);
+  let a4: int = e_mov_rsi_rax(a3);
+  let a5: int = e_movzx_eax_rsi(a4);
+  let a6: int = e_cmp_rax_imm(47, a5);
+  let a7: int = e_jcc_z(d2, a6);
+  let a8: int = e_load_rax_rsp(0, a7);
+  let a9: int = e_cmp_rax_imm(33, a8);
+  let a10: int = e_jae(d3, a9);
+  let a11: int = e_load_rax_rsp(16, a10);
+  let a12: int = e_cmp_rax_imm(33, a11);
+  let a13: int = e_jae(d4, a12);
+  let a14: int = e_load_rax_rsp(16, a13);
+  let a15: int = e_test_rax(a14);
+  let a16: int = e_jcc_z(d5, a15);
+  return a16;
+}
+// Join arm: pop the 4 operand words, copy dir + '/' + rel into the
+// scratch slot sc, store (0, 0, scratchptr, total), jmp done.
+fn be_e_fjoin_join(dk: int, ds: int, acc: int, sc: int, loop1: int, loop2: int, jd1: int): int {
+  let a0: int = e_pop_rcx(acc);
+  let a1: int = e_pop_rdx_op(a0);
+  let a2: int = e_pop_rax(a1);
+  // q3 (not a3): keeps the G4 m9 mutant anchor
+  // `let a3: int = e_pop_rsi(a2);` unique to the byte_at template.
+  let q3: int = e_pop_rsi(a2);
+  let a4: int = e_push_rdx(q3);
+  let a5: int = e_push_rcx(a4);
+  let a6: int = e_push_rax(a5);
+  let a6b: int = e_mov_rcx_rax(a6);
+  let a7: int = e_lea_rdi_home(sc, a6b);
+  let a8: int = be_e_fjoin_loop(a7, loop1);
+  let a9: int = e_mov_rax_imm(47, a8);
+  let a10: int = e_store_al_rdi(a9);
+  let a11: int = e_inc_rdi(a10);
+  let a12: int = e_pop_rax(a11);
+  let a13: int = e_pop_rcx(a12);
+  let a14: int = e_pop_rsi(a13);
+  let a15: int = e_push_rcx(a14);
+  let a16: int = e_push_rax(a15);
+  let a17: int = be_e_fjoin_loop(a16, loop2);
+  let a18: int = e_pop_rax(a17);
+  let a19: int = e_pop_rcx(a18);
+  let a20: int = e_add_rax_rcx(a19);
+  let a21: int = e_add_rax_ib(1, a20);
+  let a22: int = e_push_rax(a21);
+  let a23: int = e_mov_rax_imm(0, a22);
+  let a24: int = be_store_emit(dk, ds, 0, a23);
+  let a25: int = e_mov_rax_imm(0, a24);
+  let a26: int = be_store_emit(dk, ds, 1, a25);
+  let a27: int = e_lea_rax_home(sc, a26);
+  let a28: int = be_store_emit(dk, ds, 2, a27);
+  let a29: int = e_pop_rax(a28);
+  let a30: int = be_store_emit(dk, ds, 3, a29);
+  let a31: int = e_jmp_rel(jd1, a30);
+  return a31;
+}
+// One copy loop: body bytes then jnz back to head.
+fn be_e_fjoin_loop(acc: int, head: int): int {
+  let a0: int = e_movzx_eax_rsi(acc);
+  let a1: int = e_store_al_rdi(a0);
+  let a2: int = e_inc_rsi(a1);
+  let a3: int = e_inc_rdi(a2);
+  let a4: int = e_dec_rcx(a3);
+  let a5: int = e_jnz(be_rel32(head, a4, sz_jnz()), a4);
+  return a5;
+}
+// Err arm: drop the 4 operand words, store (1, 3, 0, 0), jmp done.
+fn be_e_fjoin_err(dk: int, ds: int, acc: int, jd2: int): int {
+  let a0: int = e_pop_rax(acc);
+  let a1: int = e_pop_rax(a0);
+  let a2: int = e_pop_rax(a1);
+  let a3: int = e_pop_rax(a2);
+  let a4: int = e_mov_rax_imm(1, a3);
+  let a5: int = be_store_emit(dk, ds, 0, a4);
+  let a6: int = e_mov_rax_imm(3, a5);
+  let a7: int = be_store_emit(dk, ds, 1, a6);
+  let a8: int = e_mov_rax_imm(0, a7);
+  let a9: int = be_store_emit(dk, ds, 2, a8);
+  let a10: int = e_mov_rax_imm(0, a9);
+  let a11: int = be_store_emit(dk, ds, 3, a10);
+  let a12: int = e_jmp_rel(jd2, a11);
+  return a12;
+}
+// Direct arm: pop rellen/relptr into the len/ptr homes, drop the dir
+// words, store tag/code 0. Falls through into done (no jmp).
+fn be_e_fjoin_direct(dk: int, ds: int, acc: int): int {
+  let a0: int = e_pop_rax(acc);
+  let a1: int = be_store_emit(dk, ds, 3, a0);
+  let a2: int = e_pop_rax(a1);
+  let a3: int = be_store_emit(dk, ds, 2, a2);
+  let a4: int = e_pop_rax(a3);
+  let a5: int = e_pop_rax(a4);
+  let a6: int = e_mov_rax_imm(0, a5);
+  let a7: int = be_store_emit(dk, ds, 0, a6);
+  let a8: int = e_mov_rax_imm(0, a7);
+  let a9: int = be_store_emit(dk, ds, 1, a8);
+  return a9;
+}
+fn be_e_argv_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
+  if dk == 0 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  if tbase(ty) == 6 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  if tbase(tsub(ty, 1, [])) == 3 { } else { return BZ(p: t->s, n: acc, c: 29, o: t->s); }
+  if be_fn_is_main(src, fs, fe) == 1 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
+  let lp: Tok = pgm_tok(src, t->p, end);
+  if lp->k == 4 { if lp->l == 1 { if tok_byte(src, lp->s) == 40 { return be_e_argv_idx(src, f, fs, fe, dk, ds, t, t, lp, end, acc); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: t->s);
+}
+fn be_e_argv_idx(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, a: Tok, lp: Tok, end: int, acc: int): BZ {
+  let e: BZ = be_e_level(src, f, fs, fe, 0, lp->p, end, acc);
+  if e->c == 0 { } else { return e; }
+  let cp: Tok = pgm_tok(src, e->p, end);
+  if cp->k == 4 { if cp->l == 1 { if tok_byte(src, cp->s) == 41 { return be_e_argv_go(src, f, fs, fe, dk, ds, e->n, cp->p); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 29, o: cp->s);
+}
+fn be_e_argv_go(src: str, f: int, fs: int, fe: int, dk: int, ds: int, acc: int, pos: int): BZ {
+  // Index in rax, stack empty. Mirrors be_s_argv_go_size exactly.
+  let base: int = acc;
+  let neg: int = sz_test_rax() + sz_js();
+  let bnd: int = sz_mov_rcx_rax() + sz_load_rax_argc() + sz_cmp_rcx_rax() + sz_jae();
+  let ptr: int = sz_load_rax_rbp_idx() + sz_push_rax() + sz_mov_rsi_rax() + sz_xor_ecx_ecx();
+  let sl: int = sz_movzx_eax_rsi() + sz_test() + sz_jcc() + sz_inc_rsi() + sz_inc_rcx() + sz_jmp();
+  let oksz: int = sz_pop_rax() + sz_push_rax() + sz_push_rcx() + sz_mov_rax_imm(0) + be_store_size(dk, ds, 0) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 1) + sz_pop_rax() + be_store_size(dk, ds, 3) + sz_pop_rax() + be_store_size(dk, ds, 2) + sz_jmp();
+  let ersz: int = sz_mov_rax_imm(1) + be_store_size(dk, ds, 0) + sz_mov_rax_imm(3) + be_store_size(dk, ds, 1) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 2) + sz_mov_rax_imm(0) + be_store_size(dk, ds, 3) + sz_jmp();
+  let slhead: int = base + neg + bnd + ptr;
+  let okstart: int = slhead + sl;
+  let errstart: int = okstart + oksz;
+  let done: int = errstart + ersz;
+  let dneg: int = be_rel32(errstart, base + neg - sz_js(), sz_js());
+  let dbnd: int = be_rel32(errstart, base + neg + bnd - sz_jae(), sz_jae());
+  let dz: int = be_rel32(okstart, slhead + sz_movzx_eax_rsi() + sz_test() + sz_jcc() - sz_jcc(), sz_jcc());
+  let jd1: int = be_rel32(done, okstart + oksz - sz_jmp(), sz_jmp());
+  let jd2: int = be_rel32(done, errstart + ersz - sz_jmp(), sz_jmp());
+  let a1: int = be_e_argv_checks(acc, dneg, dbnd);
+  let a2: int = be_e_argv_ptrlen(a1, dz, slhead);
+  let a3: int = be_e_argv_ok(dk, ds, a2, jd1);
+  let a4: int = be_e_argv_err(dk, ds, a3, jd2);
+  return BZ(p: pos, n: a4, c: 0, o: 0);
+}
+// Bounds checks: idx < 0 (js) or idx >= argc (jae) => err.
+fn be_e_argv_checks(acc: int, dneg: int, dbnd: int): int {
+  let a0: int = e_test_rax(acc);
+  let a1: int = e_js(dneg, a0);
+  let a2: int = e_mov_rcx_rax(a1);
+  let a3: int = e_load_rax_argc(a2);
+  let a4: int = e_cmp_rcx_rax(a3);
+  let a5: int = e_jae(dbnd, a4);
+  return a5;
+}
+// Load argv[idx], then NUL-scan its length into rcx (rsi walks).
+fn be_e_argv_ptrlen(acc: int, dz: int, slhead: int): int {
+  let a0: int = e_load_rax_rbp_idx(24, acc);
+  let a1: int = e_push_rax(a0);
+  let a2: int = e_mov_rsi_rax(a1);
+  let a3: int = e_xor_ecx_ecx(a2);
+  let a4: int = e_movzx_eax_rsi(a3);
+  let a5: int = e_test_eax(a4);
+  let a6: int = e_jcc_z(dz, a5);
+  let a7: int = e_inc_rsi(a6);
+  let a8: int = e_inc_rcx(a7);
+  let a9: int = e_jmp_rel(be_rel32(slhead, a8, sz_jmp()), a8);
+  return a9;
+}
+// Ok arm: restore ptr/len, store (0, 0, ptr, len), jmp done.
+fn be_e_argv_ok(dk: int, ds: int, acc: int, jd1: int): int {
+  let a0: int = e_pop_rax(acc);
+  let a1: int = e_push_rax(a0);
+  let a2: int = e_push_rcx(a1);
+  let a3: int = e_mov_rax_imm(0, a2);
+  let a4: int = be_store_emit(dk, ds, 0, a3);
+  let a5: int = e_mov_rax_imm(0, a4);
+  let a6: int = be_store_emit(dk, ds, 1, a5);
+  let a7: int = e_pop_rax(a6);
+  let a8: int = be_store_emit(dk, ds, 3, a7);
+  let a9: int = e_pop_rax(a8);
+  let a10: int = be_store_emit(dk, ds, 2, a9);
+  let a11: int = e_jmp_rel(jd1, a10);
+  return a11;
+}
+// Err arm: stack is already empty (checks push nothing); store
+// (1, 3, 0, 0), jmp done.
+fn be_e_argv_err(dk: int, ds: int, acc: int, jd2: int): int {
+  let a0: int = e_mov_rax_imm(1, acc);
+  let a1: int = be_store_emit(dk, ds, 0, a0);
+  let a2: int = e_mov_rax_imm(3, a1);
+  let a3: int = be_store_emit(dk, ds, 1, a2);
+  let a4: int = e_mov_rax_imm(0, a3);
+  let a5: int = be_store_emit(dk, ds, 2, a4);
+  let a6: int = e_mov_rax_imm(0, a5);
+  let a7: int = be_store_emit(dk, ds, 3, a6);
+  let a8: int = e_jmp_rel(jd2, a7);
+  return a8;
 }
 fn be_e_byteat_status(src: str, f: int, fs: int, fe: int, dk: int, ds: int, ty: list<int,24>, t: Tok, end: int, acc: int): BZ {
   if dk == 0 { } else { return BZ(p: t->s, n: acc, c: 25, o: t->s); }
@@ -6850,9 +7467,17 @@ fn be_e_unwrap_tmpdef(src: str, f: int, fs: int, fe: int, t: Tok, w: int, tb: in
 fn be_s_strx(src: str, f: int, fs: int, fe: int, dk: int, ds: int, pos: int, end: int): BZ {
   let t: Tok = pgm_tok(src, pos, end);
   if t->k == 3 { return be_s_strlit(src, f, dk, ds, t); } else { }
-  if t->k == 1 { return be_s_strvar(src, f, fs, fe, dk, ds, t, end); } else { }
+  if t->k == 1 { if be_is_unwrap(src, t) == 1 { return be_s_strunwrap(src, f, fs, fe, dk, ds, t, end); } else { } return be_s_strvar(src, f, fs, fe, dk, ds, t, end); } else { }
   if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 40 { return be_s_strparen(src, f, fs, fe, dk, ds, t, end); } else { } } else { } } else { }
   return BZ(p: pos, n: 0, c: 29, o: pos);
+}
+// M6: `let s: str = unwrap_or(status_var, default)` (status<str>
+// homes produced by fjoin/argv). Direct `unwrap_or(fjoin(...))`
+// stays 25 (see be_s_unwrap_agg_call).
+fn be_s_strunwrap(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, end: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_s_unwrap(src, f, fs, fe, dk, ds, tscal(3), t, end); } else { } } else { } } else { }
+  return BZ(p: t->s, n: 0, c: 25, o: t->s);
 }
 fn be_s_strlit(src: str, f: int, dk: int, ds: int, t: Tok): BZ {
   let a0: int = sz_mov_rax_imm(0) + be_store_size(dk, ds, 0);
@@ -6881,9 +7506,15 @@ fn be_s_strparen(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, e
 fn be_e_strx(src: str, f: int, fs: int, fe: int, dk: int, ds: int, pos: int, end: int, acc: int): BZ {
   let t: Tok = pgm_tok(src, pos, end);
   if t->k == 3 { return be_e_strlit(src, f, dk, ds, t, acc); } else { }
-  if t->k == 1 { return be_e_strvar(src, f, fs, fe, dk, ds, t, end, acc); } else { }
+  if t->k == 1 { if be_is_unwrap(src, t) == 1 { return be_e_strunwrap(src, f, fs, fe, dk, ds, t, end, acc); } else { } return be_e_strvar(src, f, fs, fe, dk, ds, t, end, acc); } else { }
   if t->k == 4 { if t->l == 1 { if tok_byte(src, t->s) == 40 { return be_e_strparen(src, f, fs, fe, dk, ds, t, end, acc); } else { } } else { } } else { }
   return BZ(p: pos, n: acc, c: 29, o: pos);
+}
+// M6: emit twin of be_s_strunwrap above.
+fn be_e_strunwrap(src: str, f: int, fs: int, fe: int, dk: int, ds: int, t: Tok, end: int, acc: int): BZ {
+  let nx: Tok = pgm_tok(src, t->p, end);
+  if nx->k == 4 { if nx->l == 1 { if tok_byte(src, nx->s) == 40 { return be_e_unwrap(src, f, fs, fe, dk, ds, tscal(3), t, end, acc); } else { } } else { } } else { }
+  return BZ(p: t->s, n: acc, c: 25, o: t->s);
 }
 fn be_e_strlit(src: str, f: int, dk: int, ds: int, t: Tok, acc: int): BZ {
   let off: int = be_data_off(src, f, t->s);

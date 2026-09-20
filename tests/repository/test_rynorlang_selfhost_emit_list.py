@@ -165,6 +165,7 @@ ACCEPT_CASES = [
     ("push-dyn", "fn main(): int { let l: list<int,3> = [1]; let x: int = 2 + 3; let s: status<list<int,3>> = push(l, x); let m: list<int,3> = unwrap_or(s, l); let t: status<int> = m[1]; return unwrap_or(t, 0); }\n"),
     ("push-status-ret", "fn put(l: list<int,2>, v: int): status<list<int,2>> { let s: status<list<int,2>> = push(l, v); return s; }\nfn main(): int { let l: list<int,2> = [1]; let s: status<list<int,2>> = put(l, 2); let m: list<int,2> = unwrap_or(s, l); return len(m); }\n"),
     ("unwrap-bool-err", "fn main(): int { let l: list<bool,2> = [true]; let s: status<bool> = l[5]; if unwrap_or(s, false) { return 1; } else { return 0; } }\n"),
+    ("frame-shrink-pending", "fn mk(): list<int,2> { return [3, 4]; }\nfn f(x: int, l: list<int,2>, y: int): int { return x + len(l) + y; }\nfn main(): int { return f(100, mk(), 1); }\n"),
 ]
 
 REJECT25_CASES = [
@@ -232,6 +233,7 @@ class BEListAcceptTests(unittest.TestCase):
         self.assertEqual(by_name["idx-1"], 20)
         self.assertEqual(by_name["push-ok-val"], 20)
         self.assertEqual(by_name["push-full"], 1)
+        self.assertEqual(by_name["frame-shrink-pending"], 103)
 
 
 class BEListRejectTests(unittest.TestCase):
@@ -337,13 +339,20 @@ class BEListMutantTests(unittest.TestCase):
         self.assertTrue(self._red_on(combo, self._idx("idx-err-default")))
 
     def test_be_m6_frame_bytes_omitted(self):
+        # Anchor repaired for the M2 maxof frame form (same shrink
+        # intent: nl - maxrec instead of nl + maxrec, both sides).
+        # Re-targeted: the M2 maxof floors main's frame at nl, which
+        # makes list-ret-lit benign (mk's unreserved writes land in
+        # dead space); frame-shrink-pending keeps a caller push
+        # pending across mk(), so the shrunk frame clobbers it
+        # (103 -> 5).
         combo = _mut(_combo_text(),
-                     "  let fr: int = nl + be_unit_maxrec(src, f);",
-                     "  let fr: int = nl - be_unit_maxrec(src, f);")
+                     "  let fr: int = be_temp_maxof(nl + be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce));",
+                     "  let fr: int = be_temp_maxof(nl - be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce));")
         combo = _mut(combo,
-                     "  let fr: int = e_frame(nl + be_unit_maxrec(src, f), acc);",
-                     "  let fr: int = e_frame(nl - be_unit_maxrec(src, f), acc);")
-        self.assertTrue(self._red_on(combo, self._idx("list-ret-lit")))
+                     "  let fr: int = e_frame(be_temp_maxof(nl + be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce)), acc);",
+                     "  let fr: int = e_frame(be_temp_maxof(nl - be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce)), acc);")
+        self.assertTrue(self._red_on(combo, self._idx("frame-shrink-pending")))
 
     def test_be_m7_wrong_ret_dst(self):
         combo = _mut(_combo_text(),

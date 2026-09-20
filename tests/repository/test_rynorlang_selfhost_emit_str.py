@@ -184,7 +184,8 @@ REJECT25_CASES = [
     # NOTE (G4): `len(s)` on str variables is now supported; its coverage
     # lives in test_rynorlang_selfhost_emit_strbyte.py (g4-len-*).
     ("str-ret", "fn h(): str { return \"x\"; }\nfn main(): int { return 0; }\n"),
-    ("print-strvar", "fn main(): int { let s: str = \"ab\"; print(s); return 0; }\n"),
+    # NOTE (M3): `print(s)` on str variables is now supported; its
+    # coverage lives in test_rynorlang_selfhost_emit_print.py.
     ("print-strcall", "fn h(): str { return \"x\"; }\nfn main(): int { print(h()); return 0; }\n"),
     ("str-bare", "fn main(): int { let s: str = \"ab\"; s; return 0; }\n"),
     ("str-ret-helper", "fn g(x: int): str { return \"q\"; }\nfn main(): int { return 0; }\n"),
