@@ -1394,11 +1394,34 @@ fn be_find_at(src: str, f: int, ns: int, nl: int, fs: int, pos: int, end: int, i
   return be_find_at(src, f, ns, nl, fs, it->p, end, idx);
 }
 fn be_find_hit(src: str, f: int, ns: int, nl: int, fs: int, end: int, it: TI, idx: int): int {
-  if it->s >= fs { return 0 - 1; } else { }
+  // M4: direct self-calls resolve to the enclosing function itself.
+  // it->s >= fs means the hit IS the enclosing span (backward scan
+  // passed it): compare names and return the enclosing index when
+  // they match (self-call), else -1 (forward reference stays 25).
+  // Backward hits keep the old path (predecessor index).
+  if it->s >= fs { return be_find_self(src, f, ns, nl, fs); } else { }
   let kw: Tok = next_tok(src, it->s);
   let nm: Tok = next_tok(src, kw->p);
   if nm->l == nl { if beq(src, nm->s, src, ns, nl) { return idx; } else { } } else { }
   return be_find_at(src, f, ns, nl, fs, it->p, end, idx + 1);
+}
+fn be_find_self(src: str, f: int, ns: int, nl: int, fs: int): int {
+  // Self-call: is the enclosing function (span at fs) the callee?
+  // Compare the enclosing name against the call name span.
+  let kw: Tok = next_tok(src, fs);
+  let nm: Tok = next_tok(src, kw->p);
+  if nm->l == nl { if beq(src, nm->s, src, ns, nl) { return be_fn_selfidx(src, f, fs); } else { } } else { }
+  return 0 - 1;
+}
+fn be_fn_selfidx(src: str, f: int, fs: int): int {
+  // Ordinal of the function starting at fs (own index for E8 disp).
+  return be_selfidx_at(src, f, fs, 0, len(src), 0);
+}
+fn be_selfidx_at(src: str, f: int, fs: int, pos: int, end: int, idx: int): int {
+  let it: TI = tl_next(src, f, pos, end);
+  if it->k == 0 { return 0 - 1; } else { }
+  if it->k == 1 { if it->s == fs { return idx; } else { } return be_selfidx_at(src, f, fs, it->p, end, idx + 1); } else { }
+  return be_selfidx_at(src, f, fs, it->p, end, idx);
 }
 fn be_size_fn(src: str, f: int, cs: int, ce: int): BZ {
   let kw: Tok = next_tok(src, cs);

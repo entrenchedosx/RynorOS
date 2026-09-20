@@ -3,8 +3,9 @@
 Extends the baby backend (`rynorlang/selfhost/emit.rl`, core dialect)
 with scalar local homes, integer parameters (SysV-subset: rdi, rsi,
 rdx, rcx, r8, r9, max 6, return rax), and direct same-unit calls with
-stack-balanced argument marshaling. No control flow, aggregates,
-modules, or recursion (direct self-calls are backend-25).
+stack-balanced argument marshaling. No control flow, aggregates, or
+modules. (M4 owns direct self-call recursion: the old recur 25-pin
+moved to the M4 suite as m4-base/m4-fact/... accepts.)
 
 QEMU and a native toolchain are unavailable here, so execution is
 proven by the test-only emulator below (subclass of the BE-A emulator
@@ -166,14 +167,22 @@ ACCEPT_CASES = [
     ("two-params-local", "fn f(a: int, b: int): int { let s: int = a + b; return s * s; }\nfn main(): int { return f(3, 4); }\n"),
     ("depth-8", "fn f1(x: int): int { return x + 1; }\nfn f2(x: int): int { return f1(x) + 1; }\nfn f3(x: int): int { return f2(x) + 1; }\nfn f4(x: int): int { return f3(x) + 1; }\nfn f5(x: int): int { return f4(x) + 1; }\nfn f6(x: int): int { return f5(x) + 1; }\nfn f7(x: int): int { return f6(x) + 1; }\nfn main(): int { return f7(0); }\n"),
     # M1 promotes bool params/returns to compilable (1-word scalar, RAX
-    # return, canonical 0/1); recursion and main-with-param stay 25.
+    # return, canonical 0/1); main-with-param stays 25. (M4 owns
+    # recursion: the stale recur 25-pin moved to the M4 suite as
+    # m4-base/m4-fact/... accepts.)
     ("bool-param", "fn f(b: bool): int { if b { return 5; } return 0; }\nfn main(): int { return f(true); }\n"),
     ("bool-ret-helper", "fn f(): bool { return true; }\nfn main(): int { if f() { return 3; } return 0; }\n"),
 ]
 
 REJECT25_CASES = [
-    ("recur", "fn foo(x: int): int { return foo(x); }\nfn main(): int { return foo(1); }\n"),
     ("main-with-param", "fn main(a: int): int { return a; }\n"),
+]
+# M4-promoted shape (direct self-call recursion) returns code 0 from
+# the backend now, so the old BE-B 25-pin is dropped, NOT re-asserted
+# here: the M4 suite owns recursion end-to-end (differential +
+# emulator + mutants + QEMU). Ownership note for the audit trail:
+M4_PROMOTED_PINS = [
+    ("recur", "fn foo(x: int): int { return foo(x); }\nfn main(): int { return foo(1); }\n"),
 ]
 
 REJECT_CHECK_CASES = [
@@ -250,6 +259,16 @@ class BEBRejectTests(unittest.TestCase):
         for (code, _off, hexstr), (name, _src) in zip(self.r25, REJECT25_CASES):
             self.assertEqual(code, 25, name)
             self.assertEqual(hexstr, "", name)
+
+    def test_06b_m4_promoted_pins_compile(self):
+        # Gate assertion only (no execution: unbounded self-call
+        # diverges under both oracle and emulator; bounded recursion
+        # execution proof lives in the M4 suite). The dropped pin
+        # must return code 0 from the current backend.
+        for name, src in M4_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
 
     def test_07_checker_passthrough(self):
         want_code = {"SEM_UNKNOWN_FUNCTION": 13, "SEM_ARITY_MISMATCH": 12, "SEM_DUPLICATE": 10}
