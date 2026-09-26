@@ -158,8 +158,16 @@ DIVERGE_CASES = [
 
 REJECT25_CASES = [
     ("while-match", "fn main(): int { while true { match 1 { 1 => { break; }, _ => { return 0; } } } return 2; }\n"),
-    ("loop-recur", "fn foo(x: int): int { while x == 0 { return foo(x); } return 1; }\nfn main(): int { return foo(0); }\n"),
     ("cond-div", "fn main(): int { if 4 / 2 == 2 { return 1; } else { return 0; } }\n"),
+]
+# M4-promoted shape (direct self-call in a while body) returns code 0
+# from the backend now, so the old BE-C 25-pin is dropped, NOT re-asserted
+# here: the M4 suite owns self-call recursion end-to-end (differential +
+# emulator + mutants + QEMU). The pin went stale at the M4 commit (verified
+# code 0 on the pre-M7 backend with byte-identical bytes); promoted late
+# during M7 regression. Ownership note for the audit trail:
+M4_PROMOTED_PINS = [
+    ("loop-recur", "fn foo(x: int): int { while x == 0 { return foo(x); } return 1; }\nfn main(): int { return foo(0); }\n"),
 ]
 
 REJECT_CHECK_CASES = [
@@ -224,6 +232,15 @@ class BECRejectTests(unittest.TestCase):
         for (code, _off, hexstr), (name, _src) in zip(self.r25, REJECT25_CASES):
             self.assertEqual(code, 25, name)
             self.assertEqual(hexstr, "", name)
+
+    def test_06b_m4_promoted_pins_compile(self):
+        # Gate assertion only (no execution): the dropped pin must
+        # return code 0 from the current backend. Value proof lives
+        # in the M4 suite (self-call accept corpus brings differentials).
+        for name, src in M4_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
 
     def test_07_checker_passthrough(self):
         want_code = {"SEM_TYPE_MISMATCH": 11}

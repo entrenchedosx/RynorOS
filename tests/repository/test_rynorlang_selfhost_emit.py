@@ -548,8 +548,16 @@ REJECT25_CASES = [
     ("params", "fn main(a: int): int { return a; }\n"),
     ("bool-main", "fn main(): bool { return true; }\n"),
     ("unit-ret", "fn main() { return; }\n"),
-    ("print-call", "fn main(): int { print(1); return 0; }\n"),
     ("no-main", "fn f(): int { return 0; }\n"),
+]
+# M3-promoted shape (print(int) in main) returns code 0 from the backend
+# now, so the old BE-A 25-pin is dropped, NOT re-asserted here: the M3
+# suite owns scalar print end-to-end (differential + emulator + mutants +
+# QEMU). The pin went stale at the M3 commit (verified code 0 on the
+# pre-M7 backend); promoted late during M7 regression. Ownership note
+# for the audit trail:
+M3_PROMOTED_PINS = [
+    ("print-call", "fn main(): int { print(1); return 0; }\n"),
 ]
 
 REJECT_CHECK_CASES = [
@@ -615,6 +623,15 @@ class BERejectTests(unittest.TestCase):
         for (code, _off, hexstr), (name, _src) in zip(self.r25, REJECT25_CASES):
             self.assertEqual(code, 25, name)
             self.assertEqual(hexstr, "", name)
+
+    def test_05b_m3_promoted_pins_compile(self):
+        # Gate assertion only (no execution): the dropped pin must
+        # return code 0 from the current backend. Value proof lives
+        # in the M3 suite (print accept corpus brings differentials).
+        for name, src in M3_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
 
     def test_06_checker_passthrough(self):
         want_code = {"SEM_UNDECLARED": 9, "SEM_DUPLICATE": 10, "SEM_UNKNOWN_FUNCTION": 13}
@@ -708,12 +725,16 @@ class BEMutantTests(unittest.TestCase):
         self.assertNotEqual(entry, 0)
 
     def test_be_m5_bound_disabled(self):
+        # M7 repair: the second anchor went stale at M2, which wrapped the
+        # frame check with be_temp_maxof(..., be_fn_maxarm(...)). Retarget
+        # to the live M2 form; intent unchanged (both main-gate frame
+        # checks disabled, so the 129-slot program no longer fails 26).
         combo = _mut(_combo_text(),
                      "  if nl <= 128 { } else { return derr(26, f, cs); }",
                      "  if nl <= 999999 { } else { return derr(26, f, cs); }")
         combo = _mut(combo,
-                     "  if nl + be_unit_maxrec(src, f) <= 128 { } else { return derr(26, f, cs); }",
-                     "  if nl + be_unit_maxrec(src, f) <= 999999 { } else { return derr(26, f, cs); }")
+                     "  if be_temp_maxof(nl + be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce)) <= 128 { } else { return derr(26, f, cs); }",
+                     "  if be_temp_maxof(nl + be_unit_maxrec(src, f), be_fn_maxarm(src, f, cs, ce)) <= 999999 { } else { return derr(26, f, cs); }")
         (code, _off, _hex) = _run_be(combo, [("frames-129", BOUND_CASES_129)])[0]
         self.assertNotEqual(code, 26)
 

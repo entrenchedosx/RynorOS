@@ -17,9 +17,10 @@ sequence runs (push/pop-rcx/pop-rax/push-rcx/test/js + len/cmp/jae);
 both arms consume the spill (ok via its trailing pop-rcx, err via a
 leading pop) so RSP balances. Register model unchanged (caller-saved
 only; no RBX push/pop anywhere). Out of scope (stay backend-25):
-literal-str scrutinee, standalone `byte_at` statement, `byte_at` in
-`if`/`while` conditions (bare `unwrap_or(byte_at(...))` there still
-fails closed at 25), `let status<int>` from non-byte_at calls.
+literal-str scrutinee, standalone `byte_at` statement,
+`let status<int>` from non-byte_at calls. `byte_at` in `if`/`while`
+conditions was M7-promoted (bare `unwrap_or(byte_at(...))` there now
+compiles via the G4 fused template; owned by the cond suite).
 
 QEMU/native proof lives in probe_m5native.py (MATCH at M5 commit);
 here execution is proven by the test-only emulator below (the G4
@@ -93,6 +94,12 @@ ACCEPT_CASES = [
 REJECT25_CASES = [
     ("lit-scrutinee-status", 'fn main(): int { let b: status<int> = byte_at("hi", 0); return unwrap_or(b, 1); }\n'),
     ("standalone-stmt", 'fn main(): int { let s: str = "ab"; byte_at(s, 0); return 1; }\n'),
+]
+# M7-promoted shapes (bare byte_at in if/while conditions) return code 0
+# from the backend now, so the old M5 25-pins are dropped, NOT re-asserted
+# here: the M7 suite owns the cond/call-arg end-to-end (differential +
+# emulator + mutants + QEMU). Ownership note for the audit trail:
+M7_PROMOTED_PINS = [
     ("cond-bare-call", 'fn main(): int { let s: str = "ab"; if unwrap_or(byte_at(s, 0), 0) == 97 { return 1; } return 0; }\n'),
     ("while-bare-call", 'fn main(): int { let s: str = "ab"; let i: int = 0; while unwrap_or(byte_at(s, i), 0) != 0 { return 1; } return 0; }\n'),
 ]
@@ -176,6 +183,15 @@ class M5RejectTests(unittest.TestCase):
         for (code, _off, hexstr), (name, _src) in zip(self.r25, REJECT25_CASES):
             self.assertEqual(code, 25, name)
             self.assertEqual(hexstr, "", name)
+
+    def test_08b_m7_promoted_pins_compile(self):
+        # Gate assertion only (no execution): the dropped pins must
+        # return code 0 from the current backend. Value proof lives
+        # in the M7 suite (m7-if-hit / m7-while-hit bring differentials).
+        for name, src in M7_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
 
 
 def _mut(base, old, new, count=1):

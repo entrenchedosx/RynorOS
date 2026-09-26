@@ -6987,7 +6987,7 @@ fn be_s_unwrap_sized(src: str, f: int, fs: int, fe: int, v: VS, dn: int, pos: in
 }
 fn be_s_unwrap_call(src: str, f: int, fs: int, fe: int, t: Tok, a: Tok, end: int): BZ {
   let nx: Tok = pgm_tok(src, a->p, end);
-  if be_is_byteat(src, a) == 1 { return BZ(p: t->s, n: 0, c: 25, o: a->s); } else { }
+  if be_is_byteat(src, a) == 1 { return be_s_unwrap_agg_byteat(src, f, fs, fe, 0, 0, tscal(1), t, t, end); } else { }
   if be_is_push(src, a) == 1 { return BZ(p: t->s, n: 0, c: 25, o: a->s); } else { }
   let ci: int = be_find_fn(src, f, a->s, a->l, fs);
   if ci == 0 - 1 { return BZ(p: t->s, n: 0, c: 25, o: a->s); } else { }
@@ -7302,7 +7302,7 @@ fn be_e_unwrap_emit(base: int, acc: int, pos: int, jzd: int, jmpd: int): BZ {
   return BZ(p: pos, n: a7, c: 0, o: 0);
 }
 fn be_e_unwrap_call(src: str, f: int, fs: int, fe: int, t: Tok, a: Tok, nx: Tok, end: int, acc: int): BZ {
-  if be_is_byteat(src, a) == 1 { return BZ(p: t->s, n: acc, c: 25, o: a->s); } else { }
+  if be_is_byteat(src, a) == 1 { return be_e_unwrap_agg_byteat(src, f, fs, fe, 0, 0, tscal(1), t, t, end, acc); } else { }
   if be_is_push(src, a) == 1 { return BZ(p: t->s, n: acc, c: 25, o: a->s); } else { }
   let ci: int = be_find_fn(src, f, a->s, a->l, fs);
   if ci == 0 - 1 { return BZ(p: t->s, n: acc, c: 25, o: a->s); } else { }

@@ -341,9 +341,29 @@ class G4MutantTests(unittest.TestCase):
         self.assertTrue(self._red_on(combo, self._idx("g4-byte-mid")))
 
     def test_g4_m11_let_store_slides(self):
+        # M7 retarget: let-position byte_at now flows through the operand
+        # route (ds=0, value in rax) plus the generic let store below,
+        # NOT the fused-let ds=base store. Slide the live store instead:
+        # `b` lands one home high and `return b` diverges from the oracle.
         combo = _mut(_combo_text(),
-                     "  return e_mov_home_rax(ds, a6);",
-                     "  return e_mov_home_rax(ds + 1, a6);")
+                     "fn be_e_let_unwrap(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR, eq: Tok): BZ {\n"
+                     "  let e: BZ = be_e_level(src, f, fs, fe, 0, eq->p, end, acc);\n"
+                     "  if e->c == 0 { } else { if e->c == 25 { return be_e_let_unwrap_fused(src, f, fs, fe, pos, end, acc, t, nm, ty, eq); } else { } return e; }\n"
+                     "  let sc: Tok = pgm_tok(src, e->p, end);\n"
+                     "  if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }\n"
+                     "  let v: VS = res_var(src, f, fs, fe, nm->s, nm->s, nm->l);\n"
+                     "  if has_err(v->d) { return BZ(p: pos, n: acc, c: 29, o: nm->s); } else { }\n"
+                     "  if v->off == nm->s { } else { return BZ(p: pos, n: acc, c: 29, o: nm->s); }\n"
+                     "  return BZ(p: sc->p, n: e_mov_home_rax(v->slot - tslots(ty->t, src, f) + 1, e->n), c: 0, o: 0);",
+                     "fn be_e_let_unwrap(src: str, f: int, fs: int, fe: int, pos: int, end: int, acc: int, t: Tok, nm: Tok, ty: TR, eq: Tok): BZ {\n"
+                     "  let e: BZ = be_e_level(src, f, fs, fe, 0, eq->p, end, acc);\n"
+                     "  if e->c == 0 { } else { if e->c == 25 { return be_e_let_unwrap_fused(src, f, fs, fe, pos, end, acc, t, nm, ty, eq); } else { } return e; }\n"
+                     "  let sc: Tok = pgm_tok(src, e->p, end);\n"
+                     "  if pgm_is_semi(src, sc) { } else { return BZ(p: pos, n: acc, c: 29, o: sc->s); }\n"
+                     "  let v: VS = res_var(src, f, fs, fe, nm->s, nm->s, nm->l);\n"
+                     "  if has_err(v->d) { return BZ(p: pos, n: acc, c: 29, o: nm->s); } else { }\n"
+                     "  if v->off == nm->s { } else { return BZ(p: pos, n: acc, c: 29, o: nm->s); }\n"
+                     "  return BZ(p: sc->p, n: e_mov_home_rax(v->slot - tslots(ty->t, src, f) + 2, e->n), c: 0, o: 0);")
         self.assertTrue(self._red_on(combo, self._idx("g4-byte-let")))
 
     def test_g4_m12_err_drops_pop(self):
