@@ -135,6 +135,15 @@ ACCEPT_CASES = [
 ]
 
 REJECT25_CASES = [
+    # NOTE (M8): the old str-ret 25-pin moved to M8_PROMOTED_PINS below;
+    # no live 25-pin remains in this suite. Keep the class green over an
+    # empty pin list (documents the moved boundary).
+]
+# M8-promoted shape (str helper-return) returns code 0 from the backend
+# now, so the old BE-D 25-pin is dropped, NOT re-asserted here: the M8
+# suite owns string returns end-to-end (differential + emulator +
+# mutants + QEMU). Ownership note for the audit trail:
+M8_PROMOTED_PINS = [
     ("str-ret", 'fn f(): str { return "ab"; }\nfn main(): int { return 0; }\n'),
 ]
 # M3-promoted shapes (print-int / print-bool / print-int-var) return
@@ -211,6 +220,15 @@ class BEDRejectTests(unittest.TestCase):
         # full execution proof lives in the M3 suite). Every dropped
         # pin must return code 0 from the current backend.
         for name, src in M3_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
+
+    def test_05c_m8_promoted_pins_compile(self):
+        # Gate assertion only (no execution): the dropped str-ret pin
+        # must return code 0 from the current backend. Value proof
+        # lives in the M8 suite (m8-lit-ret brings differentials).
+        for name, src in M8_PROMOTED_PINS:
             (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
             self.assertEqual(code, 0, name)
             self.assertNotEqual(hexstr, "", name)

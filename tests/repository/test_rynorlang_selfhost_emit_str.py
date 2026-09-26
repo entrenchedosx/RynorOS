@@ -183,11 +183,18 @@ REJECT25_CASES = [
     ("str-byteat", "fn main(): int { let s: status<int> = byte_at(\"ab\", 0); return unwrap_or(s, 0); }\n"),
     # NOTE (G4): `len(s)` on str variables is now supported; its coverage
     # lives in test_rynorlang_selfhost_emit_strbyte.py (g4-len-*).
-    ("str-ret", "fn h(): str { return \"x\"; }\nfn main(): int { return 0; }\n"),
     # NOTE (M3): `print(s)` on str variables is now supported; its
     # coverage lives in test_rynorlang_selfhost_emit_print.py.
-    ("print-strcall", "fn h(): str { return \"x\"; }\nfn main(): int { print(h()); return 0; }\n"),
     ("str-bare", "fn main(): int { let s: str = \"ab\"; s; return 0; }\n"),
+]
+# M8-promoted shapes (str return, print of a str call, str return with
+# params) return code 0 from the backend now, so the old G1 25-pins are
+# dropped, NOT re-asserted here: the M8 suite owns string returns
+# end-to-end (differential + emulator + mutants + QEMU). Ownership note
+# for the audit trail:
+M8_PROMOTED_PINS = [
+    ("str-ret", "fn h(): str { return \"x\"; }\nfn main(): int { return 0; }\n"),
+    ("print-strcall", "fn h(): str { return \"x\"; }\nfn main(): int { print(h()); return 0; }\n"),
     ("str-ret-helper", "fn g(x: int): str { return \"q\"; }\nfn main(): int { return 0; }\n"),
 ]
 
@@ -213,6 +220,16 @@ class G1RejectTests(unittest.TestCase):
         for (code, _off, hexstr), (name, _src) in zip(self.r25, REJECT25_CASES):
             self.assertEqual(code, 25, name)
             self.assertEqual(hexstr, "", name)
+
+    def test_07b_m8_promoted_pins_compile(self):
+        # Gate assertion only (no execution): the dropped pins must
+        # return code 0 from the current backend. Value proof lives
+        # in the M8 suite (m8-lit-ret / m8-print-call / m8-mixed-params
+        # bring differentials).
+        for name, src in M8_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
 
     def test_08_checker_passthrough(self):
         want_code = {"SEM_UNDECLARED": 9, "SEM_ARITY_MISMATCH": 12, "SEM_DUPLICATE": 10,

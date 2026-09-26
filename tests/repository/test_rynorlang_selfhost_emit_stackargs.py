@@ -160,6 +160,13 @@ REJECT25_CASES = [
     ("slots-13", "fn f(a: int, b: int, c: int, d: int, e: int, g: int, h: int, i: int, j: int, k: int, l: int, m: int, n: int): int { return n; }\nfn main(): int { return 0; }\n"),
     ("params-13", "fn f(a: int, b: int, c: int, d: int, e: int, g: int, h: int, i: int, j: int, k: int, l: int, m: int, n: int): int { return 0; }\nfn main(): int { return f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13); }\n"),
     ("slots-14str", "fn f(a: str, b: str, c: str, d: str, e: str, g: str, h: str): int { return 0; }\nfn main(): int { return 0; }\n"),
+]
+# M8-promoted shape (str return over a 7-word stack-arg call) returns
+# code 0 from the backend now, so the old G2 25-pin is dropped, NOT
+# re-asserted here: the M8 suite owns string returns end-to-end
+# (differential + emulator + mutants + QEMU). Ownership note for the
+# audit trail:
+M8_PROMOTED_PINS = [
     ("str-ret-still", "fn h(x: int, a: int, b: int, c: int, d: int, e: int, g: int): str { return \"q\"; }\nfn main(): int { return 0; }\n"),
 ]
 
@@ -239,6 +246,15 @@ class G2RejectTests(unittest.TestCase):
         for (code, _off, hexstr), (name, _src) in zip(self.r25, REJECT25_CASES):
             self.assertEqual(code, 25, name)
             self.assertEqual(hexstr, "", name)
+
+    def test_07b_m8_promoted_pins_compile(self):
+        # Gate assertion only (no execution): the dropped pin must
+        # return code 0 from the current backend. Value proof lives
+        # in the M8 suite (m8-wide-call brings differentials).
+        for name, src in M8_PROMOTED_PINS:
+            (code, _off, hexstr) = _run_be(self.combo, [(name, src)])[0]
+            self.assertEqual(code, 0, name)
+            self.assertNotEqual(hexstr, "", name)
 
     def test_08_boundary_11_12_ok(self):
         for (code, off, hexstr), (name, src) in zip(self.rb, BOUND_CASES):

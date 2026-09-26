@@ -355,7 +355,7 @@ def _insn_len(code: bytes, i: int):
     if b0 == 0x89:
         need(2)
         b1 = code[i + 1]
-        if b1 in (0xC3, 0xC1, 0xE5):
+        if b1 in (0xC3, 0xC1, 0xE5, 0xF1):
             return i + 2
         if b1 == 0x45:
             need(3)
@@ -453,8 +453,13 @@ def _insn_len(code: bytes, i: int):
             raise AssertionError(f"bad lea {b2:#x} at {i:#x}")
         if b1 in (0x01, 0x29):
             need(3)
-            assert code[i + 2] == 0xC8, f"bad alu at {i:#x}"
+            assert code[i + 2] in (0xC8, 0xC6), f"bad alu at {i:#x}"
             return i + 3
+        if b1 == 0x87:
+            need(4)
+            assert code[i + 2] == 0x04, f"bad xchg at {i:#x}"
+            assert code[i + 3] == 0x24, f"bad xchg sib at {i:#x}"
+            return i + 4
         if b1 == 0x39:
             need(3)
             assert code[i + 2] in (0xC8, 0xC1), f"bad cmp at {i:#x}"
@@ -512,6 +517,18 @@ def _insn_len(code: bytes, i: int):
                 return i + 4
             raise AssertionError(f"bad rex0f {b2:#x} at {i:#x}")
         raise AssertionError(f"bad rex48 {b1:#x} at {i:#x}")
+    if b0 == 0x4C:
+        need(3)
+        if code[i + 1] == 0x8B:
+            assert code[i + 2] in (0x44, 0x4C), f"bad rex4c modrm {code[i + 2]:#x} at {i:#x}"
+            assert code[i + 3] == 0x24, f"bad rex4c sib at {i:#x}"
+            need(5)
+            return i + 5
+        if code[i + 1] == 0x89:
+            assert code[i + 2] in (0x45, 0x4D), f"bad rex4c spill {code[i + 2]:#x} at {i:#x}"
+            need(4)
+            return i + 4
+        raise AssertionError(f"bad rex4c {code[i + 1]:#x} at {i:#x}")
     raise AssertionError(f"unknown opcode {b0:#x} at {i:#x}")
 
 
