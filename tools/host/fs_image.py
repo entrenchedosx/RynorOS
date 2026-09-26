@@ -52,12 +52,18 @@ def encode_entry(name: str, ftype: int, first: int, count: int, length: int) -> 
     return bytes(record)
 
 
-def build(entries: list, pad_blocks: int = 0) -> bytes:
+def build(entries: list, pad_blocks: int = 0, data_slack: int = 0,
+          gaps: dict | None = None, dir_slack: int = 0) -> bytes:
     """entries: [(path, bytes|None)] with None marking a directory.
 
     Intermediate directories are auto-created; exact duplicates and
     file/dir conflicts raise ValueError; output is sorted canonically.
     pad_blocks appends trailing zeroed device blocks beyond the fs.
+    data_slack appends zeroed blocks INSIDE the data region (free space
+    the P1-A allocator may consume). gaps maps a flat entry key (no
+    leading slash, e.g. "b512") to zeroed blocks inserted immediately
+    BEFORE that file's extent (deterministic interior free space).
+    dir_slack appends empty directory blocks (free slots for creates).
     """
     files: dict = {}
     dirs: set = set()
@@ -81,12 +87,17 @@ def build(entries: list, pad_blocks: int = 0) -> bytes:
             files[key] = bytes(content)
     records = []
     data_blobs = []
+    gapmap = dict(gaps or {})
+    for key, count in gapmap.items():
+        if key not in files or not isinstance(count, int) or count < 0:
+            raise ValueError(f"bad gap {key!r}")
     for name in sorted(dirs):
         records.append((name, encode_entry(name, TYPE_DIR, 0, 0, 0)))
     data_block = 0
     data_map = {}
     for name in sorted(files):
         blob = files[name]
+        data_block += gapmap.get(name, 0)
         nblocks = (len(blob) + BLOCK - 1) // BLOCK if blob else 0
         # Canonical empty file: (0,0,0), matching the kernel/host rule that
         # a zero-count extent carries no first-block.
@@ -95,12 +106,17 @@ def build(entries: list, pad_blocks: int = 0) -> bytes:
         records.append((name, None))
     records.sort(key=lambda item: item[0])
     nentries = len(records)
+    if not isinstance(dir_slack, int) or dir_slack < 0:
+        raise ValueError(f"bad dir_slack {dir_slack!r}")
     dir_blocks = max(1, (nentries + DIR_SLOTS_PER_BLOCK - 1) // DIR_SLOTS_PER_BLOCK)
+    dir_blocks += dir_slack
     if dir_blocks > MAX_DIR_BLOCKS:
         raise ValueError("directory too large for v1")
     # Data region is never degenerate (even an empty filesystem carries one
     # zeroed block); the kernel requires data_blocks >= 1.
-    data_blocks = max(1, data_block)
+    if not isinstance(data_slack, int) or data_slack < 0:
+        raise ValueError(f"bad data_slack {data_slack!r}")
+    data_blocks = max(1, data_block) + data_slack
     data_start = 1 + dir_blocks
     total = 1 + dir_blocks + data_blocks + pad_blocks
     body = []
@@ -131,6 +147,7 @@ def build(entries: list, pad_blocks: int = 0) -> bytes:
         out += chunk
     for name in sorted(files):
         blob = files[name]
+        out += b"\x00" * (gapmap.get(name, 0) * BLOCK)
         out += blob
         padding = (-len(blob)) % BLOCK if blob else 0
         out += b"\x00" * padding

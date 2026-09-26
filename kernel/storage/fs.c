@@ -39,6 +39,7 @@ static cpu_u32 fs_dev;
    discarding the error. Unreachable while device slots are static (no
    hot-removal exists); if one ever fires the transcript names the step. */
 static void rollback_fail(const char *step) __attribute__((noreturn));
+static int data_write(cpu_u64 lba, const cpu_u16 *words);
 static void rollback_fail(const char *step)
 {
     __asm__ volatile ("cli" ::: "memory");
@@ -73,6 +74,11 @@ static cpu_u64 rd64le(const cpu_u8 *p)
     cpu_u64 v = 0;
     for (unsigned i = 0; i < 8; ++i) v |= (cpu_u64)p[i] << (i * 8);
     return v;
+}
+
+static void wr64le(cpu_u8 *p, cpu_u64 v)
+{
+    for (unsigned i = 0; i < 8; ++i) p[i] = (cpu_u8)(v >> (i * 8));
 }
 
 static void mem_copy(cpu_u8 *dst, const cpu_u8 *src, cpu_u64 n)
@@ -527,6 +533,132 @@ void fs_inject_fault_at(int n) { fs_fault_countdown = n > 0 ? n : 0; }
 
 /* Single block write through the fault choke point: the only path by
    which filesystem data reaches blk_write. Returns FS_OK or FS_IOERR. */
+/* P1-A first-fit gap-scan allocator. No free bitmap exists on disk or
+   in RAM: free space is whatever lies between live extents inside the
+   data region. Live = nonzero file extents from the mount-validated
+   RAM directory (zero-length files and directories occupy no blocks;
+   the data region is disjoint from the superblock and directory by
+   mount check, so constraining the scan to it can never alias
+   metadata). Trust model: mount proved every extent in-range and
+   pairwise disjoint; the scan re-derives placement from that same
+   RAM copy and uses only wrap-safe comparisons, so a correct mount
+   implies a correct, overlap-free answer. O(files^2) time, O(1)
+   memory: placement iterates in increasing block order (never
+   directory order), hence deterministic. Returns FS_OK with
+   *first_out, or FS_NOSPC when no gap fits nblocks. */
+static int alloc_first_fit(cpu_u64 nblocks, cpu_u64 *first_out)
+{
+    cpu_u64 data_end;
+    cpu_u64 cur;
+    if (!nblocks || !first_out) return FS_INVALID;
+    /* data_end cannot wrap: mount range-checked the data extent. */
+    data_end = fs_data_start + fs_data_blocks;
+    cur = fs_data_start;
+    while (1) {
+        cpu_u64 next = data_end;
+        for (cpu_u32 i = 0; i < fs_dir_slots; ++i) {
+            const cpu_u8 *e = entry_at(i);
+            cpu_u64 f, c;
+            if (entry_free(e) || e[FS_D_TYPE] != FS_TYPE_FILE) continue;
+            f = rd64le(e + FS_D_FIRST);
+            c = rd64le(e + FS_D_COUNT);
+            if (!c) continue;
+            if (f >= cur && f < next) next = f;
+        }
+        /* Gap is [cur, next); both inside [data_start, data_end]. */
+        if (next >= cur && nblocks <= next - cur) {
+            *first_out = cur;
+            return FS_OK;
+        }
+        if (next >= data_end) { fs_stage = "disk-full"; return FS_NOSPC; }
+        /* Advance past the extent starting at next (count > 0, so
+           cur strictly increases and the loop terminates). */
+        cur = next;
+        for (cpu_u32 i = 0; i < fs_dir_slots; ++i) {
+            const cpu_u8 *e = entry_at(i);
+            if (entry_free(e) || e[FS_D_TYPE] != FS_TYPE_FILE) continue;
+            if (rd64le(e + FS_D_FIRST) == next) {
+                cur = next + rd64le(e + FS_D_COUNT);
+                break;
+            }
+        }
+        if (cur <= next) { fs_stage = "alloc-stall"; return FS_CORRUPT; }
+    }
+}
+
+/* Persist one 64-byte directory entry: read its disk block, patch the
+   slot, write the block back through the fault-counted path, and only
+   then update the RAM copy. On failure the RAM entry still shows the
+   old bytes (a free slot for creates, the old extent for switches),
+   so RAM and disk agree no new state was published. */
+static int dir_write_slot(cpu_u32 slot, const cpu_u8 *entry)
+{
+    cpu_u64 blk;
+    int rc;
+    if (slot >= fs_dir_slots) { fs_stage = "bad-slot"; return FS_INVALID; }
+    blk = fs_dir_start + slot / FS_DIR_ENTRIES_PER_BLOCK;
+    rc = blk_read(fs_dev, blk, 1, fs_scratch, sizeof fs_scratch);
+    if (rc) { fs_stage = "io-dir-read"; return FS_IOERR; }
+    mem_copy(fs_scratch + (slot % FS_DIR_ENTRIES_PER_BLOCK) * 64u, entry, 64);
+    rc = data_write(blk, (const cpu_u16 *)fs_scratch);
+    if (rc) { fs_stage = "io-dir"; return FS_IOERR; }
+    mem_copy(fs_dir + (cpu_u64)slot * 64u, entry, 64);
+    return FS_OK;
+}
+
+int fs_create(const char *path)
+{
+    char key[FS_MAX_NAME + 1u];
+    unsigned klen = 0;
+    int len;
+    int pos;
+    cpu_u32 slot;
+    cpu_u8 entry[64];
+    unsigned i;
+    if (!fs_is_mounted) { fs_stage = "not-mounted"; return FS_INVALID; }
+    len = path_ok(path);
+    if (len < 0) { fs_stage = "bad-path"; return FS_INVALID; }
+    if (len == 1) { fs_stage = "is-root"; return FS_EXISTS; }
+    /* Walk components: every proper prefix must be a live directory
+       (mirrors the mount dangling-parent rule); the final key must be
+       absent. Builds the flat key (no leading slash) as it goes. */
+    pos = 1;
+    while (1) {
+        int start = pos;
+        int last;
+        int hit;
+        while (pos < len && path[pos] != '/') ++pos;
+        if (klen) key[klen++] = '/';
+        /* klen <= len - 1 <= FS_MAX_NAME by the path bound (same
+           construction as resolve); key[] cannot overflow. */
+        for (int k = start; k < pos; ++k) key[klen++] = path[k];
+        key[klen] = 0;
+        last = (pos == len);
+        hit = find_key(key, klen);
+        if (!last) {
+            if (hit < 0) { fs_stage = "no-parent"; return FS_NOTFOUND; }
+            if (entry_at((cpu_u32)hit)[FS_D_TYPE] != FS_TYPE_DIR) {
+                fs_stage = "parent-notdir";
+                return FS_NOTDIR;
+            }
+            ++pos;
+            continue;
+        }
+        if (hit >= 0) { fs_stage = "exists"; return FS_EXISTS; }
+        break;
+    }
+    slot = fs_dir_slots;
+    for (cpu_u32 s = 0; s < fs_dir_slots; ++s) {
+        if (entry_free(entry_at(s))) { slot = s; break; }
+    }
+    if (slot >= fs_dir_slots) { fs_stage = "dir-full"; return FS_NOSPC; }
+    /* Canonical zero-length file: name + type, everything else zero. */
+    for (i = 0; i < 64; ++i) entry[i] = 0;
+    for (i = 0; i < klen; ++i) entry[FS_D_NAME + i] = (cpu_u8)key[i];
+    entry[FS_D_TYPE] = FS_TYPE_FILE;
+    return dir_write_slot(slot, entry);
+}
+
 static int data_write(cpu_u64 lba, const cpu_u16 *words)
 {
 #if RYNOR_TEST_ARMED
@@ -537,25 +669,15 @@ static int data_write(cpu_u64 lba, const cpu_u16 *words)
     return rc ? FS_IOERR : FS_OK;
 }
 
-int fs_write(cpu_u32 handle, cpu_u64 offset, const void *buf, cpu_u64 len, cpu_u64 *nwritten)
+/* In-extent block writer: the 17c engine, unchanged. The caller proves
+   [offset, offset+len) lies inside the extent at `first`. On a block
+   failure earlier blocks stay written and *nwritten reports the
+   completed prefix. */
+static int write_data_blocks(cpu_u64 first, cpu_u64 offset, const cpu_u8 *in,
+                             cpu_u64 len, cpu_u64 *nwritten)
 {
-    cpu_u32 slot = 0;
-    int ok = decode_handle(handle, &slot);
-    if (ok) { fs_stage = "bad-handle"; return ok; }
-    if (len > FS_MAX_WRITE_BYTES) { fs_stage = "too-long"; return FS_INVALID; }
-    const cpu_u8 *e = entry_at(fs_handles[slot].entry);
-    if (e[FS_D_TYPE] != FS_TYPE_FILE) { fs_stage = "not-file"; return FS_NOTFILE; }
-    cpu_u64 size = rd64le(e + FS_D_LENGTH);
-    /* Overwrite-only: the range must lie entirely within the file.
-       Extension, truncation, and creation are explicit FS_RANGE errors. */
-    if (offset > size || len > size - offset) { fs_stage = "past-end"; return FS_RANGE; }
-    if (len && (!buf || ((cpu_u64)buf & 1u))) { fs_stage = "bad-buf"; return FS_INVALID; }
-    if (nwritten) *nwritten = len;
-    if (!len) return FS_OK;
-    cpu_u64 first = rd64le(e + FS_D_FIRST);
     cpu_u64 cur = first + offset / 512u;
     cpu_u64 pos = offset % 512u;
-    const cpu_u8 *in = (const cpu_u8 *)buf;
     cpu_u64 done = 0;
     while (done < len) {
         /* Full-block writes need an even source for word PIO; an odd
@@ -599,6 +721,128 @@ int fs_write(cpu_u32 handle, cpu_u64 offset, const void *buf, cpu_u64 len, cpu_u
     return FS_OK;
 }
 
+/* Publish a new (first, count, length) triple for a directory slot,
+   preserving name/type/reserved. Disk block first, RAM copy on
+   success only (see dir_write_slot). */
+static int dir_switch_extent(cpu_u32 entry, cpu_u64 first, cpu_u64 count, cpu_u64 length)
+{
+    cpu_u8 e[64];
+    mem_copy(e, entry_at(entry), 64);
+    wr64le(e + FS_D_FIRST, first);
+    wr64le(e + FS_D_COUNT, count);
+    wr64le(e + FS_D_LENGTH, length);
+    return dir_write_slot(entry, e);
+}
+
+/* Relocation writer: end exceeds the allocated bytes, so the file moves
+   to a new first-fit extent. Old content is copied blockwise, the
+   payload patched over [offset, end), the tail past end zeroed for
+   deterministic image bytes; only after every new block is durable is
+   the directory entry switched (data-before-directory). Any failure
+   before the switch leaves the old entry intact and reports
+   *nwritten == 0: orphaned new blocks are just unreferenced gaps. */
+static int write_relocate(cpu_u32 entry, cpu_u64 count, cpu_u64 first,
+                          cpu_u64 offset, const cpu_u8 *in, cpu_u64 len,
+                          cpu_u64 end, cpu_u64 *nwritten)
+{
+    cpu_u64 new_blocks;
+    cpu_u64 new_first;
+    cpu_u64 ob;
+    cpu_u64 pb0;
+    cpu_u64 pb1;
+    cpu_u64 pb;
+    int rc;
+    if (end > (cpu_u64)-1 - 511u) { fs_stage = "end-wrap"; return FS_INVALID; }
+    new_blocks = (end + 511u) / 512u;
+    rc = alloc_first_fit(new_blocks, &new_first);
+    if (rc) { if (nwritten) *nwritten = 0; return rc; }
+    /* Phase 1: copy the whole old extent (slack bytes included, so the
+       new image is fully specified even past the old size). */
+    for (ob = 0; ob < count; ++ob) {
+        rc = blk_read(fs_dev, first + ob, 1, fs_scratch, sizeof fs_scratch);
+        if (rc) { if (nwritten) *nwritten = 0; fs_stage = "io-copy"; return FS_IOERR; }
+        rc = data_write(new_first + ob, (const cpu_u16 *)fs_scratch);
+        if (rc) { if (nwritten) *nwritten = 0; fs_stage = "io-data"; return FS_IOERR; }
+    }
+    /* Phase 2: patch the payload over [offset, end). Blocks with no
+       old content are zero-composed; the tail past end is zeroed. */
+    pb0 = offset / 512u;
+    pb1 = (end + 511u) / 512u;
+    for (pb = pb0; pb < pb1; ++pb) {
+        cpu_u64 boff = pb * 512u;
+        cpu_u64 lo = offset > boff ? offset : boff;
+        cpu_u64 hi = end < boff + 512u ? end : boff + 512u;
+        cpu_u64 k;
+        if (pb < count) {
+            rc = blk_read(fs_dev, new_first + pb, 1, fs_scratch, sizeof fs_scratch);
+            if (rc) { if (nwritten) *nwritten = 0; fs_stage = "io-data"; return FS_IOERR; }
+        } else {
+            for (k = 0; k < 512u; ++k) fs_scratch[k] = 0;
+        }
+        for (k = lo; k < hi; ++k) fs_scratch[k - boff] = in[k - offset];
+        if (end < boff + 512u) {
+            for (k = end - boff; k < 512u; ++k) fs_scratch[k] = 0;
+        }
+        rc = data_write(new_first + pb, (const cpu_u16 *)fs_scratch);
+        if (rc) { if (nwritten) *nwritten = 0; fs_stage = "io-data"; return FS_IOERR; }
+    }
+    /* Phase 3: switch + persist the directory entry. */
+    rc = dir_switch_extent(entry, new_first, new_blocks, end);
+    if (rc) { if (nwritten) *nwritten = 0; return rc; }
+    if (nwritten) *nwritten = len;
+    return FS_OK;
+}
+
+int fs_write(cpu_u32 handle, cpu_u64 offset, const void *buf, cpu_u64 len, cpu_u64 *nwritten)
+{
+    cpu_u32 slot = 0;
+    cpu_u32 entry;
+    const cpu_u8 *e;
+    cpu_u64 size;
+    cpu_u64 count;
+    cpu_u64 first;
+    cpu_u64 alloc_bytes;
+    cpu_u64 end;
+    int ok = decode_handle(handle, &slot);
+    if (ok) { fs_stage = "bad-handle"; return ok; }
+    if (len > FS_MAX_WRITE_BYTES) { fs_stage = "too-long"; return FS_INVALID; }
+    entry = fs_handles[slot].entry;
+    e = entry_at(entry);
+    if (e[FS_D_TYPE] != FS_TYPE_FILE) { fs_stage = "not-file"; return FS_NOTFILE; }
+    size = rd64le(e + FS_D_LENGTH);
+    count = rd64le(e + FS_D_COUNT);
+    first = rd64le(e + FS_D_FIRST);
+    /* No sparse holes: offset past the size is rejected even for
+       zero-length writes. */
+    if (offset > size) { fs_stage = "past-end"; return FS_RANGE; }
+    if (len > (cpu_u64)-1 - offset) { fs_stage = "end-wrap"; return FS_INVALID; }
+    end = offset + len;
+    if (len && (!buf || ((cpu_u64)buf & 1u))) { fs_stage = "bad-buf"; return FS_INVALID; }
+    if (nwritten) *nwritten = len;
+    if (!len) return FS_OK;
+    /* count * 512 cannot wrap: mount proved count <= U64MAX/512. */
+    alloc_bytes = count * 512u;
+    if (end <= size)
+        return write_data_blocks(first, offset, (const cpu_u8 *)buf, len, nwritten);
+    if (end <= alloc_bytes) {
+        /* In-place growth: payload first, then the size field. A data
+           failure keeps the old size (prefix convention); a directory
+           failure after full data reports len (bytes are on disk, the
+           size catch-up needs a retry: rerunning the same write is
+           idempotent and converges). */
+        int rc = write_data_blocks(first, offset, (const cpu_u8 *)buf, len, nwritten);
+        cpu_u8 ne[64];
+        if (rc) return rc;
+        mem_copy(ne, entry_at(entry), 64);
+        wr64le(ne + FS_D_LENGTH, end);
+        rc = dir_write_slot(entry, ne);
+        if (rc) { if (nwritten) *nwritten = len; return rc; }
+        return FS_OK;
+    }
+    return write_relocate(entry, count, first, offset,
+                          (const cpu_u8 *)buf, len, end, nwritten);
+}
+
 const char *fs_error_str(int code)
 {
     switch (code) {
@@ -613,6 +857,8 @@ const char *fs_error_str(int code)
     case FS_CORRUPT: return "corrupt";
     case FS_UNSUPPORTED: return "unsupported";
     case FS_BUSY: return "busy";
+    case FS_EXISTS: return "exists";
+    case FS_NOSPC: return "nospc";
     default: return "unknown";
     }
 }

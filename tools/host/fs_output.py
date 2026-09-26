@@ -20,6 +20,7 @@ MAX_DIR_BLOCKS = 64
 FS_CODES = {
     "ok", "invalid", "notfound", "notfile", "notdir", "badhandle",
     "range", "ioerr", "corrupt", "unsupported", "busy",
+    "exists", "nospc",
 }
 
 
@@ -169,6 +170,12 @@ _MOUNT_RE = re.compile(rb"^\[FS\] mounted dev=(\d+) blocks=(\d+)$")
 _CORRUPT_RE = re.compile(rb"^\[FS\] corrupt slot=(\d+) code=([a-z]+)$")
 _WRITE_RE = re.compile(rb"^\[FS\] write path=(\S+) off=(\d+) len=(\d+) hex=([0-9A-F]*)$")
 _FAULT_RE = re.compile(rb"^\[FS\] fault case=([a-z]+) written=(\d+) code=([a-z]+)$")
+_P1A_CREATE_RE = re.compile(rb"^\[FS\] p1a-create path=(\S+) size=(\d+) blocks=(\d+)$")
+_P1A_WRITE_RE = re.compile(rb"^\[FS\] p1a-write path=(\S+) size=(\d+) blocks=(\d+) sum=(\d+) wsum=(\d+)$")
+_P1A_REMOUNT_RE = re.compile(rb"^\[FS\] p1a-remount path=(\S+) size=(\d+) blocks=(\d+) sum=(\d+) wsum=(\d+)$")
+_P1A_REBOOT_RE = re.compile(rb"^\[FS\] p1a-reboot path=(\S+) size=(\d+) blocks=(\d+) sum=(\d+) wsum=(\d+)$")
+_P1A_NEG_RE = re.compile(rb"^\[FS\] p1a-neg case=([a-z]+) code=([a-z]+)$")
+_P1A_DEGRADED_RE = re.compile(rb"^\[FS\] p1a-degraded kind=(dirfull|tight) creates_ok=(\d+) writes_ok=(\d+) denied=(\d+)$")
 
 
 @dataclass
@@ -187,6 +194,13 @@ class FsEvidence:
     # File/part lines are checked against content patched by the writes
     # printed SO FAR, mirroring guest program order.
     events: list = field(default_factory=list)
+    # P1-A mutation evidence (marker-gated driver battery).
+    p1a_creates: list = field(default_factory=list)
+    p1a_writes: dict = field(default_factory=dict)
+    p1a_remounts: dict = field(default_factory=dict)
+    p1a_reboots: dict = field(default_factory=dict)
+    p1a_negs: dict = field(default_factory=dict)
+    p1a_degraded: list = field(default_factory=list)
 
 
 def parse_serial(observed: bytes) -> FsEvidence:
@@ -230,6 +244,38 @@ def parse_serial(observed: bytes) -> FsEvidence:
             evidence.faults.append((match.group(1).decode("ascii"), int(match.group(2)),
                                     match.group(3).decode("ascii")))
             continue
+        match = _P1A_CREATE_RE.match(line)
+        if match:
+            evidence.p1a_creates.append((match.group(1).decode("ascii"), int(match.group(2)),
+                                         int(match.group(3))))
+            continue
+        match = _P1A_WRITE_RE.match(line)
+        if match:
+            evidence.p1a_writes[match.group(1).decode("ascii")] = (
+                int(match.group(2)), int(match.group(3)),
+                int(match.group(4)), int(match.group(5)))
+            continue
+        match = _P1A_REMOUNT_RE.match(line)
+        if match:
+            evidence.p1a_remounts[match.group(1).decode("ascii")] = (
+                int(match.group(2)), int(match.group(3)),
+                int(match.group(4)), int(match.group(5)))
+            continue
+        match = _P1A_REBOOT_RE.match(line)
+        if match:
+            evidence.p1a_reboots[match.group(1).decode("ascii")] = (
+                int(match.group(2)), int(match.group(3)),
+                int(match.group(4)), int(match.group(5)))
+            continue
+        match = _P1A_NEG_RE.match(line)
+        if match:
+            evidence.p1a_negs[match.group(1).decode("ascii")] = match.group(2).decode("ascii")
+            continue
+        match = _P1A_DEGRADED_RE.match(line)
+        if match:
+            evidence.p1a_degraded.append((match.group(1).decode("ascii"), int(match.group(2)),
+                                          int(match.group(3)), int(match.group(4))))
+            continue
         if line == b"[FS] handles ok":
             evidence.handles = True
         elif line == b"[FS] accounting balanced":
@@ -269,7 +315,9 @@ def validate_fs_section(part: bytes) -> list:
         lines = lines[:-1]
     if not lines or not lines[0].strip().startswith(b"[FS] mounted"):
         return ["filesystem section must start with [FS] mounted"]
-    allowed = (_MOUNT_RE, _FILE_RE, _PART_RE, _CORRUPT_RE, _WRITE_RE, _FAULT_RE)
+    allowed = (_MOUNT_RE, _FILE_RE, _PART_RE, _CORRUPT_RE, _WRITE_RE, _FAULT_RE,
+               _P1A_CREATE_RE, _P1A_WRITE_RE, _P1A_REMOUNT_RE, _P1A_REBOOT_RE,
+               _P1A_NEG_RE, _P1A_DEGRADED_RE)
     for line in lines:
         text = line.strip()
         if text in (b"[FS] handles ok", b"[FS] accounting balanced",

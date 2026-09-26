@@ -198,6 +198,241 @@ static void file_evidence(const char *path, int show_parts)
     require(fs_close(h) == FS_BADHANDLE, "evict-double");
 }
 
+
+/* P1-A payload formula (position-anchored, per-file seed): byte at file
+   position p of a file with seed s is (p * 13 + s) & 0xff. The host
+   test duplicates this formula from the comment, and the persisted
+   drive image is additionally compared byte-for-byte on the host. */
+static void p1a_pattern(cpu_u8 *b, cpu_u64 off, cpu_u64 len, unsigned seed)
+{
+    cpu_u64 i;
+    for (i = 0; i < len; ++i)
+        b[i] = (cpu_u8)(((off + i) * 13u + seed) & 0xffu);
+}
+
+/* Full-content check of an existing file against its seed. */
+static void p1a_verify(const char *path, cpu_u64 size, unsigned seed)
+{
+    cpu_u32 h = 0;
+    cpu_u64 n = 0;
+    cpu_u64 i;
+    require(size <= sizeof fsbuf, "p1a-vbig");
+    require(fs_open(path, &h) == FS_OK, "p1a-vopen");
+    require(fs_read(h, 0, fsbuf, size, &n) == FS_OK && n == size, "p1a-vread");
+    for (i = 0; i < size; ++i)
+        require(fsbuf[i] == (cpu_u8)((i * 13u + seed) & 0xffu), "p1a-vdata");
+    require(fs_close(h) == FS_OK, "p1a-vclose");
+}
+
+/* Stat + full-read evidence row for a P1-A file. */
+static void p1a_row(const char *tag, const char *path)
+{
+    struct fs_stat st;
+    cpu_u32 h = 0;
+    cpu_u64 n = 0;
+    require(fs_stat(path, &st) == FS_OK, "p1a-row-stat");
+    require((cpu_u64)st.size <= sizeof fsbuf, "p1a-row-big");
+    require(fs_open(path, &h) == FS_OK, "p1a-row-open");
+    require(fs_read(h, 0, fsbuf, (cpu_u64)st.size, &n) == FS_OK &&
+            n == (cpu_u64)st.size, "p1a-row-read");
+    say("[FS] ");
+    say(tag);
+    say(" path=");
+    say(path);
+    say(" size=");
+    say_u64((cpu_u64)st.size);
+    say(" blocks=");
+    say_u64((cpu_u64)st.blocks);
+    say(" sum=");
+    say_u64(byte_sum(fsbuf, (cpu_u64)st.size));
+    say(" wsum=");
+    say_u64(byte_wsum(fsbuf, (cpu_u64)st.size));
+    say("\r\n");
+    require(fs_close(h) == FS_OK, "p1a-row-close");
+}
+
+static void p1a_neg(const char *id, const char *path, int want)
+{
+    int rc = fs_create(path);
+    require(rc == want, "p1a-neg");
+    say("[FS] p1a-neg case=");
+    say(id);
+    say(" code=");
+    say(fs_error_str(rc));
+    say("\r\n");
+}
+
+static int p1a_try_write(const char *path, cpu_u64 off, cpu_u64 len,
+                         unsigned seed, cpu_u64 *nwritten)
+{
+    cpu_u32 h = 0;
+    cpu_u64 n = 0;
+    int rc;
+    require(len <= sizeof fsbuf, "p1a-wbig");
+    p1a_pattern(fsbuf, off, len, seed);
+    require(fs_open(path, &h) == FS_OK, "p1a-wopen");
+    rc = fs_write(h, off, fsbuf, len, &n);
+    if (nwritten) *nwritten = n;
+    require(fs_close(h) == FS_OK, "p1a-wclose");
+    return rc;
+}
+
+/* /b511 in-place growth check: the 511 pre-growth bytes are
+   snapshotted first, so any image layout exercises preservation. */
+static void p1a_snap_b511(void)
+{
+    cpu_u32 h = 0;
+    cpu_u64 n = 0;
+    require(sizeof fsbuf >= 4608u, "p1a-511buf");
+    require(fs_open("/b511", &h) == FS_OK, "p1a-511open");
+    require(fs_read(h, 0, fsbuf + 4096, 511, &n) == FS_OK && n == 511, "p1a-511snap");
+    require(fs_close(h) == FS_OK, "p1a-511close");
+}
+static void p1a_verify_b511(void)
+{
+    cpu_u32 h = 0;
+    cpu_u64 n = 0;
+    cpu_u64 i;
+    require(fs_open("/b511", &h) == FS_OK, "p1a-511open");
+    require(fs_read(h, 0, fsbuf, 512, &n) == FS_OK && n == 512, "p1a-511read");
+    for (i = 0; i < 511u; ++i)
+        require(fsbuf[i] == fsbuf[4096 + i], "p1a-511prefix");
+    require(fsbuf[511] == (cpu_u8)((511u * 13u + 0x46u) & 0xffu), "p1a-511last");
+    require(fs_close(h) == FS_OK, "p1a-511close");
+}
+
+/* /one growth check: the staged "OK" bytes from the 17c section. */
+static void p1a_verify_one(void)
+{
+    cpu_u32 h = 0;
+    cpu_u64 n = 0;
+    require(fs_open("/one", &h) == FS_OK, "p1a-1open");
+    require(fs_read(h, 0, tiny, 2, &n) == FS_OK && n == 2, "p1a-1read");
+    require(tiny[0] == (cpu_u8)'O' && tiny[1] == (cpu_u8)'K', "p1a-1data");
+    require(fs_close(h) == FS_OK, "p1a-1close");
+}
+
+static void p1a_cases(int mounted_dev)
+{
+    struct fs_stat st;
+    cpu_u32 h = 0;
+    cpu_u64 n = 0;
+    int rc;
+    p1a_neg("empty", "", FS_INVALID);
+    p1a_neg("root", "/", FS_EXISTS);
+    p1a_neg("dslash", "/a//b", FS_INVALID);
+    p1a_neg("toolong", "/12345678901234567890123456789012", FS_INVALID);
+    p1a_neg("dot", "/./x", FS_INVALID);
+    p1a_neg("dotdot", "/a/../b", FS_INVALID);
+    p1a_neg("noparent", "/no/such/parent/f", FS_NOTFOUND);
+    p1a_neg("parentfile", "/one/x", FS_NOTDIR);
+    p1a_neg("dupfile", "/hello", FS_EXISTS);
+    p1a_neg("dupdir", "/docs", FS_EXISTS);
+    rc = fs_create("/p1a-new");
+    if (rc == FS_NOSPC) {
+        /* Directory-full image: every create fails, contents intact. */
+        require(fs_create("/p1a-new2") == FS_NOSPC, "p1a-df2");
+        require(fs_stat("/readme.txt", &st) == FS_OK, "p1a-dfstat");
+        require(fs_open("/readme.txt", &h) == FS_OK, "p1a-dfopen");
+        require(fs_read(h, 0, tiny, 5, &n) == FS_OK && n == 5, "p1a-dfread");
+        require(tiny[0] == 'R' && tiny[4] == 'r', "p1a-dfdata");
+        require(fs_close(h) == FS_OK, "p1a-dfclose");
+        say("[FS] p1a-degraded kind=dirfull creates_ok=0 writes_ok=0 denied=2\r\n");
+        return;
+    }
+    if (rc == FS_EXISTS) {
+        /* Reboot on a persisted image: verify-only, never mutate, so
+           any number of reboots is stable by construction. */
+        p1a_verify("/p1a-new", 1500, 0x41u);
+        p1a_row("p1a-reboot", "/p1a-new");
+        p1a_verify("/docs/p1a-nested", 511, 0x42u);
+        p1a_row("p1a-reboot", "/docs/p1a-nested");
+        p1a_verify("/p1a-big", 3500, 0x43u);
+        p1a_row("p1a-reboot", "/p1a-big");
+        p1a_verify("/p1a-exact", 1024, 0x44u);
+        p1a_row("p1a-reboot", "/p1a-exact");
+        p1a_verify("/p1a-1byte", 1, 0x45u);
+        p1a_row("p1a-reboot", "/p1a-1byte");
+        require(fs_stat("/p1a-123456789012345678901234567", &st) == FS_OK &&
+                st.size == 0, "p1a-rb31");
+        p1a_row("p1a-reboot", "/p1a-123456789012345678901234567");
+        p1a_snap_b511();
+        p1a_verify_b511();
+        p1a_row("p1a-reboot", "/b511");
+        p1a_verify_one();
+        p1a_row("p1a-reboot", "/one");
+        return;
+    }
+    require(rc == FS_OK, "p1a-create");
+    say("[FS] p1a-create path=/p1a-new size=0 blocks=0\r\n");
+    /* First growth decides main vs tight image. */
+    rc = p1a_try_write("/p1a-new", 0, 1500, 0x41u, &n);
+    if (rc == FS_NOSPC) {
+        /* Tight image: creates work, any allocation fails, intact. */
+        require(n == 0, "p1a-tn");
+        require(fs_create("/p1a-tight2") == FS_OK, "p1a-tcreate");
+        require(p1a_try_write("/p1a-tight2", 0, 1, 0x47u, &n) == FS_NOSPC && n == 0, "p1a-tw");
+        require(fs_stat("/readme.txt", &st) == FS_OK, "p1a-tstat");
+        require(fs_open("/readme.txt", &h) == FS_OK, "p1a-topen");
+        require(fs_read(h, 0, tiny, 17, &n) == FS_OK && n == 17, "p1a-tread");
+        require(tiny[0] == 'R' && tiny[4] == 'r' && tiny[5] == 'O', "p1a-tdata");
+        require(fs_close(h) == FS_OK, "p1a-tclose");
+        say("[FS] p1a-degraded kind=tight creates_ok=1 writes_ok=0 denied=2\r\n");
+        return;
+    }
+    require(rc == FS_OK && n == 1500, "p1a-wnew");
+    p1a_verify("/p1a-new", 1500, 0x41u);
+    p1a_row("p1a-write", "/p1a-new");
+    require(fs_create("/docs/p1a-nested") == FS_OK, "p1a-cnested");
+    require(p1a_try_write("/docs/p1a-nested", 0, 511, 0x42u, &n) == FS_OK && n == 511, "p1a-wnested");
+    p1a_verify("/docs/p1a-nested", 511, 0x42u);
+    p1a_row("p1a-write", "/docs/p1a-nested");
+    require(fs_create("/p1a-big") == FS_OK, "p1a-cbig");
+    require(p1a_try_write("/p1a-big", 0, 1500, 0x43u, &n) == FS_OK && n == 1500, "p1a-wbig1");
+    require(p1a_try_write("/p1a-big", 1500, 2000, 0x43u, &n) == FS_OK && n == 2000, "p1a-wbig2");
+    p1a_verify("/p1a-big", 3500, 0x43u);
+    p1a_row("p1a-write", "/p1a-big");
+    require(fs_create("/p1a-exact") == FS_OK, "p1a-cexact");
+    require(p1a_try_write("/p1a-exact", 0, 1024, 0x44u, &n) == FS_OK && n == 1024, "p1a-wexact");
+    p1a_verify("/p1a-exact", 1024, 0x44u);
+    p1a_row("p1a-write", "/p1a-exact");
+    require(fs_create("/p1a-1byte") == FS_OK, "p1a-c1byte");
+    require(p1a_try_write("/p1a-1byte", 0, 1, 0x45u, &n) == FS_OK && n == 1, "p1a-w1byte");
+    p1a_verify("/p1a-1byte", 1, 0x45u);
+    p1a_row("p1a-write", "/p1a-1byte");
+    /* 31-char boundary name, left zero-length (zero-len persistence). */
+    require(fs_create("/p1a-123456789012345678901234567") == FS_OK, "p1a-c31");
+    require(fs_stat("/p1a-123456789012345678901234567", &st) == FS_OK && st.size == 0, "p1a-s31");
+    p1a_row("p1a-write", "/p1a-123456789012345678901234567");
+    /* Duplicate now that it exists. */
+    require(fs_create("/p1a-new") == FS_EXISTS, "p1a-dup");
+    say("[FS] p1a-neg case=dupnew code=exists\r\n");
+    /* In-place growth on builder slack (/b511: length 511 in 1 block). */
+    p1a_snap_b511();
+    require(p1a_try_write("/b511", 511, 1, 0x46u, &n) == FS_OK && n == 1, "p1a-w511");
+    p1a_verify_b511();
+    p1a_row("p1a-write", "/b511");
+    /* Remount: unmount drops the RAM copy; the mount re-reads disk. */
+    fs_unmount();
+    require(fs_mount((cpu_u32)mounted_dev) == FS_OK, "p1a-remount");
+    p1a_verify("/p1a-new", 1500, 0x41u);
+    p1a_row("p1a-remount", "/p1a-new");
+    p1a_verify("/docs/p1a-nested", 511, 0x42u);
+    p1a_row("p1a-remount", "/docs/p1a-nested");
+    p1a_verify("/p1a-big", 3500, 0x43u);
+    p1a_row("p1a-remount", "/p1a-big");
+    p1a_verify("/p1a-exact", 1024, 0x44u);
+    p1a_row("p1a-remount", "/p1a-exact");
+    p1a_verify("/p1a-1byte", 1, 0x45u);
+    p1a_row("p1a-remount", "/p1a-1byte");
+    require(fs_stat("/p1a-123456789012345678901234567", &st) == FS_OK && st.size == 0, "p1a-rm31");
+    p1a_row("p1a-remount", "/p1a-123456789012345678901234567");
+    p1a_verify_b511();
+    p1a_row("p1a-remount", "/b511");
+    p1a_verify_one();
+    p1a_row("p1a-remount", "/one");
+}
+
 void fs_self_test(void)
 {
     require(cpu_interrupts_disabled(), "if0");
@@ -291,8 +526,18 @@ void fs_self_test(void)
     require(fs_open("/one", &h1) == FS_OK, "w-handle");
     require(fs_write(h1, 0, 0, 0, &n) == FS_OK && n == 0, "w-empty-null");
     require(fs_open("/one", &h1) == FS_OK, "w-handle");
-    require(fs_write(h1, 2, tiny, 1, &n) == FS_RANGE, "w-past-end");
-    require(fs_write(h1, 0, tiny, 2, &n) == FS_RANGE, "w-over-length");
+    require(fs_stat("/one", &st) == FS_OK, "w-onesize");
+    require(fs_write(h1, (cpu_u64)st.size + 1, tiny, 1, &n) == FS_RANGE, "w-past-end");
+    /* P1-A: writing past the size but inside the extent grows the file
+       in place (was FS_RANGE under 17c overwrite-only). Reboot-stable:
+       a second boot finds size 2 and this becomes a pure overwrite. */
+    tiny[0] = (cpu_u8)'O';
+    tiny[1] = (cpu_u8)'K';
+    require(fs_write(h1, 0, tiny, 2, &n) == FS_OK && n == 2, "w-over-length");
+    require(fs_stat("/one", &st) == FS_OK, "w-over-length-stat");
+    require(st.size >= 2, "w-over-length-size");
+    /* P1-A: holes are rejected even for zero-length writes. */
+    require(fs_write(h1, 5, tiny, 0, &n) == FS_RANGE, "w-zero-past-end");
     require(fs_write(h1, 0, tiny, 16385, &n) == FS_INVALID, "w-too-long");
     require(fs_write(h1, 0, tiny, 1, 0) == FS_OK, "w-null-out");
     require(fs_write(0xffffffu, 0, tiny, 1, &n) == FS_BADHANDLE, "w-bad-handle");
@@ -329,6 +574,13 @@ void fs_self_test(void)
     fs_inject_fault_at(0);
     require(fs_close(h1) == FS_OK, "f-close");
 #endif
+    /* P1-A battery, marker-gated: only images carrying /p1a-go run the
+       create/write/extend cases, so all existing images keep
+       byte-identical transcripts (no else-row: absence of p1a rows on
+       old images is the documented gate, and presence of p1a-create
+       rows proves the battery ran where it should). */
+    if (fs_stat("/p1a-go", &st) == FS_OK)
+        p1a_cases(mounted_dev);
     /* Every other present device must fail mounting with a classified
        code (the boot disk is not a filesystem; corrupt images fail by
        kind). A surprise success here is itself the failure. */

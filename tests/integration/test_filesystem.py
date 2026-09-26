@@ -291,15 +291,17 @@ class FilesystemIntegrationTests(unittest.TestCase):
         self.assertTrue(validate(parse_serial(output), self.good_bytes))
 
     def test_mut_write_wrong_block(self):
+        # P1-A retarget: the in-extent engine moved to write_data_blocks;
+        # the fault (start one block too far) is unchanged.
         output, _error = self._run_fs_mutation([(
-            "    cpu_u64 first = rd64le(e + FS_D_FIRST);\n"
-            "    cpu_u64 cur = first + offset / 512u;\n"
-            "    cpu_u64 pos = offset % 512u;\n"
-            "    const cpu_u8 *in = (const cpu_u8 *)buf;",
-            "    cpu_u64 first = rd64le(e + FS_D_FIRST);\n"
-            "    cpu_u64 cur = first + offset / 512u + 1;\n"
-            "    cpu_u64 pos = offset % 512u;\n"
-            "    const cpu_u8 *in = (const cpu_u8 *)buf;",
+            "static int write_data_blocks(cpu_u64 first, cpu_u64 offset, const cpu_u8 *in,\n"
+            "                             cpu_u64 len, cpu_u64 *nwritten)\n"
+            "{\n"
+            "    cpu_u64 cur = first + offset / 512u;",
+            "static int write_data_blocks(cpu_u64 first, cpu_u64 offset, const cpu_u8 *in,\n"
+            "                             cpu_u64 len, cpu_u64 *nwritten)\n"
+            "{\n"
+            "    cpu_u64 cur = first + offset / 512u + 1;",
         )], source="kernel/storage/fs.c")
         self.assertTrue(validate(parse_serial(output), self.good_bytes))
 
@@ -321,23 +323,25 @@ class FilesystemIntegrationTests(unittest.TestCase):
         self.assertNotIn(b"[FS] fs verified", serial)
 
     def test_mut_write_always_success(self):
+        # P1-A retarget: report success after validation but move no
+        # bytes (growth included, so size checks also go RED).
         output, _error = self._run_fs_mutation([(
-            "    cpu_u64 first = rd64le(e + FS_D_FIRST);\n"
-            "    cpu_u64 cur = first + offset / 512u;\n"
-            "    cpu_u64 pos = offset % 512u;\n"
-            "    const cpu_u8 *in = (const cpu_u8 *)buf;",
-            "    if (len) { if (nwritten) *nwritten = len; return FS_OK; }\n"
-            "    cpu_u64 first = rd64le(e + FS_D_FIRST);\n"
-            "    cpu_u64 cur = first + offset / 512u;\n"
-            "    cpu_u64 pos = offset % 512u;\n"
-            "    const cpu_u8 *in = (const cpu_u8 *)buf;",
+            "    if (nwritten) *nwritten = len;\n"
+            "    if (!len) return FS_OK;",
+            "    if (nwritten) *nwritten = len;\n"
+            "    if (!len) return FS_OK;\n"
+            "    if (len) return FS_OK;",
         )], source="kernel/storage/fs.c")
         self.assertTrue(validate(parse_serial(output), self.good_bytes))
 
     def test_mut_write_range_dropped(self):
+        # P1-A retarget: drop the no-holes guard so past-EOF writes grow
+        # the file instead of failing RANGE.
         output, error = self._run_fs_mutation([(
-            "    if (offset > size || len > size - offset) { fs_stage = \"past-end\"; return FS_RANGE; }",
-            "    if (offset > size) { fs_stage = \"past-end\"; return FS_RANGE; }",
+            "    if (offset > size) { fs_stage = \"past-end\"; return FS_RANGE; }\n"
+            "    if (len > (cpu_u64)-1 - offset) { fs_stage = \"end-wrap\"; return FS_INVALID; }",
+            "    if (0) { fs_stage = \"past-end\"; return FS_RANGE; }\n"
+            "    if (len > (cpu_u64)-1 - offset) { fs_stage = \"end-wrap\"; return FS_INVALID; }",
         )], source="kernel/storage/fs.c")
         self.assertIsNotNone(error)
         self.assertNotIn(b"[FS] fs verified", output)

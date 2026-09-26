@@ -30,6 +30,9 @@ enum fs_result {
     FS_CORRUPT = -8,     /* mounted image violates the format */
     FS_UNSUPPORTED = -9, /* well-formed but beyond 17b limits */
     FS_BUSY = -10,       /* handle table full */
+    FS_EXISTS = -11,     /* P1-A: create target already exists (any type) */
+    FS_NOSPC = -12,      /* P1-A: no free directory slot or no allocatable
+                            data extent (disk full for this request) */
 };
 
 enum fs_entry_type {
@@ -69,13 +72,34 @@ int fs_stat(const char *path, struct fs_stat *st);
    other errors leave *nread untouched, so callers must check rc first).
    offset past end is FS_RANGE; len beyond FS_MAX_READ_BYTES is FS_INVALID. */
 int fs_read(cpu_u32 handle, cpu_u64 offset, void *buf, cpu_u64 len, cpu_u64 *nread);
-/* Overwrite len bytes at offset from buf (2-byte aligned, like blk) into
-   an open file. Stage 17c supports overwrite within the existing extent
-   only: offset+len past file_size is FS_RANGE (no extension, no partial
-   extension); len beyond FS_MAX_WRITE_BYTES is FS_INVALID. Sets *nwritten
-   (== len on FS_OK); on a block-write failure earlier blocks stay written
-   and *nwritten reports the completed prefix. Lengths, handles, and
-   extents are unchanged by writes, so open handles stay valid. */
+/* Create a zero-length file (canonical (0,0,0) extent, no data blocks).
+   Parents must exist as directories (no mkdir in P1-A); the target must
+   not exist (FS_EXISTS, never silent overwrite); malformed paths are
+   FS_INVALID; a missing parent is FS_NOTFOUND; a file on the parent
+   chain is FS_NOTDIR; a full directory is FS_NOSPC. The directory
+   block is persisted before success returns, so a remount sees the
+   file; on any failure no entry is published (RAM and disk agree the
+   target is absent). */
+int fs_create(const char *path);
+/* Write len bytes at offset from buf (2-byte aligned, like blk) into
+   an open file. offset past file_size is FS_RANGE (no sparse holes:
+   offset > size is rejected even for zero-length writes); len beyond
+   FS_MAX_WRITE_BYTES is FS_INVALID. Three disjoint cases by write end
+   (offset+len, computed overflow-safe):
+   - end <= file_size: pure overwrite; extent and size unchanged; no
+     directory write (17c behavior preserved exactly).
+   - file_size < end <= allocated bytes: in-place growth; the size
+     field is updated and the directory block persisted.
+   - end > allocated bytes: relocation; a new first-fit extent is
+     allocated, old content plus the payload is written to the new
+     blocks FIRST, and only then is the directory entry switched and
+     persisted (data-before-directory: a failed relocation leaves the
+     old entry intact and reports *nwritten == 0). The old blocks
+     become an implicit free gap (no free list in P1-A).
+   Sets *nwritten (== len on FS_OK); on a block-write failure of an
+   in-place write earlier blocks stay written and *nwritten reports
+   the completed prefix. Open handles index directory slots, so they
+   stay valid across size and extent changes (unlike remount). */
 int fs_write(cpu_u32 handle, cpu_u64 offset, const void *buf, cpu_u64 len, cpu_u64 *nwritten);
 /* Close a handle. Double close and unknown handles are FS_BADHANDLE. */
 int fs_close(cpu_u32 handle);
