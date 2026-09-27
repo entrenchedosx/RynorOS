@@ -3,11 +3,20 @@
  * script   ::= line { ";" line } ;
  * line     ::= [ pipeline ] [ "//" comment ] ;
  * pipeline ::= command { "|>" command } ;   (1 or 2 stages only)
- * command  ::= word { word } | "status" ;   ("status" only as a sole
+ * command  ::= word { word } [ ">" word ] | "status" ;
+ *                                            ("status" only as a sole
  *                                            single command, never in
- *                                            a pipeline)
+ *                                            a pipeline, never with
+ *                                            a redirect)
  * word     ::= bare | '"' { escape | nonquote } '"' ;
  * escape   ::= '\"' | '\\' ;
+ *
+ * P1-A2 redirect: a bare `>` after a single command's words captures
+ * the next word as the redirect target. Pipelines reject `>` (in any
+ * stage, before or after `|>`); a second `>`, a missing target, and
+ * `>` without a command are syntax errors. The parser accepts the
+ * shape for any command word; execution honors it for echo only (see
+ * sh.c: other commands with `>` fail loudly as redirect errors).
  *
  * Bounded, iterative, single pass. The same entry parses interactive
  * lines and script lines (parity by construction); only the caller
@@ -28,12 +37,16 @@
 #define SHP_ERR_SYNTAX 2 /* deterministic rejection, 0 spawns */
 
 /* One parsed command: argc words in argv storage. words point into
- * store (NUL-terminated each); store_used counts bytes incl. NULs. */
+ * store (NUL-terminated each); store_used counts bytes incl. NULs.
+ * P1-A2: has_redir carries a `>` target (points into store, sharing
+ * the aggregate budget; never counted in argc). */
 struct shp_cmd {
     unsigned int argc;
     const char *argv[SHP_MAX_ARGS];
     char store[SHP_MAX_ARGBYTES];
     unsigned int store_used;
+    int has_redir;
+    const char *redir;
 };
 
 /* One parsed line: ncmds (1..2) commands, or empty. */

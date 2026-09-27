@@ -228,8 +228,15 @@ cpu_u64 copy_to_user(struct user_context *c, cpu_u64 uaddr,
    layer rejects odd buffers); reuse across read/fread is sound because
    handlers never interleave (IF=0, single CPU). */
 static _Alignas(2) cpu_u8 read_stage[SYSCALL_READ_MAX];
-/* Slice D fread pathname staging (33 = 32-byte cap + NUL). */
+/* Slice D fread pathname staging (33 = 32-byte cap + NUL). P1-A2
+   reuses the same buffer for fcreate/fwrite pathnames: handlers never
+   interleave (IF=0, single CPU), and every syscall stages its path
+   before any other staging moves. */
 static cpu_u8 fread_path[33];
+/* P1-A2: sys_fwrite stages payload chunks in read_stage (the link
+   budget has no room for a second 4 KiB stage; handler
+   non-interleaving makes the sharing sound). write_stage stays
+   syscall-2-only: it lacks the 2-byte alignment fs_write needs. */
 
 int sys_read(struct user_context *c, cpu_u64 fd, cpu_u64 buf, cpu_u64 len,
              cpu_u64 nread_out, cpu_u64 flags)
@@ -458,6 +465,212 @@ int sys_fread(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
            offset advanced monotonically inside kern_fread. */
     }
     if (copy_to_user(c, nread_out, (const cpu_u8 *)&done,
+                     sizeof(done)) != sizeof(done))
+        return SYS_INVAL;
+    return SYS_OK;
+}
+
+/* P1-A2 Slice P1-A: stateless file create over a kernel-memory path.
+ *
+ * kpath is NUL-terminated kernel memory (never a user pointer). The
+ * call creates a zero-length file and persists its directory entry
+ * before returning; on any failure no entry is published (the P1-A1
+ * fs_create contract). Returns a frozen sys_err code. Mapping table
+ * (fs_result -> sys_err; every fs_create outcome is classified):
+ *   FS_OK       -> SYS_OK
+ *   FS_EXISTS   -> SYS_EXISTS (target present, any type, incl. root)
+ *   FS_NOSPC    -> SYS_NOSPC (directory full; create takes no data)
+ *   FS_NOTFOUND -> SYS_NOTFOUND (missing parent names nothing)
+ *   FS_NOTDIR   -> SYS_MALFORMED (a file on the parent chain: a type
+ *                  mismatch, mirroring kern_fread's MALFORMED use)
+ *   FS_INVALID  -> SYS_IOERR (the staged path already passed
+ *                  fs_path_ok, so INVALID here means no filesystem is
+ *                  mounted: storage unavailable, not a bad argument)
+ *   FS_IOERR / FS_CORRUPT / anything else -> SYS_IOERR (device or
+ *                  image failure; never a user-argument class).
+ * The driver exercises this core directly; sys_fcreate adds the
+ * userspace staging shell. */
+int kern_fcreate(const char *kpath)
+{
+    int rc;
+    if (!foreground() || !kpath) return SYS_INVAL;
+    /* Staged-pathname rule: the caller staged the path; semantic
+       validation runs on the kernel copy only (D-M2 mutant). */
+    if (!fs_path_ok(kpath)) return SYS_BADARG;
+    rc = fs_create(kpath);
+    if (rc == FS_OK) return SYS_OK;
+    if (rc == FS_EXISTS) return SYS_EXISTS;
+    if (rc == FS_NOSPC) return SYS_NOSPC;
+    if (rc == FS_NOTFOUND) return SYS_NOTFOUND;
+    if (rc == FS_NOTDIR) return SYS_MALFORMED;
+    if (rc == FS_INVALID) return SYS_IOERR;
+    return SYS_IOERR;
+}
+
+/* P1-A2 Slice P1-A, syscall 9: stateless fcreate.
+ * Frozen register file: EBX path_ptr, ECX path_len (1..32); RDX, RSI,
+ * RDI, RBP reserved (the dispatcher rejects nonzero words with INVAL
+ * per G2, mirroring the spawn/wait/terminate shape). Validation order
+ * mirrors sys_fread: scalars -> wrap check -> stage pathname once ->
+ * call the kernel-memory core on the staged copy. */
+int sys_fcreate(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len)
+{
+    if (!c) return SYS_INVAL;
+    if (!foreground()) return SYS_INVAL;
+    if (path_len < 1 || path_len > FS_MAX_PATH) return SYS_BADARG;
+    if (path_ptr + path_len < path_ptr) return SYS_BADARG;
+    /* Stage the pathname once; every later check runs on the copy. */
+    if (copy_from_user(c, fread_path, path_ptr, path_len) != path_len)
+        return SYS_BADARG;
+    fread_path[path_len] = 0;
+    return kern_fcreate((const char *)fread_path);
+}
+
+/* P1-A2 Slice P1-A: stateless file write over a kernel-memory path.
+ *
+ * kpath is NUL-terminated kernel memory (never a user pointer); kbuf
+ * is a kernel buffer of at least len bytes, 2-byte aligned when
+ * len > 0; len is bounded by UAPI_FWRITE_MAX. Each call stats,
+ * opens internally, performs exactly one fs_write, and closes: no
+ * handle escapes. Returns a frozen sys_err code with *nwritten_out
+ * published only on SYS_OK (always == len: OK means every byte
+ * landed); every other outcome leaves it untouched, mirroring
+ * kern_fread's output discipline.
+ * Differences from kern_fread (all required by write semantics):
+ * - No internal chunk loop: fs_write already accepts the full
+ *   <=16384 batch in one call (FS_MAX_WRITE_BYTES); sys_fwrite
+ *   chunks at the 4 KiB staging bound instead.
+ * - offset > size is BADARG for every len including 0: the P1-A1
+ *   hole rejection reaches the syscall unchanged (no sparse files).
+ * - Growth failures surface as SYS_NOSPC (no free extent); a failed
+ *   relocation reports *nwritten == 0 with the old entry intact
+ *   (data-before-directory), so SYS_NOSPC/SYS_IOERR from a growing
+ *   write never publish a count.
+ * fs_write outcome mapping: FS_OK -> SYS_OK; FS_NOSPC -> SYS_NOSPC;
+ * FS_RANGE -> SYS_BADARG (defensive: the offset pre-check below
+ * already rejects past-end writes; size cannot move mid-call);
+ * FS_INVALID -> SYS_BADARG (length/cap/buffer pre-checked, so only
+ * the offset+len end-wrap on an absurd on-disk size remains);
+ * FS_NOTFILE -> SYS_MALFORMED and FS_BADHANDLE -> SYS_BADHANDLE
+ * (both defensive: type and handle were just established);
+ * FS_IOERR / FS_CORRUPT / anything else -> SYS_IOERR.
+ * The driver exercises this core directly (including fault
+ * injection); sys_fwrite adds the userspace staging shell. */
+int kern_fwrite(const char *kpath, cpu_u64 offset, const cpu_u8 *kbuf,
+                cpu_u64 len, cpu_u64 *nwritten_out)
+{
+    struct fs_stat st;
+    cpu_u32 h = 0;
+    cpu_u64 m = 0;
+    int rc;
+    if (!foreground() || !kpath || !nwritten_out) return SYS_INVAL;
+    if (len > UAPI_FWRITE_MAX) return SYS_INVAL;
+    if (len > 0 && (!kbuf || ((cpu_u64)kbuf & 1u))) return SYS_INVAL;
+    /* Staged-pathname rule: the caller staged the path; semantic
+       validation runs on the kernel copy only (D-M2 mutant). */
+    if (!fs_path_ok(kpath)) return SYS_BADARG;
+    rc = fs_stat(kpath, &st);
+    if (rc != FS_OK) return SYS_NOTFOUND;
+    if (st.type != FS_TYPE_FILE) return SYS_MALFORMED;
+    /* Hole rejection at the syscall boundary: offset past end fails
+       even for zero-length writes (P1-A1 contract, unchanged). */
+    if (offset > st.size) return SYS_BADARG;
+    if (len == 0) {
+        *nwritten_out = 0;
+        return SYS_OK;
+    }
+    if (fs_open(kpath, &h) != FS_OK) return SYS_NOTFOUND;
+    rc = fs_write(h, offset, kbuf, len, &m);
+    if (rc != FS_OK || m != len) {
+        (void)fs_close(h);
+        if (rc == FS_NOSPC) return SYS_NOSPC;
+        if (rc == FS_RANGE || rc == FS_INVALID) return SYS_BADARG;
+        if (rc == FS_NOTFILE) return SYS_MALFORMED;
+        if (rc == FS_BADHANDLE) return SYS_BADHANDLE;
+        return SYS_IOERR;
+    }
+    if (fs_close(h) != FS_OK) return SYS_IOERR;
+    *nwritten_out = m;
+    return SYS_OK;
+}
+
+/* P1-A2 Slice P1-A, syscall 10: stateless fwrite.
+ * Frozen register file: EBX path_ptr, ECX path_len (1..32), EDX
+ * offset, ESI buf, EDI len (<=16384), EBP nwritten_out. No flags
+ * word exists (all six argument registers used, like fread).
+ * Validation order (Slice B discipline, mirrored from sys_fread):
+ * scalars -> wrap checks -> stage pathname once -> validate staged
+ * path -> validate the count output before any filesystem operation
+ * -> per chunk: copy payload in, then write -> publish count LAST.
+ * Each chunk is copied from userspace before its disk write, so no
+ * disk byte moves on unvalidated user memory; a hostile later chunk
+ * fails the call with the count untouched (earlier landed chunks are
+ * real file bytes: the file stays coherent, exactly like a short
+ * POSIX write, and OK still means every byte landed). */
+int sys_fwrite(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
+               cpu_u64 offset, cpu_u64 buf, cpu_u64 len,
+               cpu_u64 nwritten_out)
+{
+    cpu_u64 done = 0;
+    if (!c) return SYS_INVAL;
+    if (!foreground()) return SYS_INVAL;
+    if (path_len < 1 || path_len > FS_MAX_PATH) return SYS_BADARG;
+    if (len > UAPI_FWRITE_MAX) return SYS_INVAL;
+    if (path_ptr + path_len < path_ptr) return SYS_BADARG;
+    /* Stage the pathname once; every later check runs on the copy. */
+    if (copy_from_user(c, fread_path, path_ptr, path_len) != path_len)
+        return SYS_BADARG;
+    fread_path[path_len] = 0;
+    if (!fs_path_ok((const char *)fread_path)) return SYS_BADARG;
+    /* Output capability before any filesystem operation (A3: a hostile
+       destination must fail here, never after state moves). */
+    if (nwritten_out + sizeof(cpu_u64) < nwritten_out) return SYS_BADARG;
+    if (copy_dest_ok(c, nwritten_out, sizeof(cpu_u64)) != sizeof(cpu_u64))
+        return SYS_BADARG;
+    /* Zero length still names a file: validate path, existence, type,
+       and offset (never touching buf), then publish zero. */
+    if (len == 0) {
+        cpu_u64 m = 0;
+        cpu_u64 zero = 0;
+        int rc = kern_fwrite((const char *)fread_path, offset, read_stage,
+                             0, &m);
+        if (rc != SYS_OK) return rc;
+        if (copy_to_user(c, nwritten_out, (const cpu_u8 *)&zero,
+                         sizeof(zero)) != sizeof(zero))
+            return SYS_INVAL;
+        return SYS_OK;
+    }
+    if (buf + len < buf) return SYS_BADARG;
+    /* Bounded chunk loop over the 4 KiB kernel stage (no 16 KiB static
+       staging against the link budget; each chunk is an independent
+       stateless write, so multi-chunk transfers are byte-identical to
+       sequential single-chunk calls). */
+    while (done < len) {
+        cpu_u64 chunk = len - done > SYSCALL_READ_MAX ? SYSCALL_READ_MAX : len - done;
+        cpu_u64 m = 0;
+        int rc;
+        /* offset + done cannot wrap on a reached iteration: chunk 1
+           starts at done == 0, and every later iteration follows a
+           successful chunk whose end (offset + done) fs_write proved
+           un-wrapped; the explicit check below still guards the
+           arithmetic before the offset is trusted. */
+        if (offset + done < offset || offset + done < done) return SYS_BADARG;
+        if (copy_from_user(c, read_stage, buf + done, chunk) != chunk)
+            return SYS_BADARG;
+        rc = kern_fwrite((const char *)fread_path, offset + done,
+                         read_stage, chunk, &m);
+        if (rc != SYS_OK) {
+            /* Any error here (NOTFOUND/MALFORMED/BADARG/NOSPC/IOERR)
+               leaves both user outputs untouched; earlier landed
+               chunks are coherent file bytes (documented short-write
+               behavior), and only SYS_OK publishes a count. */
+            return rc;
+        }
+        if (m != chunk) return SYS_IOERR;
+        done += m;
+        if (done >= len) break;
+    }
+    if (copy_to_user(c, nwritten_out, (const cpu_u8 *)&done,
                      sizeof(done)) != sizeof(done))
         return SYS_INVAL;
     return SYS_OK;

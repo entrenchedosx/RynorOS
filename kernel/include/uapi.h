@@ -24,7 +24,17 @@ enum sys_err {
     SYS_NOMEM = 7,
     SYS_BADARG = 8,
     SYS_ALREADY_GONE = 9,
-    SYS_IOERR = 10
+    SYS_IOERR = 10,
+    /* P1-A2 additions (append-only per abi-growth.md G4; 0-10 kept
+     * forever). EXISTS: create target already exists (a semantic
+     * collision, not a malformed argument: BADARG covers shape, not
+     * state). NOSPC: directory full or no allocatable data extent
+     * (storage exhaustion, distinct from kernel-memory NOMEM and
+     * device-failure IOERR). Justification, per-syscall mapping
+     * tests, and check-removal mutants: docs/design/p1a2-cpl3-abi.md.
+     */
+    SYS_EXISTS = 11,
+    SYS_NOSPC = 12
 };
 
 /* Process lifecycle states for wait(). Separate domain; never compare
@@ -63,6 +73,11 @@ enum stdout_sel {
    most one concurrent two-child pipeline). */
 #define UAPI_FREAD_MAX 16384u
 #define UAPI_PIPE_MAX 1u
+/* P1-A2 Slice P1-A: stateless fwrite batch cap. Mirrors UAPI_FREAD_MAX
+ * (= FS_MAX_WRITE_BYTES, pinned by test): one syscall moves at most
+ * 16384 bytes through 4 KiB staged chunks (each chunk is one fs_write,
+ * like the sys_fread staging loop). */
+#define UAPI_FWRITE_MAX 16384u
 
 /* Argument descriptor: 16 bytes, alignment 8. Caller strings carry no
  * NUL (the kernel appends exactly one per argument); interior NUL bytes

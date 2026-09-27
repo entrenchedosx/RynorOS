@@ -30,9 +30,16 @@
 #define SYS_TERMINATE 6u
 #define SYS_FREAD 7u
 #define SYS_SPAWN_PIPE 8u
-/* 9..2^32-1 reserved: unknown numbers die as invalid_call; the namespace
-   only ever extends upward, never renumbers. Next free number is 9;
-   growth policy is frozen in docs/design/abi-growth.md (P3). */
+/* P1-A2 numbers (append-only per docs/design/abi-growth.md G1; 0..8
+ * frozen). Slice P1-A exposes the proven P1-A1 mutation core to CPL3:
+ * stateless create + writes over absolute paths, mirroring the Slice D
+ * fread register discipline. */
+#define SYS_FCREATE 9u
+#define SYS_FWRITE 10u
+/* 11..2^32-1 reserved: unknown numbers die as invalid_call; the
+   namespace only ever extends upward, never renumbers. Next free
+   number is 11; growth policy is frozen in
+   docs/design/abi-growth.md (P3). */
 
 #define SYS_STDOUT 1u
 #define SYSCALL_WRITE_MAX 4096u

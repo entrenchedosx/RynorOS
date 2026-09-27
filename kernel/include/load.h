@@ -106,6 +106,37 @@ int sys_fread(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
 int kern_fread(const char *kpath, cpu_u64 offset, cpu_u8 *kbuf,
                cpu_u64 len, cpu_u64 *nread_out);
 
+/* P1-A2 Slice P1-A, syscall 9: stateless create of a zero-length file
+   over an absolute path (no discovery, no handles). Frozen register
+   order: path_ptr, path_len (1..32); RDX/RSI/RDI/RBP reserved (must
+   be 0, else INVAL per G2). The target must not exist (EXISTS, never
+   silent overwrite); a full directory is NOSPC; a missing parent is
+   NOTFOUND; a file on the parent chain is MALFORMED. */
+int sys_fcreate(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len);
+/* P1-A2 Slice P1-A, syscall 10: stateless write over an absolute path
+   (no discovery, no handles). Frozen register order: path_ptr,
+   path_len (1..32), offset, buf, len (<=UAPI_FWRITE_MAX),
+   nwritten_out (uses all six argument registers, like fread). OK
+   means all len bytes landed (*nwritten_out == len); every error
+   leaves both user outputs untouched. offset past end is BADARG (no
+   sparse holes, even for zero-length writes); growth without a free
+   extent is NOSPC. */
+int sys_fwrite(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
+               cpu_u64 offset, cpu_u64 buf, cpu_u64 len,
+               cpu_u64 nwritten_out);
+/* Kernel-memory create core shared by sys_fcreate and the test
+   driver: kpath is NUL-terminated kernel memory. See load.c for the
+   fs_result -> sys_err mapping table. */
+int kern_fcreate(const char *kpath);
+/* Kernel-memory write core shared by sys_fwrite (chunked) and the
+   test driver (whole writes up to UAPI_FWRITE_MAX): kpath is
+   NUL-terminated kernel memory, kbuf is a kernel buffer of at least
+   len bytes (2-byte aligned when len > 0). *nwritten_out is
+   published only on SYS_OK (always == len); every error leaves it
+   untouched. See load.c for the contract. */
+int kern_fwrite(const char *kpath, cpu_u64 offset, const cpu_u8 *kbuf,
+                cpu_u64 len, cpu_u64 *nwritten_out);
+
 /* Print the [LOAD] write evidence row (slot/fd/len/nwritten + hex of
    the staged bytes). Called by the gate handler, not the driver, so
    the row is atomic with the syscall under IF=0. */

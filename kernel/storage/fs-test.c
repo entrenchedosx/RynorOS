@@ -10,6 +10,7 @@
 #include "pmm.h"
 #include "heap.h"
 #include "vm.h"
+#include "load.h"
 
 static void require(int ok, const char *why)
 {
@@ -433,6 +434,183 @@ static void p1a_cases(int mounted_dev)
     p1a_row("p1a-remount", "/one");
 }
 
+/* P1-A2 Slice P1-A kern-core battery, marker-gated on /p1a2-go (the
+   p1a_cases discipline: only marker images run it, so every other
+   image keeps byte-identical transcripts). Covers what CPL3 cannot
+   reach: fault injection (no userspace trigger exists), unmounted
+   mappings, kernel-buffer shape checks, and the kern length cap --
+   plus kern-written content and a reboot leg. The full create/write
+   error matrix, NOSPC legs, and remount rows run through the real
+   gate in the CPL3 probe instead: image bytes are free, kernel bytes
+   are not (this TU shares the 0x70000 link budget).
+   Rows mirror the p1a shapes with numeric sys_err codes:
+     [FS] p1a2-neg op=<create|write> id=<id> rc=<n>
+     [FS] p1a2-write path=<p> size=<s> blocks=<b> sum=<s> wsum=<w>
+     [FS] p1a2-reboot path=<p> size=<s> blocks=<b> sum=<s> wsum=<w>
+     [FS] p1a2-fault id=<id> rc=<n>
+   The count word is preset to P1A2_SENT before every kern_fwrite and
+   required untouched on errors (SYS_OK publishes len); a violation
+   halts, so a printed rc row also proves the output discipline held.
+   Content reads go through kern_fread. */
+#define P1A2_SENT 0xAAAAAAAAAAAAAAAAULL
+
+static void p1a2_neg(const char *op, const char *id, int rc)
+{
+    say("[FS] p1a2-neg op=");
+    say(op);
+    say(" id=");
+    say(id);
+    say(" rc=");
+    say_u64((cpu_u64)rc);
+    say("\r\n");
+}
+
+/* Evidence rows reuse p1a_row verbatim (same shape, caller tag). */
+#define p1a2_row p1a_row
+
+/* /k-new grows in seeded segments (crossing + relocate +
+   fault-retry tail); every byte is pinned to its absolute-offset
+   formula at whatever size the caller passes. */
+static void p1a2_verify_knew(cpu_u64 size)
+{
+    cpu_u64 n = 0;
+    cpu_u64 i;
+    require(size <= sizeof fsbuf, "p1a2-knew-big");
+    require(kern_fread("/k-new", 0, fsbuf, size, &n) == SYS_OK && n == size,
+            "p1a2-knew-read");
+    for (i = 0; i < size; ++i) {
+
+        unsigned seed = i < 1450u ? 0x61u :
+            i < 1550u ? 0x63u : i < 6550u ? 0x64u : 0x66u;
+
+        require(fsbuf[i] == (cpu_u8)((i * 13u + seed) & 0xffu), "p1a2-knew-data");
+    }
+}
+
+static void p1a2_cases(int mounted_dev)
+{
+    struct fs_stat st;
+    cpu_u64 m = P1A2_SENT;
+    int rc;
+    /* Kern-only checks first: all reject before existence is
+       consulted (length/cap/buffer precede stat), so these rows
+       print identically on fresh and reboot boots. No CPL3 path
+       reaches these shapes (userspace buffers stage through
+       copy_from_user). */
+    rc = kern_fwrite("/k-new", 0, fsbuf, 16385, &m);
+    require(rc == SYS_INVAL && m == P1A2_SENT, "p1a2-toolen");
+    p1a2_neg("write", "toolen", SYS_INVAL);
+    m = P1A2_SENT;
+    rc = kern_fwrite("/k-new", 0, fsbuf + 1, 10, &m);
+    require(rc == SYS_INVAL && m == P1A2_SENT, "p1a2-oddbuf");
+    p1a2_neg("write", "oddbuf", SYS_INVAL);
+    m = P1A2_SENT;
+    rc = kern_fwrite("/k-new", 0, 0, 10, &m);
+    require(rc == SYS_INVAL && m == P1A2_SENT, "p1a2-nullbuf");
+    p1a2_neg("write", "nullbuf", SYS_INVAL);
+    rc = kern_fcreate("/k-new");
+    if (rc == SYS_EXISTS) {
+        /* Reboot on a persisted image: verify-only, never mutate, so
+           any number of reboots is stable by construction. */
+        p1a2_verify_knew(6650);
+        p1a2_row("p1a2-reboot", "/k-new");
+        return;
+    }
+    require(rc == SYS_OK, "p1a2-create");
+    require(fs_stat("/k-new", &st) == FS_OK && st.size == 0 && st.blocks == 0,
+            "p1a2-snew");
+    p1a_pattern(fsbuf, 0, 1500, 0x61u);
+    m = P1A2_SENT;
+    require(kern_fwrite("/k-new", 0, fsbuf, 1500, &m) == SYS_OK && m == 1500,
+            "p1a2-wnew");
+    p1a_verify("/k-new", 1500, 0x61u);
+    p1a2_row("p1a2-write", "/k-new");
+    /* (Pure overwrite rides the CPL3 probe: image bytes are free.) */
+    /* Crossing EOF: 1450 + 100 grows the file to 1550. */
+    p1a_pattern(fsbuf, 1450, 100, 0x63u);
+    m = P1A2_SENT;
+    require(kern_fwrite("/k-new", 1450, fsbuf, 100, &m) == SYS_OK && m == 100,
+            "p1a2-wcross");
+#if RYNOR_TEST_ARMED
+    /* Relocation fault on the far-growth write: the old entry stays
+       intact (data-before-directory), then the retry converges. */
+    p1a_pattern(fsbuf, 1550, 5000, 0x64u);
+    fs_inject_fault_at(1);
+    m = P1A2_SENT;
+    rc = kern_fwrite("/k-new", 1550, fsbuf, 5000, &m);
+    require(rc == SYS_IOERR && m == P1A2_SENT, "p1a2-freloc");
+    say("[FS] p1a2-fault id=f-reloc rc=10\r\n");
+    require(fs_stat("/k-new", &st) == FS_OK && st.size == 1550,
+            "p1a2-freloc-size");
+    p1a2_verify_knew(1550);
+    /* The verify read clobbered the staged payload: restage before
+       the retry (fsbuf is shared staging). */
+    p1a_pattern(fsbuf, 1550, 5000, 0x64u);
+    fs_inject_fault_at(0);
+    m = P1A2_SENT;
+    rc = kern_fwrite("/k-new", 1550, fsbuf, 5000, &m);
+    require(rc == SYS_OK && m == 5000, "p1a2-wbig");
+    p1a2_verify_knew(6550);
+    p1a2_row("p1a2-write", "/k-new");
+    /* In-place tail growth is 2 transfers (1 data + 1 dir): fault the
+       data transfer first. */
+    p1a_pattern(fsbuf, 6550, 100, 0x66u);
+    fs_inject_fault_at(1);
+    m = P1A2_SENT;
+    rc = kern_fwrite("/k-new", 6550, fsbuf, 100, &m);
+    require(rc == SYS_IOERR && m == P1A2_SENT, "p1a2-fdata");
+    say("[FS] p1a2-fault id=f-data rc=10\r\n");
+    require(fs_stat("/k-new", &st) == FS_OK && st.size == 6550,
+            "p1a2-fdata-size");
+    p1a2_verify_knew(6550);
+    /* Restage: the verify just clobbered fsbuf (shared staging). */
+    p1a_pattern(fsbuf, 6550, 100, 0x66u);
+    /* Fault the directory transfer: data lands, the size field does
+       not, and an idempotent retry converges. */
+    fs_inject_fault_at(2);
+    m = P1A2_SENT;
+    rc = kern_fwrite("/k-new", 6550, fsbuf, 100, &m);
+    require(rc == SYS_IOERR && m == P1A2_SENT, "p1a2-fdir");
+    say("[FS] p1a2-fault id=f-dir rc=10\r\n");
+    require(fs_stat("/k-new", &st) == FS_OK && st.size == 6550,
+            "p1a2-fdir-size");
+    fs_inject_fault_at(0);
+    m = P1A2_SENT;
+    rc = kern_fwrite("/k-new", 6550, fsbuf, 100, &m);
+    require(rc == SYS_OK && m == 100, "p1a2-fretry");
+    p1a2_verify_knew(6650);
+    p1a2_row("p1a2-write", "/k-new");
+    fs_inject_fault_at(0);
+#else
+    p1a_pattern(fsbuf, 1550, 5000, 0x64u);
+    m = P1A2_SENT;
+    require(kern_fwrite("/k-new", 1550, fsbuf, 5000, &m) == SYS_OK && m == 5000,
+            "p1a2-wbig");
+    p1a2_verify_knew(6550);
+    p1a2_row("p1a2-write", "/k-new");
+    p1a_pattern(fsbuf, 6550, 100, 0x66u);
+    m = P1A2_SENT;
+    require(kern_fwrite("/k-new", 6550, fsbuf, 100, &m) == SYS_OK && m == 100,
+            "p1a2-wtail");
+    p1a2_verify_knew(6650);
+    p1a2_row("p1a2-write", "/k-new");
+#endif
+    /* Unmounted last: storage-unavailable mappings with the count
+       untouched, then back on the device for the stages below. */
+    fs_unmount();
+    require(kern_fcreate("/k-u") == SYS_IOERR, "p1a2-unmounted-c");
+    p1a2_neg("create", "unmounted", SYS_IOERR);
+    m = P1A2_SENT;
+    require(kern_fwrite("/k-new", 0, fsbuf, 10, &m) == SYS_NOTFOUND &&
+            m == P1A2_SENT, "p1a2-unmounted-w");
+    p1a2_neg("write", "unmounted", SYS_NOTFOUND);
+    require(fs_mount((cpu_u32)mounted_dev) == FS_OK, "p1a2-remount2");
+    require(fs_stat("/k-new", &st) == FS_OK && st.size == 6650,
+            "p1a2-remount2-stat");
+}
+
+
+
 void fs_self_test(void)
 {
     require(cpu_interrupts_disabled(), "if0");
@@ -581,6 +759,10 @@ void fs_self_test(void)
        rows proves the battery ran where it should). */
     if (fs_stat("/p1a-go", &st) == FS_OK)
         p1a_cases(mounted_dev);
+    /* P1-A2 kern-core battery, marker-gated on /p1a2-go (same
+       discipline: absence of p1a2 rows on old images is the gate). */
+    if (fs_stat("/p1a2-go", &st) == FS_OK)
+        p1a2_cases(mounted_dev);
     /* Every other present device must fail mounting with a classified
        code (the boot disk is not a filesystem; corrupt images fail by
        kind). A surprise success here is itself the failure. */

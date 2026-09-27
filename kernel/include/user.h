@@ -65,6 +65,10 @@
  * call, not for the process). Kernel-internal, not UAPI. */
 #define USER_RUN_FREAD 10u
 #define USER_RUN_SPAWN_PIPE 11u
+/* P1-A2 Slice P1-A: fcreate/fwrite resume codes (terminal for the
+ * call, not for the process). Kernel-internal, not UAPI. */
+#define USER_RUN_FCREATE 12u
+#define USER_RUN_FWRITE 13u
 
 /* USER_ABORTED (Slice C): worker-observed kill flag converted to a
  * terminal state on the owning thread only. Never resumed, never

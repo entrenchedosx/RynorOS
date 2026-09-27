@@ -1325,6 +1325,28 @@ void user_handle_exit(struct exception_frame *f)
             sched_resume(user_schedule_next(link,
                 reason == SYS_FREAD ? USER_RUN_FREAD : USER_RUN_SPAWN_PIPE));
         }
+        if (reason == SYS_FCREATE || reason == SYS_FWRITE) {
+            /* P1-A2 Slice P1-A: stateless file create and writes.
+               fcreate uses two argument registers (path_ptr, path_len)
+               with RDX/RSI/RDI/RBP reserved (nonzero words are INVAL
+               returns, never kills, mirroring spawn); fwrite uses all
+               six argument registers (no reserved word exists, like
+               fread). */
+            int rc;
+            if (reason == SYS_FCREATE) {
+                if (f->rdx != 0 || f->rsi != 0 || f->rdi != 0 || f->rbp != 0)
+                    rc = SYS_INVAL;
+                else
+                    rc = sys_fcreate(c, f->rbx, f->rcx);
+            } else {
+                rc = sys_fwrite(c, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi,
+                                f->rbp);
+            }
+            c->sys_result = (cpu_u64)rc;
+            c->gprs[0] = (cpu_u64)rc;
+            sched_resume(user_schedule_next(link,
+                reason == SYS_FCREATE ? USER_RUN_FCREATE : USER_RUN_FWRITE));
+        }
     }
     c->state = USER_FAULTED; c->fault_class = 2;
     c->fault_vector = 128; c->fault_error = reason; c->fault_cr2 = 0;

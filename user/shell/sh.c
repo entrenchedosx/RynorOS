@@ -40,6 +40,15 @@
  *   [RL] stats sess_live=N sess_high=N sub_live=N sub_high=N
  *            syms=N src=N   (after evaluator submissions only)
  * Typed input is echoed; child output passes through raw.
+ *
+ * P1-A2 redirect: `echo TEXT > /path` only. The shell spawns echo
+ * with stdout piped into the /bin/fput consumer (argv: target path),
+ * which creates the file through fcreate and writes the captured
+ * bytes through fwrite; the shell itself never touches file bytes.
+ * Any other command with `>` fails as `[SH] error redirect` (status
+ * 2); a consumer exit code N surfaces as `[SH] error redirect N`
+ * with the pipeline status N (the raw sys_err: 11 EXISTS, 12 NOSPC,
+ * ...). There is no truncate: existing targets fail honestly.
  */
 #include "rt.h"
 #include "rt_pipe.h"
@@ -70,7 +79,7 @@
 #define SH_STDOUT_SERIAL 0u
 #define SH_STDOUT_PIPE 1u
 
-/* Shell bounds (§43; data window keeps headroom for Slice F). */
+/* Shell bounds (??43; data window keeps headroom for Slice F). */
 #define SH_LINE_MAX 256
 #define SH_SCRIPT_MAX 4096
 #define SH_READ_CHUNK 512
@@ -203,6 +212,7 @@ static unsigned int wantkey_printed;
 static unsigned long long fh[2];
 static unsigned int nfh;
 static int fh_abort; /* a terminate actually killed (>= 1 live handle) */
+static int redir_active; /* foreground pair is an echo-redirect capture */
 static int overlap_seen;
 static unsigned long long final_status;
 static int final_kind; /* 0 none, 1 done, 2 abort-child, 3 abort-pipe */
@@ -384,6 +394,64 @@ static void exec_pipe(struct shp_cmd *a, struct shp_cmd *b)
     fh_abort = 0;
 }
 
+static int sh_streq(const char *a, const char *b)
+{
+    while (*a && *b && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return *a == *b;
+}
+
+/* P1-A2: execute `echo TEXT > /path` through pipe capture. The echo
+   stage runs with stdout piped into a synthesized /bin/fput consumer
+   stage (argv: "fput", target); fput reads the pipe to EOF, strips
+   one trailing newline, creates the target through fcreate, and
+   writes the captured bytes through fwrite. Reaping, overlap, and
+   right-hand-status accounting come from the proven exec_pipe path;
+   redir_active tells the finalizer to voice consumer failures as
+   `[SH] error redirect N`. Only the two echo spellings that resolve
+   to /bin/echo may redirect; anything else fails loudly here with no
+   spawn (general `command > file` is out of scope). */
+static void exec_redirect(struct shp_cmd *cmd)
+{
+    struct shp_cmd synth;
+    unsigned int i;
+    unsigned long long tlen;
+    if (cmd->argc < 1 || cmd->redir == 0 ||
+        (!sh_streq(cmd->argv[0], "echo") &&
+         !sh_streq(cmd->argv[0], "/bin/echo"))) {
+        sh_print("[SH] error redirect\r\n");
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        return;
+    }
+    /* Target length is CPL3-checked like command paths (the kernel
+       would BADARG it; obvious cases fail here with the stable
+       shell error). */
+    tlen = sh_strlen(cmd->redir, 65);
+    if (tlen == 0 || tlen > 32) {
+        sh_print("[SH] error args\r\n");
+        last_status = SH_ST_SYNTAX;
+        final_status = last_status;
+        final_kind = 1;
+        return;
+    }
+    synth.argc = 2;
+    for (i = 0; i < SHP_MAX_ARGS; ++i) synth.argv[i] = 0;
+    synth.argv[0] = "fput";
+    synth.argv[1] = cmd->redir;
+    synth.store_used = 0;
+    synth.has_redir = 0;
+    synth.redir = 0;
+    redir_active = 1;
+    exec_pipe(cmd, &synth);
+    /* exec_pipe fails synchronously (no children) on spawn/args
+       errors: disarm so a later pipeline is never mislabeled. */
+    if (nfh != 2) redir_active = 0;
+}
+
 /* Execute one parsed statement (already fully validated). */
 static void exec_parsed(struct shp_line *parsed)
 {
@@ -394,6 +462,13 @@ static void exec_parsed(struct shp_line *parsed)
         row_flush();
         final_status = last_status;
         final_kind = 1;
+        return;
+    }
+    if (parsed->ncmds == 1 && parsed->cmds[0].has_redir) {
+        /* P1-A2: `echo TEXT > /path` (the parser guarantees a
+           redirect implies a single command; anything else with `>`
+           fails loudly inside exec_redirect with no spawn). */
+        exec_redirect(&parsed->cmds[0]);
         return;
     }
     if (parsed->ncmds == 1) {
@@ -872,6 +947,20 @@ static int poll_children(void)
         /* Pipeline rule: right-hand (consumer) status. */
         final_status = map_child((unsigned int)tstate[1], tcode[1]);
     }
+    /* P1-A2: voice a redirect consumer's nonzero exit (the raw
+       sys_err from its failed fcreate/fwrite) before the done row.
+       Success stays silent like any pipeline; aborts keep their own
+       rows. The flag resets on every finalize (this block runs
+       exactly once per foreground set). */
+    if (redir_active && !fh_abort && nfh == 2 &&
+        tstate[1] == SH_EXITED && (tcode[1] & 0xffu) != 0) {
+        row_begin();
+        row_str("[SH] error redirect ");
+        row_num(tcode[1] & 0xffu);
+        row_str("\r\n");
+        row_flush();
+    }
+    redir_active = 0;
     if (fh_abort)
         final_status = SH_ST_ABORT;
     final_kind = fh_abort ? (nfh == 2 ? 3 : 2) : 1;

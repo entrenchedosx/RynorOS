@@ -8,10 +8,12 @@
  *
  * Tokenizer discipline: bare words are an explicit allowlist
  * ([A-Za-z0-9_./,:+=@%-]); every other byte outside double quotes is
- * structure (`|>`, `;`, `//`), whitespace, or a loud syntax error.
+ * structure (`|>`, `>`, `;`, `//`), whitespace, or a loud syntax error.
  * `//` starts a comment only at a token boundary (mid-word slashes
  * are literal, so absolute paths and `a//b` stay intact). Adjacent
  * quoted/bare words do not concatenate (each is its own argument).
+ * P1-A2: a bare `>` after a single command's words opens a redirect
+ * target (see sh_parse.h); everywhere else it stays a loud error.
  */
 #include "sh_parse.h"
 
@@ -59,6 +61,9 @@ static void commit_cmd(struct shp_cmd *dst, const struct shp_cmd *src)
     for (i = 0; i < SHP_MAX_ARGS; ++i)
         dst->argv[i] = (i < src->argc) ?
             dst->store + (src->argv[i] - (const char *)src->store) : 0;
+    dst->has_redir = src->has_redir;
+    dst->redir = src->has_redir ?
+        dst->store + (src->redir - (const char *)src->store) : 0;
 }
 
 /* Append one argument word to cmd (bounded). Empty words (from "")
@@ -80,6 +85,24 @@ static int push_word(struct shp_cmd *cmd, const char *s, unsigned int n)
     return 1;
 }
 
+/* Store one redirect target (P1-A2): same aggregate budget as argv
+   words, but never counted in argc. Exactly one target per command
+   (the caller rejects repeats before calling). */
+static int push_redir(struct shp_cmd *cmd, const char *s, unsigned int n)
+{
+    unsigned int k;
+    if (cmd->has_redir) return 0;
+    if (n > SHP_MAX_WORD) return 0;
+    if (cmd->store_used > (unsigned int)SHP_MAX_ARGBYTES - (n + 1)) return 0;
+    cmd->redir = cmd->store + cmd->store_used;
+    for (k = 0; k < n; ++k)
+        cmd->store[cmd->store_used + k] = s[k];
+    cmd->store[cmd->store_used + n] = 0;
+    cmd->store_used += n + 1;
+    cmd->has_redir = 1;
+    return 1;
+}
+
 int shp_parse_stmt(const char *text, unsigned long long len,
                    struct shp_line *out, unsigned long long *used)
 {
@@ -89,6 +112,7 @@ int shp_parse_stmt(const char *text, unsigned long long len,
     unsigned int ncmds = 0;
     unsigned int c;
     int have_cmd = 0;
+    int want_redir = 0;
     unsigned long long i = 0;
     if (!text || !out || !used) return SHP_ERR_SYNTAX;
     if (len > SHP_MAX_LINE) return SHP_ERR_SYNTAX;
@@ -98,9 +122,13 @@ int shp_parse_stmt(const char *text, unsigned long long len,
     for (c = 0; c < SHP_MAX_CMDS; ++c) {
         out->cmds[c].argc = 0;
         out->cmds[c].store_used = 0;
+        out->cmds[c].has_redir = 0;
+        out->cmds[c].redir = 0;
     }
     cur.argc = 0;
     cur.store_used = 0;
+    cur.has_redir = 0;
+    cur.redir = 0;
     *used = 0;
     for (;;) {
         char ch;
@@ -127,6 +155,10 @@ int shp_parse_stmt(const char *text, unsigned long long len,
         if (text[i] == '|') {
             if (!have_cmd) return SHP_ERR_SYNTAX;
             if (i + 1 >= len || text[i + 1] != '>') return SHP_ERR_SYNTAX;
+            /* P1-A2: a redirect and a pipeline never mix (in either
+               order); the `>` branch below rejects redirects past a
+               separator, and this rejects separators past one. */
+            if (want_redir || cur.has_redir) return SHP_ERR_SYNTAX;
             if (ncmds + 1 >= SHP_MAX_CMDS) return SHP_ERR_SYNTAX;
             commit_cmd(&out->cmds[ncmds], &cur);
             ++ncmds;
@@ -134,6 +166,18 @@ int shp_parse_stmt(const char *text, unsigned long long len,
             cur.store_used = 0;
             have_cmd = 0;
             i += 2;
+            continue;
+        }
+        /* P1-A2 redirect: a bare `>` after a single command's words
+           opens exactly one target word (parsed by the word branches
+           below). No command yet, a second `>`, `>>`, or any `>`
+           past a pipeline separator is a loud syntax error. */
+        if (text[i] == '>') {
+            if (!have_cmd) return SHP_ERR_SYNTAX;
+            if (ncmds > 0) return SHP_ERR_SYNTAX;
+            if (want_redir || cur.has_redir) return SHP_ERR_SYNTAX;
+            want_redir = 1;
+            ++i;
             continue;
         }
         ch = text[i];
@@ -161,7 +205,12 @@ int shp_parse_stmt(const char *text, unsigned long long len,
                 if (wlen >= SHP_MAX_WORD) return SHP_ERR_SYNTAX;
                 word[wlen++] = text[i++];
             }
-            if (!push_word(&cur, word, wlen)) return SHP_ERR_SYNTAX;
+            if (want_redir) {
+                if (!push_redir(&cur, word, wlen)) return SHP_ERR_SYNTAX;
+                want_redir = 0;
+            } else {
+                if (!push_word(&cur, word, wlen)) return SHP_ERR_SYNTAX;
+            }
             have_cmd = 1;
             continue;
         }
@@ -172,13 +221,20 @@ int shp_parse_stmt(const char *text, unsigned long long len,
                 if (wlen >= SHP_MAX_WORD) return SHP_ERR_SYNTAX;
                 word[wlen++] = text[i++];
             }
-            if (!push_word(&cur, word, wlen)) return SHP_ERR_SYNTAX;
+            if (want_redir) {
+                if (!push_redir(&cur, word, wlen)) return SHP_ERR_SYNTAX;
+                want_redir = 0;
+            } else {
+                if (!push_word(&cur, word, wlen)) return SHP_ERR_SYNTAX;
+            }
             have_cmd = 1;
             continue;
         }
         /* Lone '/' (not '//') is rejected (paths spell with more). */
         return SHP_ERR_SYNTAX;
     }
+    /* A dangling `>` (no target word) is a loud syntax error. */
+    if (want_redir) return SHP_ERR_SYNTAX;
     if (!have_cmd && ncmds == 0) {
         out->empty = 1;
         return SHP_EMPTY;
@@ -194,6 +250,8 @@ int shp_parse_stmt(const char *text, unsigned long long len,
                 return SHP_ERR_SYNTAX;
         }
     } else if (out->cmds[0].argc == 1 && streq(out->cmds[0].argv[0], "status")) {
+        /* P1-A2: the status builtin takes no redirect. */
+        if (out->cmds[0].has_redir) return SHP_ERR_SYNTAX;
         out->status_only = 1;
     }
     return SHP_OK;

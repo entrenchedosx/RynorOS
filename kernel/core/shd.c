@@ -181,7 +181,8 @@ void shd_boot(void)
             rc != USER_RUN_READ && rc != USER_RUN_PREEMPTED &&
             rc != USER_RUN_SPAWNED && rc != USER_RUN_WAITED &&
             rc != USER_RUN_TERMINATED && rc != USER_RUN_FREAD &&
-            rc != USER_RUN_SPAWN_PIPE)
+            rc != USER_RUN_SPAWN_PIPE && rc != USER_RUN_FCREATE &&
+            rc != USER_RUN_FWRITE)
             halt("[SHD] failure=run");
         rc = user_resume(&ctx->link);
     }

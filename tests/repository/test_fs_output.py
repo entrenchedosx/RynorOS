@@ -168,9 +168,10 @@ class FsDecoderTests(unittest.TestCase):
                 self.assertEqual(ctx.exception.args[0], code)
 
     def test_12_error_codes_documented(self):
+        # P1-A1 fs_result codes exists/nospc: the validator parses p1a-neg rows that print them.
         self.assertEqual(FS_CODES, {
             "ok", "invalid", "notfound", "notfile", "notdir", "badhandle",
-            "range", "ioerr", "corrupt", "unsupported", "busy",
+            "range", "ioerr", "corrupt", "unsupported", "busy", "exists", "nospc",
         })
 
 

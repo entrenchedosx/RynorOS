@@ -369,7 +369,8 @@ static void proc_worker(void *arg)
             rc != USER_RUN_READ && rc != USER_RUN_PREEMPTED &&
             rc != USER_RUN_SPAWNED && rc != USER_RUN_WAITED &&
             rc != USER_RUN_TERMINATED && rc != USER_RUN_FREAD &&
-            rc != USER_RUN_SPAWN_PIPE)
+            rc != USER_RUN_SPAWN_PIPE && rc != USER_RUN_FCREATE &&
+            rc != USER_RUN_FWRITE)
             panic("worker_rc");
         rc = user_resume(&c->link);
     }
