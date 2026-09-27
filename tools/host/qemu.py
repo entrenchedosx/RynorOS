@@ -329,7 +329,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                require_proc: bool = False, require_pipe: bool = False,
                sh_keys=None, sh_burst: tuple | list = (), require_sh: bool = False,
                sh_done: bytes | None = None,
-               extra_drives: tuple = ()) -> bytes:
+               extra_drives: tuple = (),
+               extra_args: tuple = ()) -> bytes:
     # Entries are paths (snapshot overlay on) or (path, snapshot_on)
     # tuples for tests that own a private image copy.
     # Invalidate stale evidence before any validation failure can leave
@@ -373,6 +374,10 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
         path = extra[0] if isinstance(extra, tuple) else extra
         if not Path(path).is_file():
             raise FileNotFoundError(f"Extra drive image missing: {path}")
+    extra_args = tuple(extra_args)
+    for arg in extra_args:
+        if type(arg) is not str or not arg:
+            raise ValueError("extra_args must be non-empty strings")
     qemu = find_tool("qemu-system-x86_64", "RYNOR_QEMU")
     qemu_path = Path(qemu).resolve()
     bios = _locate_firmware(qemu_path)
@@ -410,6 +415,10 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
         command += ["-drive",
                     f"file={str(Path(extra).resolve()).replace(',', ',,')},format=raw,if=ide"
                     + (",snapshot=on" if snap else "")]
+    # Test-specific devices (PCI-A1): raw QEMU arguments such as
+    # -device, appended verbatim after the fixed product topology.
+    # Empty by default, so normal boots are byte-identical.
+    command += list(extra_args)
     command += [
         "-serial", f"file:{serial}", "-monitor", "stdio", "-no-reboot",
         "-d", "guest_errors,int", "-D", str(debug),
@@ -457,7 +466,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                                            b"[PROC] failure=",
                                                            b"[FREAD] failure=",
                                                            b"[PIPE] failure=",
-                                                           b"[SHD] failure="))), None)
+                                                           b"[SHD] failure=",
+                                                           b"[PCI] failure="))), None)
                 if driver_failure is not None:
                     failure = driver_failure.decode('ascii', errors='replace')
                     break

@@ -24,6 +24,7 @@ from pipe_output import (FREAD_START, FREAD_VERIFIED, PIPE_START,
                          validate_fread_section, validate_pipe_section)
 from sh_output import (has_shell_rows, strip_shell_lines,
                        validate_sh_section)
+from pci_output import validate_pci_section
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -115,6 +116,30 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
                 block = strip_section(block, PIPE_START, PIPE_VERIFIED)
         return block, errs
 
+    # PCI-A1 self-test section trails the pipe run on pci-test images
+    # only (silent everywhere else). It strips like the Slice D
+    # sections above: completeness gate, grammar validation, removal
+    # before the greedy Slice C chain swallows its rows.
+    pci_start = b"[PCI] transport ok"
+    pci_verified = b"[PCI] pci verified"
+
+    def strip_pci_section(block: bytes) -> tuple:
+        errs: list[str] = []
+        if pci_start in block:
+            if pci_verified not in block:
+                errs.append("pci section incomplete")
+            else:
+                errs.extend(validate_pci_section(block))
+                # Remove the whole run INCLUDING the terminator's line
+                # ending: pipe-style stripping leaves a stray blank
+                # line that breaks the exact [RT] skipped match below.
+                start = block.index(pci_start)
+                end = block.index(pci_verified) + len(pci_verified)
+                if block[end:end + 2] == b"\r\n":
+                    end += 2
+                block = block[:start] + block[end:]
+        return block, errs
+
     shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
     if shell_sep != b"":
         shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
@@ -138,6 +163,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             # the same way when a shell run is present.
             tail, pipe_errs = strip_pipe_sections(tail)
             errors.extend(pipe_errs)
+            tail, pci_errs = strip_pci_section(tail)
+            errors.extend(pci_errs)
             if has_shell_rows(tail):
                 errors.extend(validate_sh_section(tail))
                 tail = strip_shell_lines(tail)
@@ -159,6 +186,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
     elif post != b"":
         post, pipe_errs = strip_pipe_sections(post)
         errors.extend(pipe_errs)
+        post, pci_errs = strip_pci_section(post)
+        errors.extend(pci_errs)
         if has_shell_rows(post):
             errors.extend(validate_sh_section(post))
             post = strip_shell_lines(post)
