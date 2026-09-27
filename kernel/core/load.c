@@ -676,6 +676,158 @@ int sys_fwrite(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
     return SYS_OK;
 }
 
+/* P1-A3 Slice P1-A: stateless stat over a kernel-memory path.
+ *
+ * kpath is NUL-terminated kernel memory (never a user pointer);
+ * kstat is a kernel struct user_stat filled (reserved zeroed) only
+ * on SYS_OK. Stateless: exactly one fs_stat, no handle escapes.
+ * Directories (including root) stat fine: type dir, size 0.
+ * fs_stat outcome mapping: FS_OK -> SYS_OK; FS_NOTFOUND ->
+ * SYS_NOTFOUND; FS_NOTDIR -> SYS_MALFORMED (file on the parent
+ * chain); FS_INVALID -> SYS_IOERR (staged path pre-validated, so
+ * only the unmounted shape remains: an image failure, never a
+ * user-argument class); anything else -> SYS_IOERR. */
+int kern_fstat(const char *kpath, struct user_stat *kstat)
+{
+    struct fs_stat st;
+    int rc;
+    if (!foreground() || !kpath || !kstat) return SYS_INVAL;
+    /* Staged-pathname rule: the caller staged the path; semantic
+       validation runs on the kernel copy only (D-M2 mutant). */
+    if (!fs_path_ok(kpath)) return SYS_BADARG;
+    rc = fs_stat(kpath, &st);
+    if (rc == FS_OK) {
+        kstat->type = (cpu_u64)st.type;
+        kstat->size = st.size;
+        kstat->reserved[0] = 0;
+        kstat->reserved[1] = 0;
+        return SYS_OK;
+    }
+    if (rc == FS_NOTFOUND) return SYS_NOTFOUND;
+    if (rc == FS_NOTDIR) return SYS_MALFORMED;
+    if (rc == FS_INVALID) return SYS_IOERR;
+    return SYS_IOERR;
+}
+
+/* P1-A3 Slice P1-A, syscall 11: stateless fstat.
+ * Frozen register file: EBX path_ptr, ECX path_len (1..32), EDX
+ * out_ptr (32 bytes); ESI/EDI/EBP reserved (the dispatcher rejects
+ * nonzero words with INVAL per G2). Validation order mirrors
+ * sys_fread: scalars -> wrap checks -> stage pathname once ->
+ * validate staged path -> validate the struct output before any
+ * filesystem operation -> fill -> publish last. */
+int sys_fstat(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
+              cpu_u64 out_ptr)
+{
+    struct user_stat ks;
+    int rc;
+    if (!c) return SYS_INVAL;
+    if (!foreground()) return SYS_INVAL;
+    if (path_len < 1 || path_len > FS_MAX_PATH) return SYS_BADARG;
+    if (path_ptr + path_len < path_ptr) return SYS_BADARG;
+    /* Stage the pathname once; every later check runs on the copy. */
+    if (copy_from_user(c, fread_path, path_ptr, path_len) != path_len)
+        return SYS_BADARG;
+    fread_path[path_len] = 0;
+    if (!fs_path_ok((const char *)fread_path)) return SYS_BADARG;
+    /* Output capability before any filesystem operation (A3: a hostile
+       destination must fail here, never after state moves). */
+    if (out_ptr + sizeof ks < out_ptr) return SYS_BADARG;
+    if (copy_dest_ok(c, out_ptr, sizeof ks) != sizeof ks)
+        return SYS_BADARG;
+    rc = kern_fstat((const char *)fread_path, &ks);
+    if (rc != SYS_OK) return rc;
+    if (copy_to_user(c, out_ptr, (const cpu_u8 *)&ks, sizeof ks) !=
+        sizeof ks)
+        return SYS_INVAL;
+    return SYS_OK;
+}
+
+/* P1-A3 Slice P1-A: dense-ordinal readdir over kernel memory.
+ *
+ * Fills *kdirent (reserved zeroed) for the ordinal-th live entry or
+ * returns SYS_END past the last live entry. fs_readdir outcome
+ * mapping: FS_OK -> SYS_OK; FS_END -> SYS_END; FS_INVALID ->
+ * SYS_IOERR (only reachable unmounted: there is no path argument,
+ * so no user-argument class applies); anything else -> SYS_IOERR. */
+int kern_readdir(cpu_u64 ordinal, struct user_dirent *kdirent)
+{
+    int rc;
+    if (!foreground() || !kdirent) return SYS_INVAL;
+    rc = fs_readdir(ordinal, kdirent);
+    if (rc == FS_OK) return SYS_OK;
+    if (rc == FS_END) return SYS_END;
+    if (rc == FS_INVALID) return SYS_IOERR;
+    return SYS_IOERR;
+}
+
+/* P1-A3 Slice P1-A, syscall 12: dense-ordinal readdir.
+ * Frozen register file: EBX ordinal, ECX out_ptr (64 bytes);
+ * EDX/ESI/EDI/EBP reserved (the dispatcher rejects nonzero words
+ * with INVAL per G2). Output capability first, then fill, publish
+ * last; SYS_END and every error leave the output untouched. */
+int sys_readdir(struct user_context *c, cpu_u64 ordinal, cpu_u64 out_ptr)
+{
+    struct user_dirent kd;
+    int rc;
+    if (!c) return SYS_INVAL;
+    if (!foreground()) return SYS_INVAL;
+    if (out_ptr + sizeof kd < out_ptr) return SYS_BADARG;
+    if (copy_dest_ok(c, out_ptr, sizeof kd) != sizeof kd)
+        return SYS_BADARG;
+    rc = kern_readdir(ordinal, &kd);
+    if (rc != SYS_OK) return rc;
+    if (copy_to_user(c, out_ptr, (const cpu_u8 *)&kd, sizeof kd) !=
+        sizeof kd)
+        return SYS_INVAL;
+    return SYS_OK;
+}
+
+/* P1-A3 Slice P1-A: stateless unlink over a kernel-memory path.
+ *
+ * kpath is NUL-terminated kernel memory (never a user pointer).
+ * Stateless: exactly one fs_unlink. Directories and root are never
+ * unlinked (FS_NOTFILE -> SYS_MALFORMED: a type refusal, not a
+ * missing name); a second unlink of the same path is NOTFOUND.
+ * fs_unlink outcome mapping: FS_OK -> SYS_OK; FS_NOTFOUND ->
+ * SYS_NOTFOUND; FS_NOTDIR -> SYS_MALFORMED (file on the parent
+ * chain); FS_NOTFILE -> SYS_MALFORMED; FS_INVALID -> SYS_IOERR
+ * (staged path pre-validated: unmounted); anything else -> SYS_IOERR. */
+int kern_unlink(const char *kpath)
+{
+    int rc;
+    if (!foreground() || !kpath) return SYS_INVAL;
+    /* Staged-pathname rule: the caller staged the path; semantic
+       validation runs on the kernel copy only (D-M2 mutant). */
+    if (!fs_path_ok(kpath)) return SYS_BADARG;
+    rc = fs_unlink(kpath);
+    if (rc == FS_OK) return SYS_OK;
+    if (rc == FS_NOTFOUND) return SYS_NOTFOUND;
+    if (rc == FS_NOTDIR) return SYS_MALFORMED;
+    if (rc == FS_NOTFILE) return SYS_MALFORMED;
+    if (rc == FS_INVALID) return SYS_IOERR;
+    return SYS_IOERR;
+}
+
+/* P1-A3 Slice P1-A, syscall 13: stateless unlink.
+ * Frozen register file: EBX path_ptr, ECX path_len (1..32);
+ * EDX/ESI/EDI/EBP reserved (the dispatcher rejects nonzero words
+ * with INVAL per G2, mirroring fcreate). Validation order mirrors
+ * sys_fcreate: scalars -> wrap check -> stage pathname once -> call
+ * the kernel-memory core on the staged copy. */
+int sys_unlink(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len)
+{
+    if (!c) return SYS_INVAL;
+    if (!foreground()) return SYS_INVAL;
+    if (path_len < 1 || path_len > FS_MAX_PATH) return SYS_BADARG;
+    if (path_ptr + path_len < path_ptr) return SYS_BADARG;
+    /* Stage the pathname once; every later check runs on the copy. */
+    if (copy_from_user(c, fread_path, path_ptr, path_len) != path_len)
+        return SYS_BADARG;
+    fread_path[path_len] = 0;
+    return kern_unlink((const char *)fread_path);
+}
+
 static void text(const char *s)
 {
     /* Evidence printing; the caller guarantees a working serial. */

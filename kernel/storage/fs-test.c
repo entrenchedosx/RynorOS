@@ -11,6 +11,7 @@
 #include "heap.h"
 #include "vm.h"
 #include "load.h"
+#include "uapi.h"
 
 static void require(int ok, const char *why)
 {
@@ -609,6 +610,93 @@ static void p1a2_cases(int mounted_dev)
             "p1a2-remount2-stat");
 }
 
+/* P1-A3 Slice P1-A kern-core battery, marker-gated on /p1a3-go (the
+   p1a_cases discipline: only marker images run it, so every other
+   image keeps byte-identical transcripts). Covers ONLY what CPL3
+   cannot reach: unlink fault injection, unmounted mappings, and
+   kernel-buffer shapes. The 0x70000 link budget is nearly spent
+   (P1-A1+P1-A2 filled it), so every content/stat/enumerate/reuse/
+   reboot row runs through the real gate in the CPL3 probe instead:
+   image bytes are free, kernel bytes are not.
+   Rows mirror the p1a2 shapes with numeric sys_err codes:
+     [FS] p1a3-neg op=<stat|readdir|unlink> id=<id> rc=<n>
+     [FS] p1a3-fault id=<id> rc=<n>
+   The fault leg is idempotent across reboots (fresh boot creates
+   and deletes /p1a3-f; reboot boots find it absent and redo the
+   same create/write/fault/unlink cycle, printing identical rows). */
+static void p1a3_neg(const char *op, const char *id, int rc)
+{
+    say("[FS] p1a3-neg op=");
+    say(op);
+    say(" id=");
+    say(id);
+    say(" rc=");
+    say_u64((cpu_u64)rc);
+    say("\r\n");
+}
+
+static void p1a3_cases(int mounted_dev)
+{
+    struct user_stat st;
+    cpu_u64 m = P1A2_SENT;
+    int rc;
+    /* Kern-only shapes: identical on every boot (no CPL3 path stages
+       kernel buffers or runs unmounted). */
+    rc = kern_fstat("/one", 0);
+    require(rc == SYS_INVAL, "p1a3-stat-nullout");
+    p1a3_neg("stat", "nullout", SYS_INVAL);
+    rc = kern_fstat(0, &st);
+    require(rc == SYS_INVAL, "p1a3-stat-nullpath");
+    p1a3_neg("stat", "nullpath", SYS_INVAL);
+    rc = kern_fstat("/a//b", &st);
+    require(rc == SYS_BADARG, "p1a3-stat-badpath");
+    p1a3_neg("stat", "badpath", SYS_BADARG);
+    rc = kern_readdir(0, 0);
+    require(rc == SYS_INVAL, "p1a3-readdir-nullout");
+    p1a3_neg("readdir", "nullout", SYS_INVAL);
+    rc = kern_unlink(0);
+    require(rc == SYS_INVAL, "p1a3-unlink-nullpath");
+    p1a3_neg("unlink", "nullpath", SYS_INVAL);
+    rc = kern_unlink("/a//b");
+    require(rc == SYS_BADARG, "p1a3-unlink-badpath");
+    p1a3_neg("unlink", "badpath", SYS_BADARG);
+#if RYNOR_TEST_ARMED
+    /* Unlink fault leg: the directory write faults, the old entry
+       survives with bytes intact, the retry converges. Idempotent:
+       /p1a3-f is always absent here (fresh boot, or deleted by the
+       previous boot's retry). */
+    require(kern_fcreate("/p1a3-f") == SYS_OK, "p1a3-create-f");
+    p1a_pattern(fsbuf, 0, 100, 0x75u);
+    m = P1A2_SENT;
+    require(kern_fwrite("/p1a3-f", 0, fsbuf, 100, &m) == SYS_OK &&
+            m == 100, "p1a3-wf");
+    fs_inject_fault_at(1);
+    require(kern_unlink("/p1a3-f") == SYS_IOERR, "p1a3-fault");
+    say("[FS] p1a3-fault id=f-unlink rc=10\r\n");
+    fs_inject_fault_at(0);
+    require(kern_fstat("/p1a3-f", &st) == SYS_OK && st.size == 100 &&
+            st.type == 1, "p1a3-fsurvives");
+    p1a_verify("/p1a3-f", 100, 0x75u);
+    require(kern_unlink("/p1a3-f") == SYS_OK, "p1a3-fretry");
+    require(kern_fstat("/p1a3-f", &st) == SYS_NOTFOUND, "p1a3-fgone");
+#else
+    /* Unarmed builds skip the fault leg (no injection available). */
+#endif
+    /* Unmounted last: storage-unavailable mappings, then back on the
+       device for the stages below. */
+    fs_unmount();
+    require(kern_fstat("/one", &st) == SYS_IOERR, "p1a3-unmounted-s");
+    p1a3_neg("stat", "unmounted", SYS_IOERR);
+    {
+        struct user_dirent de;
+        require(kern_readdir(0, &de) == SYS_IOERR, "p1a3-unmounted-r");
+    }
+    p1a3_neg("readdir", "unmounted", SYS_IOERR);
+    require(kern_unlink("/one") == SYS_IOERR, "p1a3-unmounted-u");
+    p1a3_neg("unlink", "unmounted", SYS_IOERR);
+    require(fs_mount((cpu_u32)mounted_dev) == FS_OK, "p1a3-remount2");
+}
+
 
 
 void fs_self_test(void)
@@ -763,6 +851,10 @@ void fs_self_test(void)
        discipline: absence of p1a2 rows on old images is the gate). */
     if (fs_stat("/p1a2-go", &st) == FS_OK)
         p1a2_cases(mounted_dev);
+    /* P1-A3 kern-core battery, marker-gated on /p1a3-go (same
+       discipline: absence of p1a3 rows on old images is the gate). */
+    if (fs_stat("/p1a3-go", &st) == FS_OK)
+        p1a3_cases(mounted_dev);
     /* Every other present device must fail mounting with a classified
        code (the boot disk is not a filesystem; corrupt images fail by
        kind). A surprise success here is itself the failure. */

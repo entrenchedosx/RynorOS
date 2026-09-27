@@ -79,6 +79,11 @@ def build_image(root: Path, destination: Path | None = None, *,
     linker = find_tool("ld.lld", "RYNOR_LLD")
     nasm = find_tool("nasm", "RYNOR_NASM")
     version = json.loads((root / "project.json").read_text(encoding="utf-8"))["version"]
+    # Size-critical test-only TUs compile -Os instead of -O2: the
+    # 0x70000 BIOS window is fixed and nearly spent, and test drivers
+    # have no hot paths. Production TUs stay -O2. (P1-A3 measured
+    # fs-test.c -Os saving ~4.7KB against a ~4.4KB feature take.)
+    size_opt_sources = frozenset({"kernel/storage/fs-test.c"})
     if version != "0.1.0":
         raise ValueError("Unexpected boot banner version; update metadata and boot tests together")
     with tempfile.TemporaryDirectory(prefix="compile-", dir=destination) as temporary:
@@ -162,7 +167,9 @@ def build_image(root: Path, destination: Path | None = None, *,
                 "-fno-builtin", "-fno-stack-protector", "-fno-pic", "-fno-pie",
                 "-mno-red-zone", "-mgeneral-regs-only", "-fno-ident",
                 "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
-                "-Wall", "-Wextra", "-Werror", "-O2", "-Ikernel/include",
+                "-Wall", "-Wextra", "-Werror",
+                "-Os" if source in size_opt_sources else "-O2",
+                "-Ikernel/include",
                 f'-DRYNOR_VERSION="{version}"', f"-DRYNOR_TEST_VECTOR={test_vector}",
                 f"-DRYNOR_TEST_ARMED={int(test_armed)}",
                 *shell_flags, "-c", source, "-o", str(target),

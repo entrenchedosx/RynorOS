@@ -33,6 +33,8 @@ enum fs_result {
     FS_EXISTS = -11,     /* P1-A: create target already exists (any type) */
     FS_NOSPC = -12,      /* P1-A: no free directory slot or no allocatable
                             data extent (disk full for this request) */
+    FS_END = -13,        /* P1-A3: enumeration ordinal past the last live
+                            entry (end of directory, not an error) */
 };
 
 enum fs_entry_type {
@@ -103,6 +105,21 @@ int fs_create(const char *path);
 int fs_write(cpu_u32 handle, cpu_u64 offset, const void *buf, cpu_u64 len, cpu_u64 *nwritten);
 /* Close a handle. Double close and unknown handles are FS_BADHANDLE. */
 int fs_close(cpu_u32 handle);
+/* P1-A3: persistent unlink of a file. Missing path is FS_NOTFOUND;
+   a file on the parent chain is FS_NOTDIR; directories and root are
+   FS_NOTFILE (files only: no rmdir in P1-A3).
+   The 64-byte entry is zeroed through dir_write_slot (disk first,
+   RAM on success, same discipline as create); the cleared slot is
+   immediately reusable and the forgotten extent immediately
+   allocatable. Open handles on the slot are invalidated. Data bytes
+   are NOT erased. */
+int fs_unlink(const char *path);
+/* P1-A3: dense-ordinal enumeration over live entries in slot order
+   (free slots skipped). Fills *out (absolute path, type, size,
+   zeroed reserved) or returns FS_END when ordinal is past the last
+   live entry. Never exposes slot numbers or disk offsets. */
+struct user_dirent;
+int fs_readdir(cpu_u64 ordinal, struct user_dirent *out);
 /* Static lowercase name for an fs_result code (serial diagnostics). */
 const char *fs_error_str(int code);
 /* Failing mount/lookup stage after an error ("none" when clean). */

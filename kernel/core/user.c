@@ -1347,6 +1347,38 @@ void user_handle_exit(struct exception_frame *f)
             sched_resume(user_schedule_next(link,
                 reason == SYS_FCREATE ? USER_RUN_FCREATE : USER_RUN_FWRITE));
         }
+        if (reason == SYS_FSTAT || reason == SYS_READDIR ||
+            reason == SYS_UNLINK) {
+            /* P1-A3 Slice P1-A: stateless stat, enumeration, unlink.
+               fstat uses three argument registers (path_ptr, path_len,
+               out_ptr) with ESI/EDI/EBP reserved; readdir uses two
+               (ordinal, out_ptr) with EDX/ESI/EDI/EBP reserved; unlink
+               uses two (path_ptr, path_len) with EDX/ESI/EDI/EBP
+               reserved. Nonzero reserved words are INVAL returns,
+               never kills, mirroring fcreate/spawn. */
+            int rc;
+            if (reason == SYS_FSTAT) {
+                if (f->rsi != 0 || f->rdi != 0 || f->rbp != 0)
+                    rc = SYS_INVAL;
+                else
+                    rc = sys_fstat(c, f->rbx, f->rcx, f->rdx);
+            } else if (reason == SYS_READDIR) {
+                if (f->rdx != 0 || f->rsi != 0 || f->rdi != 0 || f->rbp != 0)
+                    rc = SYS_INVAL;
+                else
+                    rc = sys_readdir(c, f->rbx, f->rcx);
+            } else {
+                if (f->rdx != 0 || f->rsi != 0 || f->rdi != 0 || f->rbp != 0)
+                    rc = SYS_INVAL;
+                else
+                    rc = sys_unlink(c, f->rbx, f->rcx);
+            }
+            c->sys_result = (cpu_u64)rc;
+            c->gprs[0] = (cpu_u64)rc;
+            sched_resume(user_schedule_next(link,
+                reason == SYS_FSTAT ? USER_RUN_FSTAT :
+                reason == SYS_READDIR ? USER_RUN_READDIR : USER_RUN_UNLINK));
+        }
     }
     c->state = USER_FAULTED; c->fault_class = 2;
     c->fault_vector = 128; c->fault_error = reason; c->fault_cr2 = 0;

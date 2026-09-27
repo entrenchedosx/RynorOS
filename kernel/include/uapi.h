@@ -34,7 +34,17 @@ enum sys_err {
      * tests, and check-removal mutants: docs/design/p1a2-cpl3-abi.md.
      */
     SYS_EXISTS = 11,
-    SYS_NOSPC = 12
+    SYS_NOSPC = 12,
+    /* P1-A3 addition (append-only per abi-growth.md G4; 0-12 kept
+     * forever). END: directory enumeration reached past the last
+     * live entry. Not a missing path (NOTFOUND), not a shape
+     * failure (BADARG), not a device fault (IOERR): `ls` must tell
+     * end-of-directory from real errors. NOTE: this sys_err value
+     * shares its number 13 with the UNLINK call id in the separate
+     * syscall-number namespace (see the P1-A3 namespace audit in
+     * docs/design/p1a3-lifecycle-abi.md).
+     */
+    SYS_END = 13
 };
 
 /* Process lifecycle states for wait(). Separate domain; never compare
@@ -112,6 +122,29 @@ struct proc_status {
     cpu_u32 reserved; /* 0 */
 };
 
+/* P1-A3 entry types (frozen UAPI; mirror FS_TYPE_*, pinned by test). */
+#define UAPI_FTYPE_FILE 1u
+#define UAPI_FTYPE_DIR 2u
+
+/* P1-A3 stat payload (32 bytes, alignment 8). Only truthful fields:
+ * the filesystem stores no timestamps/permissions/owners/links, so
+ * none are reported. Reserved words are zeroed before publication. */
+struct user_stat {
+    cpu_u64 type;        /* 0: UAPI_FTYPE_* */
+    cpu_u64 size;        /* 8: file bytes; 0 for directories */
+    cpu_u64 reserved[2]; /* 16,24: zero */
+};
+
+/* P1-A3 directory-entry payload (64 bytes, alignment 8). name is the
+ * absolute path (leading '/', NUL-terminated, zero-padded; the
+ * longest legal path is 32 chars + NUL). No disk offsets cross. */
+struct user_dirent {
+    cpu_u8 name[40];   /* 0: absolute path + NUL + zero pad */
+    cpu_u64 type;      /* 40: UAPI_FTYPE_* */
+    cpu_u64 size;      /* 48: file bytes; 0 for directories */
+    cpu_u64 reserved;  /* 56: zero */
+};
+
 _Static_assert(sizeof(struct user_arg) == 16, "user_arg layout");
 _Static_assert(__builtin_offsetof(struct user_arg, ptr) == 0, "user_arg.ptr");
 _Static_assert(__builtin_offsetof(struct user_arg, len) == 8, "user_arg.len");
@@ -132,5 +165,14 @@ _Static_assert(__builtin_offsetof(struct proc_status, state) == 0, "status.state
 _Static_assert(__builtin_offsetof(struct proc_status, code) == 4, "status.code");
 _Static_assert(__builtin_offsetof(struct proc_status, detail) == 8, "status.detail");
 _Static_assert(__builtin_offsetof(struct proc_status, reserved) == 12, "status.reserved");
+_Static_assert(sizeof(struct user_stat) == 32, "user_stat layout");
+_Static_assert(__builtin_offsetof(struct user_stat, type) == 0, "stat.type");
+_Static_assert(__builtin_offsetof(struct user_stat, size) == 8, "stat.size");
+_Static_assert(__builtin_offsetof(struct user_stat, reserved) == 16, "stat.reserved");
+_Static_assert(sizeof(struct user_dirent) == 64, "user_dirent layout");
+_Static_assert(__builtin_offsetof(struct user_dirent, name) == 0, "dirent.name");
+_Static_assert(__builtin_offsetof(struct user_dirent, type) == 40, "dirent.type");
+_Static_assert(__builtin_offsetof(struct user_dirent, size) == 48, "dirent.size");
+_Static_assert(__builtin_offsetof(struct user_dirent, reserved) == 56, "dirent.reserved");
 
 #endif

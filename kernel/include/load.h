@@ -136,6 +136,34 @@ int kern_fcreate(const char *kpath);
    untouched. See load.c for the contract. */
 int kern_fwrite(const char *kpath, cpu_u64 offset, const cpu_u8 *kbuf,
                 cpu_u64 len, cpu_u64 *nwritten_out);
+/* P1-A3 Slice P1-A, syscall 11: stateless stat over an absolute path.
+   Frozen register order: path_ptr, path_len (1..32), out_ptr (32
+   bytes); ESI/EDI/EBP reserved (must be 0, else INVAL per G2).
+   Directories (including root) stat fine (type dir, size 0). The
+   struct is published last and left untouched on every error. */
+int sys_fstat(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
+              cpu_u64 out_ptr);
+/* P1-A3 Slice P1-A, syscall 12: dense-ordinal directory enumeration.
+   Frozen register order: ordinal, out_ptr (64 bytes);
+   EDX/ESI/EDI/EBP reserved (must be 0, else INVAL per G2). Past
+   the last live entry returns SYS_END with the output untouched. */
+int sys_readdir(struct user_context *c, cpu_u64 ordinal, cpu_u64 out_ptr);
+/* P1-A3 Slice P1-A, syscall 13: stateless persistent unlink over an
+   absolute path. Frozen register order: path_ptr, path_len (1..32);
+   EDX/ESI/EDI/EBP reserved (must be 0, else INVAL per G2).
+   Directories and root are MALFORMED (never unlinked); a second
+   unlink of the same path is NOTFOUND. */
+int sys_unlink(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len);
+/* Kernel-memory stat core shared by sys_fstat and the test driver:
+   kpath is NUL-terminated kernel memory; kstat is a kernel struct
+   user_stat filled (reserved zeroed) only on SYS_OK. See load.c. */
+int kern_fstat(const char *kpath, struct user_stat *kstat);
+/* Kernel-memory readdir core: fills *kdirent (reserved zeroed) for
+   the ordinal-th live entry or returns SYS_END. See load.c. */
+int kern_readdir(cpu_u64 ordinal, struct user_dirent *kdirent);
+/* Kernel-memory unlink core: kpath is NUL-terminated kernel memory.
+   See load.c for the fs_result -> sys_err mapping table. */
+int kern_unlink(const char *kpath);
 
 /* Print the [LOAD] write evidence row (slot/fd/len/nwritten + hex of
    the staged bytes). Called by the gate handler, not the driver, so

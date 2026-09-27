@@ -8,6 +8,7 @@
 #include "blk.h"
 #include "cpu.h"
 #include "serial.h"
+#include "uapi.h"
 
 /* On-disk superblock (block 0), all little-endian, explicit offsets. */
 #define FS_MAGIC "RYNORFS\0"
@@ -659,6 +660,67 @@ int fs_create(const char *path)
     return dir_write_slot(slot, entry);
 }
 
+/* P1-A3 persistent unlink: zero the 64-byte entry through
+   dir_write_slot (disk first, RAM on success). The cleared slot is
+   immediately reusable by create; the forgotten extent immediately
+   reusable by the gap allocator. Open handles on the slot are
+   invalidated so a later create there can never alias a stale
+   handle. Data bytes are NOT erased. */
+int fs_unlink(const char *path)
+{
+    cpu_u8 entry[64];
+    unsigned i;
+    int len;
+    int slot;
+    int rc;
+    if (!fs_is_mounted) { fs_stage = "not-mounted"; return FS_INVALID; }
+    len = path_ok(path);
+    if (len < 0) { fs_stage = "bad-path"; return FS_INVALID; }
+    slot = resolve(path, len);
+    if (slot < 0) return slot;
+    if (slot == FS_ROOT_SENTINEL ||
+        entry_at((cpu_u32)slot)[FS_D_TYPE] != FS_TYPE_FILE) {
+        fs_stage = "not-file";
+        return FS_NOTFILE;
+    }
+    for (i = 0; i < 64; ++i) entry[i] = 0;
+    rc = dir_write_slot((cpu_u32)slot, entry);
+    if (rc) return rc;
+    for (cpu_u32 s = 0; s < FS_MAX_OPEN; ++s)
+        if (fs_handles[s].in_use && fs_handles[s].entry == (cpu_u32)slot)
+            fs_handles[s].in_use = 0;
+    return FS_OK;
+}
+
+/* P1-A3 dense-ordinal enumeration: the ordinal-th live entry in
+   directory-slot order (free slots skipped). Fills the absolute
+   path (leading '/', NUL-terminated, zero-padded), type, and size;
+   reserved is zeroed. FS_END past the last live entry. */
+int fs_readdir(cpu_u64 ordinal, struct user_dirent *out)
+{
+    cpu_u64 seen = 0;
+    cpu_u32 i;
+    if (!fs_is_mounted) { fs_stage = "not-mounted"; return FS_INVALID; }
+    if (!out) { fs_stage = "bad-arg"; return FS_INVALID; }
+    for (i = 0; i < fs_dir_slots; ++i) {
+        const cpu_u8 *e = entry_at(i);
+        unsigned nlen;
+        unsigned k;
+        if (entry_free(e)) continue;
+        if (seen != ordinal) { ++seen; continue; }
+        nlen = name_len(e);
+        if (!nlen) { fs_stage = "bad-name"; return FS_CORRUPT; }
+        for (k = 0; k < sizeof out->name; ++k) out->name[k] = 0;
+        out->name[0] = (cpu_u8)'/';
+        for (k = 0; k < nlen; ++k) out->name[1 + k] = e[FS_D_NAME + k];
+        out->type = (cpu_u64)e[FS_D_TYPE];
+        out->size = rd64le(e + FS_D_LENGTH);
+        out->reserved = 0;
+        return FS_OK;
+    }
+    return FS_END;
+}
+
 static int data_write(cpu_u64 lba, const cpu_u16 *words)
 {
 #if RYNOR_TEST_ARMED
@@ -859,6 +921,7 @@ const char *fs_error_str(int code)
     case FS_BUSY: return "busy";
     case FS_EXISTS: return "exists";
     case FS_NOSPC: return "nospc";
+    case FS_END: return "end";
     default: return "unknown";
     }
 }

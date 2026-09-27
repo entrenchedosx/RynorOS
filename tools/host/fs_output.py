@@ -20,7 +20,7 @@ MAX_DIR_BLOCKS = 64
 FS_CODES = {
     "ok", "invalid", "notfound", "notfile", "notdir", "badhandle",
     "range", "ioerr", "corrupt", "unsupported", "busy",
-    "exists", "nospc",
+    "exists", "nospc", "end",
 }
 
 
@@ -180,6 +180,8 @@ _P1A2_NEG_RE = re.compile(rb"^\[FS\] p1a2-neg op=(create|write) id=([a-z]+) rc=(
 _P1A2_WRITE_RE = re.compile(rb"^\[FS\] p1a2-write path=(\S+) size=(\d+) blocks=(\d+) sum=(\d+) wsum=(\d+)$")
 _P1A2_REBOOT_RE = re.compile(rb"^\[FS\] p1a2-reboot path=(\S+) size=(\d+) blocks=(\d+) sum=(\d+) wsum=(\d+)$")
 _P1A2_FAULT_RE = re.compile(rb"^\[FS\] p1a2-fault id=([a-z-]+) rc=(\d+)$")
+_P1A3_NEG_RE = re.compile(rb"^\[FS\] p1a3-neg op=(stat|readdir|unlink) id=([a-z]+) rc=(\d+)$")
+_P1A3_FAULT_RE = re.compile(rb"^\[FS\] p1a3-fault id=([a-z-]+) rc=(\d+)$")
 
 
 @dataclass
@@ -212,6 +214,11 @@ class FsEvidence:
     p1a2_writes: list = field(default_factory=list)
     p1a2_reboots: dict = field(default_factory=dict)
     p1a2_faults: list = field(default_factory=list)
+    # P1-A3 kern-core evidence (marker-gated driver battery). Neg keys
+    # are (op, id) pairs; the battery covers only kern-unreachable
+    # shapes (content/enumerate/reuse rows run in CPL3 instead).
+    p1a3_negs: dict = field(default_factory=dict)
+    p1a3_faults: list = field(default_factory=list)
 
 
 def parse_serial(observed: bytes) -> FsEvidence:
@@ -309,6 +316,16 @@ def parse_serial(observed: bytes) -> FsEvidence:
             evidence.p1a2_faults.append((match.group(1).decode("ascii"),
                                         int(match.group(2))))
             continue
+        match = _P1A3_NEG_RE.match(line)
+        if match:
+            key = (match.group(1).decode("ascii"), match.group(2).decode("ascii"))
+            evidence.p1a3_negs[key] = int(match.group(3))
+            continue
+        match = _P1A3_FAULT_RE.match(line)
+        if match:
+            evidence.p1a3_faults.append((match.group(1).decode("ascii"),
+                                        int(match.group(2))))
+            continue
         if line == b"[FS] handles ok":
             evidence.handles = True
         elif line == b"[FS] accounting balanced":
@@ -351,7 +368,7 @@ def validate_fs_section(part: bytes) -> list:
     allowed = (_MOUNT_RE, _FILE_RE, _PART_RE, _CORRUPT_RE, _WRITE_RE, _FAULT_RE,
                _P1A_CREATE_RE, _P1A_WRITE_RE, _P1A_REMOUNT_RE, _P1A_REBOOT_RE,
                _P1A_NEG_RE, _P1A_DEGRADED_RE, _P1A2_NEG_RE, _P1A2_WRITE_RE,
-               _P1A2_REBOOT_RE, _P1A2_FAULT_RE)
+               _P1A2_REBOOT_RE, _P1A2_FAULT_RE, _P1A3_NEG_RE, _P1A3_FAULT_RE)
     for line in lines:
         text = line.strip()
         if text in (b"[FS] handles ok", b"[FS] accounting balanced",

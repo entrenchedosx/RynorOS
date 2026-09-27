@@ -36,9 +36,15 @@
  * fread register discipline. */
 #define SYS_FCREATE 9u
 #define SYS_FWRITE 10u
-/* 11..2^32-1 reserved: unknown numbers die as invalid_call; the
+/* P1-A3 numbers (append-only per docs/design/abi-growth.md G1; 0..10
+ * frozen). Slice P1-A exposes discovery and deletion to CPL3:
+ * stateless stat + dense-ordinal enumeration + persistent unlink. */
+#define SYS_FSTAT 11u
+#define SYS_READDIR 12u
+#define SYS_UNLINK 13u
+/* 14..2^32-1 reserved: unknown numbers die as invalid_call; the
    namespace only ever extends upward, never renumbers. Next free
-   number is 11; growth policy is frozen in
+   number is 14; growth policy is frozen in
    docs/design/abi-growth.md (P3). */
 
 #define SYS_STDOUT 1u

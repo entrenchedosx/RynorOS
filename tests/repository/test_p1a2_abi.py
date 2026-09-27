@@ -46,14 +46,17 @@ class P1A2AbiTests(unittest.TestCase):
         for name, num in want:
             with self.subTest(call=name):
                 self.assertEqual(number(SYSCALL, name), num)
-        self.assertIn("Next free\n   number is 11", SYSCALL)
+        # P1-A3 consumes 11-13 (FSTAT/READDIR/UNLINK); next free is 14.
+        self.assertIn("Next free\n   number is 14", SYSCALL)
 
     def test_sys_err_append_only(self):
         want = (("SYS_OK", 0), ("SYS_AGAIN", 1), ("SYS_INVAL", 2),
                 ("SYS_NOTFOUND", 3), ("SYS_MALFORMED", 4),
                 ("SYS_BADHANDLE", 5), ("SYS_BUSY", 6), ("SYS_NOMEM", 7),
                 ("SYS_BADARG", 8), ("SYS_ALREADY_GONE", 9),
-                ("SYS_IOERR", 10), ("SYS_EXISTS", 11), ("SYS_NOSPC", 12))
+                ("SYS_IOERR", 10), ("SYS_EXISTS", 11), ("SYS_NOSPC", 12),
+                # P1-A3 appends SYS_END (end of directory) per G4.
+                ("SYS_END", 13))
         for name, num in want:
             with self.subTest(err=name):
                 self.assertEqual(enum_value(UAPI, name), num)
@@ -102,7 +105,8 @@ class P1A2AbiTests(unittest.TestCase):
         self.assertIn("USER_RUN_FWRITE", PROC_C)
         self.assertIn("USER_RUN_FCREATE", SHD_C)
         self.assertIn("USER_RUN_FWRITE", SHD_C)
-        self.assertIn("retcode <= USER_RUN_FWRITE", THREAD_C)
+        # P1-A3 extends the bound to the newest resume code.
+        self.assertIn("retcode <= USER_RUN_UNLINK", THREAD_C)
 
     def test_fcreate_reserved_words_rejected(self):
         # G2: unused fcreate argument registers must be 0 (dispatcher

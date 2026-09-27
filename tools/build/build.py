@@ -37,13 +37,23 @@ REPOSITORY_TEST_INVENTORY = {
     "test_rynorlang_programs": 46, "test_rynorlang_aggregates": 26,
     "test_rynorlang_control": 18, "test_rynorlang_modules": 18,
     "test_rynorlang_conformance": 33, "test_rynorlang_selfhost": 24,
+    "test_rynorlang_selfhost_emit": 17, "test_rynorlang_selfhost_emit_bool": 13,
+    "test_rynorlang_selfhost_emit_branch": 24, "test_rynorlang_selfhost_emit_byteat": 14,
+    "test_rynorlang_selfhost_emit_calls": 21, "test_rynorlang_selfhost_emit_cond": 14,
+    "test_rynorlang_selfhost_emit_data": 20, "test_rynorlang_selfhost_emit_fjoin": 16,
+    "test_rynorlang_selfhost_emit_list": 16, "test_rynorlang_selfhost_emit_match": 13,
+    "test_rynorlang_selfhost_emit_print": 13, "test_rynorlang_selfhost_emit_record": 22,
+    "test_rynorlang_selfhost_emit_recur": 14, "test_rynorlang_selfhost_emit_stackargs": 21,
+    "test_rynorlang_selfhost_emit_str": 19, "test_rynorlang_selfhost_emit_strbyte": 21,
+    "test_rynorlang_selfhost_emit_strret": 21, "test_rynorlang_selfhost_emit_unwrap": 19,
+    "test_rynorlang_selfhost_prog": 11,
     "test_sched_output": 8,
     "test_blk_output": 14, "test_fs_output": 20, "test_user_output": 22,
     "test_rnyx": 13,
     "test_semantic_api_gauntlet": 8,
     "test_shell_output": 7, "test_timer_output": 4, "test_vm_output": 5,
     "test_input_abi": 10, "test_proc_abi": 11, "test_pipe_abi": 10,
-    "test_shell_abi": 10,
+    "test_shell_abi": 10, "test_p1a2_abi": 9, "test_p1a3_abi": 13,
 }
 INTEGRATION_TEST_INVENTORY = {
     "test_audit": 4, "test_boot": 14, "test_display": 31, "test_heap": 5,
@@ -52,7 +62,8 @@ INTEGRATION_TEST_INVENTORY = {
     "test_storage": 10, "test_filesystem": 19, "test_userspace": 18,
     "test_load": 15, "test_rt": 12, "test_input": 7, "test_proc": 10,
     "test_pipe": 15, "test_cplshell": 26, "test_rleval": 56,
-    "test_rlen": 28,
+    "test_rlen": 28, "test_native_backend": 7,
+    "test_p1a": 8, "test_p1a2": 16, "test_p1a3": 14,
 }
 
 

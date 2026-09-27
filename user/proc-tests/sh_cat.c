@@ -6,9 +6,14 @@
  * streams argv[1] through the public fread wrapper to stdout and
  * exits 0 (any file error exits 1). Bare `cat` keeps the exact
  * Slice E pipe-relay behavior below.
+ *
+ * P1-A3: the file branch is stat-driven: fstat first (missing path
+ * or non-file exits 1), then exactly size bytes through chunked
+ * 1 KiB freads (no new ceiling: arbitrarily large files stream).
  */
 #include "rt.h"
 #include "rt_pipe.h"
+#include "rt_fs.h"
 
 static unsigned long long cat_slen(const char *s)
 {
@@ -25,15 +30,27 @@ int rt_main(int argc, char **argv)
     static unsigned char buf[1024];
     unsigned long long retries = 0;
     if (argc >= 2 && argv != 0 && argv[1] != 0) {
+        static struct rt_stat st;
         unsigned long long off = 0;
         unsigned long long plen = cat_slen(argv[1]);
-        for (;;) {
+        unsigned long long size;
+        if (rt_fstat(argv[1], plen, &st) != RT_OK)
+            rt_exit(1);
+        if (st.type != RT_FTYPE_FILE)
+            rt_exit(1);
+        size = st.size;
+        while (off < size) {
+            unsigned long long want = size - off;
             unsigned long long n = 0xAAAAAAAAAAAAAAAAULL;
             unsigned long long at = 0;
-            if (rt_fread(argv[1], plen, off, buf, sizeof(buf), &n) != RT_OK)
+            if (want > sizeof(buf))
+                want = sizeof(buf);
+            if (rt_fread(argv[1], plen, off, buf, want, &n) != RT_OK)
                 rt_exit(1);
-            if (n == 0)
-                break;
+            /* Exact length against a known size: a short read here
+               (racing mutation has no writer in this shell) fails. */
+            if (n != want)
+                rt_exit(1);
             while (at < n) {
                 unsigned long long chunk = n - at;
                 if (chunk > RT_WRITE_MAX)
@@ -43,8 +60,6 @@ int rt_main(int argc, char **argv)
                 at += chunk;
             }
             off += n;
-            if (n < sizeof(buf))
-                break;
         }
         rt_exit(0);
         return 0;

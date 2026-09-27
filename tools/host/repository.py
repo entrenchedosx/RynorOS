@@ -232,7 +232,7 @@ REQUIRED_FILES = (
     # pipe helpers, validator, and tests.
     "kernel/include/pipe.h", "kernel/include/pipetest.h",
     "kernel/core/pipe.c", "kernel/core/pipe-test.c",
-    "user/lib/rt/rt_pipe.h",
+    "user/lib/rt/rt_pipe.h", "user/lib/rt/rt_fs.h",
     "tools/host/pipe_output.py",
     "tests/repository/test_pipe_abi.py",
     "tests/integration/test_pipe.py",

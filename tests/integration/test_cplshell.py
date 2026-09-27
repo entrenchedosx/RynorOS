@@ -38,6 +38,7 @@ def _compile_shell(work, root=ROOT):
     Sources read from root (mutant copies build here too)."""
     out = {}
     rtpipe = (root / "user/lib/rt/rt_pipe.h").read_text(encoding="utf-8")
+    rtfs = (root / "user/lib/rt/rt_fs.h").read_text(encoding="utf-8")
     sources = {}
     for name in SHELL_SOURCES + SHELL_HEADERS:
         sources[name] = (root / "user/shell" / name).read_text(encoding="utf-8")
@@ -56,6 +57,8 @@ def _compile_shell(work, root=ROOT):
         if name == "sh_dcode":
             extra = {"sh_key.h": sources["sh_key.h"],
                      "sh_key.c": sources["sh_key.c"]}
+        if name == "sh_cat":
+            extra = dict(extra, **{"rt_fs.h": rtfs})
         arts, error = rynor_program.build_rynor_c_program(
             {name + ".c": src, "rt_pipe.h": rtpipe, **extra},
             progdir, prog=name)

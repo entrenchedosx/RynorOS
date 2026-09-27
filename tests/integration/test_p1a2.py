@@ -236,7 +236,7 @@ def _compile_p1a2(work, root=ROOT):
         sources, progdir, prog="sh", link_script="rynoros_v2.ld")
     assert error is None, ("sh", error)
     out["sh"] = rnyx.elf_to_rnyx(Path(arts["exe"]).read_bytes(), version=2)
-    helpers = (("sh_echo", "echo", 1, False), ("sh_cat", "cat", 1, False),
+    helpers = (("sh_echo", "echo", 1, False), ("sh_cat", "cat", 1, True),
                ("sh_fput", "fput", 1, True), ("p_fcwprobe", "fcwprobe", 2, True),
                ("p_fcwfull", "fcfull", 2, True))
     for src_name, bin_name, version, want_fs in helpers:

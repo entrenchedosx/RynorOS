@@ -78,15 +78,17 @@ class PipeAbiTests(unittest.TestCase):
             self.assertNotIn(token, SYSCALL)
             self.assertNotIn(token, PIPE_H)
         names = re.findall(r"SYS_\w+", UAPI)
-        # P1-A2 appends SYS_EXISTS/SYS_NOSPC per abi-growth.md G4
-        # (justified in docs/design/p1a2-cpl3-abi.md); 0-10 keep their
-        # values forever.
+        # P1-A2 appends SYS_EXISTS/SYS_NOSPC and P1-A3 appends SYS_END
+        # per abi-growth.md G4 (justified in docs/design/p1a2-cpl3-abi.md
+        # and docs/design/p1a3-lifecycle-abi.md); 0-10 keep their values
+        # forever.
         self.assertEqual(sorted(set(names)),
                          sorted(["SYS_OK", "SYS_AGAIN", "SYS_INVAL",
                                  "SYS_NOTFOUND", "SYS_MALFORMED",
                                  "SYS_BADHANDLE", "SYS_BUSY", "SYS_NOMEM",
                                  "SYS_BADARG", "SYS_ALREADY_GONE",
-                                 "SYS_IOERR", "SYS_EXISTS", "SYS_NOSPC"]))
+                                 "SYS_IOERR", "SYS_EXISTS", "SYS_NOSPC",
+                                 "SYS_END"]))
 
     def test_resume_codes_extended(self):
         self.assertIn("#define USER_RUN_FREAD 10u", USER_H)

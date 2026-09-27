@@ -69,6 +69,11 @@
  * call, not for the process). Kernel-internal, not UAPI. */
 #define USER_RUN_FCREATE 12u
 #define USER_RUN_FWRITE 13u
+/* P1-A3 Slice P1-A: fstat/readdir/unlink resume codes (terminal for
+ * the call, not for the process). Kernel-internal, not UAPI. */
+#define USER_RUN_FSTAT 14u
+#define USER_RUN_READDIR 15u
+#define USER_RUN_UNLINK 16u
 
 /* USER_ABORTED (Slice C): worker-observed kill flag converted to a
  * terminal state on the owning thread only. Never resumed, never

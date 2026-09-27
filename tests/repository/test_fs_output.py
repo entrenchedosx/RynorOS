@@ -171,7 +171,7 @@ class FsDecoderTests(unittest.TestCase):
         # P1-A1 fs_result codes exists/nospc: the validator parses p1a-neg rows that print them.
         self.assertEqual(FS_CODES, {
             "ok", "invalid", "notfound", "notfile", "notdir", "badhandle",
-            "range", "ioerr", "corrupt", "unsupported", "busy", "exists", "nospc",
+            "range", "ioerr", "corrupt", "unsupported", "busy", "exists", "nospc", "end",
         })
 
 
