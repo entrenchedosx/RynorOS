@@ -54,6 +54,7 @@ REPOSITORY_TEST_INVENTORY = {
     "test_shell_output": 7, "test_timer_output": 4, "test_vm_output": 5,
     "test_input_abi": 10, "test_proc_abi": 11, "test_pipe_abi": 10,
     "test_shell_abi": 10, "test_p1a2_abi": 9, "test_p1a3_abi": 13,
+    "test_pci_abi": 11,
 }
 INTEGRATION_TEST_INVENTORY = {
     "test_audit": 4, "test_boot": 14, "test_display": 31, "test_heap": 5,
@@ -63,7 +64,7 @@ INTEGRATION_TEST_INVENTORY = {
     "test_load": 15, "test_rt": 12, "test_input": 7, "test_proc": 10,
     "test_pipe": 15, "test_cplshell": 26, "test_rleval": 56,
     "test_rlen": 28, "test_native_backend": 7,
-    "test_p1a": 8, "test_p1a2": 16, "test_p1a3": 14,
+    "test_p1a": 8, "test_p1a2": 16, "test_p1a3": 14, "test_pci": 17,
 }
 
 

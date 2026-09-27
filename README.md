@@ -121,8 +121,8 @@ comparisons and byte-identical rebuilds. `check` runs build and both suites.
 Artifacts under ignored `build/`: `boot.bin`, `rynorkernel.bin`,
 `rynorkernel.elf`, `rynoros.img`, `rynoros-resources.zip` and
 `build-manifest.json`. Logs include serial transcripts and owned-QEMU cleanup
-records. The reviewed inventory contains 1072 repository and 423 integration test
-methods (Stage 18d Slices A/B: input path + syscall substrate; Slice C: processes + loader; Slice D: files + pipes; Slice E: CPL3 shell + scripts; Slice F: resident evaluator; Slice G: len builtin; Stage 19 selfhost emit split; P1-A1/A2/A3: durable CPL3 file create/write/stat/enumerate/unlink). The build command checks exact per-module participation before discovery. Exact commands and evidence are in the
+records. The reviewed inventory contains 1083 repository and 440 integration test
+methods (Stage 18d Slices A/B: input path + syscall substrate; Slice C: processes + loader; Slice D: files + pipes; Slice E: CPL3 shell + scripts; Slice F: resident evaluator; Slice G: len builtin; Stage 19 selfhost emit split; P1-A1/A2/A3: durable CPL3 file create/write/stat/enumerate/unlink; PCI-A1: PCI discovery + BAR resources). The build command checks exact per-module participation before discovery. Exact commands and evidence are in the
 [forensic stabilization report](docs/reports/forensic-stabilization-final.md), [Stage 16 report](docs/reports/stage16.md), [Stage 15b report](docs/reports/stage15b.md), [Stage 15a report](docs/reports/stage15a.md), [Stage 14 report](docs/reports/stage14.md), [Stage 13 report](docs/reports/stage13.md) and [Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
 Display evidence is retained as `display.pmem` and `display.ppm` beside each
 successful normal boot's serial log; this is emulator, not physical-hardware evidence.

@@ -110,10 +110,12 @@ REQUIRED_FILES = (
     "tests/repository/test_fb_output.py", "docs/design/framebuffer.md",
     "docs/reports/stage9.md",
     # PCI-A1 discovery + BAR resources: transport, enumeration, BAR
-    # decode/sizing/mapping, registry, the gated self-test, and the
-    # host section validator.
+    # decode/sizing/mapping, registry, gated self-test, host
+    # validator, tests, and design doc.
     "kernel/include/pci.h", "kernel/drivers/pci.c",
     "kernel/drivers/pci-test.c", "tools/host/pci_output.py",
+    "tests/integration/test_pci.py", "tests/repository/test_pci_abi.py",
+    "docs/design/pci.md",
     "kernel/include/kstring.h", "kernel/include/kbuf.h", "kernel/include/krst.h",
     "kernel/runtime/kstring.c", "kernel/runtime/kbuf.c", "kernel/runtime/krst.c",
     "kernel/runtime/runtime-test.c", "kernel/runtime/README.md",
