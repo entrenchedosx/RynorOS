@@ -128,6 +128,16 @@ STI/CLI, locks, hidden heap, or host service is used.
   the compact index maps back through usable regions to the physical address.
 - `pmm_release(physical)` requires an aligned, currently allocated usable frame;
   it clears the bit and lowers the search cursor for deterministic reuse.
+- `pmm_alloc_contiguous(frames, align_bytes, limit_end, &physical)`
+  (DMA-A1) reserves N physically consecutive frames, deterministic
+  first-fit from frame 0, start aligned to a nonzero power of two,
+  with an optional exclusive physical end bound (`0` = none). It
+  marks the same bitmap and statistics as `pmm_allocate` and never
+  spans a reserved span or hole; the search cursor is deliberately
+  not advanced. Failure (including fragmentation) returns
+  `PMM_OUT_OF_MEMORY` with output untouched. The pure scan core is
+  shared with tests as `pmm_scan_run()`, which runs over
+  caller-supplied regions+bitmap; see [dma.md](dma.md).
 - `pmm_query(physical, &state)` distinguishes free, allocated, reserved and
   unavailable. `pmm_statistics` copies counters; `pmm_regions` exposes const
   normalized records. `pmm_check` independently recounts bits and region totals.
