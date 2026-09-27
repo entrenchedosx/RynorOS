@@ -116,6 +116,12 @@ REQUIRED_FILES = (
     "kernel/drivers/pci-test.c", "tools/host/pci_output.py",
     "tests/integration/test_pci.py", "tests/repository/test_pci_abi.py",
     "docs/design/pci.md",
+    # DMA-A1 contiguous buffers: PMM primitive, DMA mapping/API,
+    # gated self-test, host validator, tests, and design doc.
+    "kernel/include/dma.h", "kernel/mm/dma.c",
+    "kernel/mm/dma-test.c", "tools/host/dma_output.py",
+    "tests/integration/test_dma.py", "tests/repository/test_dma_abi.py",
+    "docs/design/dma.md",
     "kernel/include/kstring.h", "kernel/include/kbuf.h", "kernel/include/krst.h",
     "kernel/runtime/kstring.c", "kernel/runtime/kbuf.c", "kernel/runtime/krst.c",
     "kernel/runtime/runtime-test.c", "kernel/runtime/README.md",

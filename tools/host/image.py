@@ -49,7 +49,7 @@ def build_image(root: Path, destination: Path | None = None, *,
                 test_vector: int = 3, test_armed: bool = True,
                 shell_interactive: bool = False, input_test: bool = False,
                 proc_test: bool = False, pipe_test: bool = False,
-                pci_test: bool = False,
+                pci_test: bool = False, dma_test: bool = False,
                 shell_boot: bool = False, shell_script=None) -> dict:
     if type(test_vector) is not int or test_vector not in (0, 1, 3, 6, 13, 14):
         raise ValueError("Unsupported CPU self-test vector")
@@ -63,6 +63,8 @@ def build_image(root: Path, destination: Path | None = None, *,
         raise ValueError("proc_test must be boolean")
     if type(pipe_test) is not bool:
         raise ValueError("pipe_test must be boolean")
+    if type(dma_test) is not bool:
+        raise ValueError("dma_test must be boolean")
     if type(shell_boot) is not bool:
         raise ValueError("shell_boot must be boolean")
     if shell_script is not None and (type(shell_script) is not str or not
@@ -98,7 +100,7 @@ def build_image(root: Path, destination: Path | None = None, *,
         "kernel/core/rt-test.c", "kernel/core/read-test.c",
         "kernel/core/proc-test.c", "kernel/core/pipe-test.c",
         "kernel/mm/selftest.c", "kernel/mm/vm-test.c",
-        "kernel/mm/heap-test.c",
+        "kernel/mm/heap-test.c", "kernel/mm/dma-test.c",
     })
     if version != "0.1.0":
         raise ValueError("Unexpected boot banner version; update metadata and boot tests together")
@@ -172,6 +174,8 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/mm/kstack.c", "kstack.o"),
             ("kernel/mm/heap.c", "heap.o"),
             ("kernel/mm/heap-test.c", "heap-test.o"),
+            ("kernel/mm/dma.c", "dma.o"),
+            ("kernel/mm/dma-test.c", "dma-test.o"),
         ):
             target = output / name
             shell_flags = [f"-DRYNOR_SHELL_INTERACTIVE={int(shell_interactive)}",
@@ -179,6 +183,7 @@ def build_image(root: Path, destination: Path | None = None, *,
                            f"-DRYNOR_PROC_TEST={int(proc_test)}",
                            f"-DRYNOR_PIPE_TEST={int(pipe_test)}",
                            f"-DRYNOR_PCI_TEST={int(pci_test)}",
+                           f"-DRYNOR_DMA_TEST={int(dma_test)}",
                            f"-DRYNOR_SHELL_BOOT={int(shell_boot)}",
                            f'-DSHELL_SCRIPT_PATH="{shell_script or ""}"']
             run_tool([

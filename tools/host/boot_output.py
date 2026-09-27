@@ -25,6 +25,7 @@ from pipe_output import (FREAD_START, FREAD_VERIFIED, PIPE_START,
 from sh_output import (has_shell_rows, strip_shell_lines,
                        validate_sh_section)
 from pci_output import validate_pci_section
+from dma_output import validate_dma_section
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -140,6 +141,25 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
                 block = block[:start] + block[end:]
         return block, errs
 
+    # DMA-A1 self-test section trails PCI on dma-test images only
+    # (silent everywhere else). Strips exactly like the PCI section.
+    dma_start = b"[DMA] scase i=0 "
+    dma_verified = b"[DMA] dma verified"
+
+    def strip_dma_section(block: bytes) -> tuple:
+        errs: list[str] = []
+        if dma_start in block:
+            if dma_verified not in block:
+                errs.append("dma section incomplete")
+            else:
+                errs.extend(validate_dma_section(block))
+                start = block.index(dma_start)
+                end = block.index(dma_verified) + len(dma_verified)
+                if block[end:end + 2] == b"\r\n":
+                    end += 2
+                block = block[:start] + block[end:]
+        return block, errs
+
     shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
     if shell_sep != b"":
         shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
@@ -165,6 +185,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             errors.extend(pipe_errs)
             tail, pci_errs = strip_pci_section(tail)
             errors.extend(pci_errs)
+            tail, dma_errs = strip_dma_section(tail)
+            errors.extend(dma_errs)
             if has_shell_rows(tail):
                 errors.extend(validate_sh_section(tail))
                 tail = strip_shell_lines(tail)
@@ -188,6 +210,8 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
         errors.extend(pipe_errs)
         post, pci_errs = strip_pci_section(post)
         errors.extend(pci_errs)
+        post, dma_errs = strip_dma_section(post)
+        errors.extend(dma_errs)
         if has_shell_rows(post):
             errors.extend(validate_sh_section(post))
             post = strip_shell_lines(post)
