@@ -49,6 +49,7 @@ def build_image(root: Path, destination: Path | None = None, *,
                 test_vector: int = 3, test_armed: bool = True,
                 shell_interactive: bool = False, input_test: bool = False,
                 proc_test: bool = False, pipe_test: bool = False,
+                pci_test: bool = False,
                 shell_boot: bool = False, shell_script=None) -> dict:
     if type(test_vector) is not int or test_vector not in (0, 1, 3, 6, 13, 14):
         raise ValueError("Unsupported CPU self-test vector")
@@ -82,8 +83,23 @@ def build_image(root: Path, destination: Path | None = None, *,
     # Size-critical test-only TUs compile -Os instead of -O2: the
     # 0x70000 BIOS window is fixed and nearly spent, and test drivers
     # have no hot paths. Production TUs stay -O2. (P1-A3 measured
-    # fs-test.c -Os saving ~4.7KB against a ~4.4KB feature take.)
-    size_opt_sources = frozenset({"kernel/storage/fs-test.c"})
+    # fs-test.c -Os saving ~4.7KB; PCI-A1 generalizes the rule to all
+    # test TUs after measuring pci-test.c -Os saving ~4.5KB alone.
+    # Behavior is unchanged: the full QEMU suites re-verify every
+    # self-test under -Os before any commit carrying this rule.)
+    size_opt_sources = frozenset({
+        "kernel/storage/blk-test.c", "kernel/storage/fs-test.c",
+        "kernel/drivers/keyboard-test.c",
+        "kernel/drivers/display-surface-test.c",
+        "kernel/drivers/display-test.c", "kernel/drivers/pci-test.c",
+        "kernel/runtime/runtime-test.c", "kernel/runtime/boundary-test.c",
+        "kernel/shell/shell-test.c", "kernel/core/scheduler-test.c",
+        "kernel/core/user-test.c", "kernel/core/load-test.c",
+        "kernel/core/rt-test.c", "kernel/core/read-test.c",
+        "kernel/core/proc-test.c", "kernel/core/pipe-test.c",
+        "kernel/mm/selftest.c", "kernel/mm/vm-test.c",
+        "kernel/mm/heap-test.c",
+    })
     if version != "0.1.0":
         raise ValueError("Unexpected boot banner version; update metadata and boot tests together")
     with tempfile.TemporaryDirectory(prefix="compile-", dir=destination) as temporary:
@@ -120,6 +136,8 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/drivers/display-surface.c", "display-surface.o"),
             ("kernel/drivers/display-surface-test.c", "display-surface-test.o"),
             ("kernel/drivers/display-test.c", "display-test.o"),
+            ("kernel/drivers/pci.c", "pci.o"),
+            ("kernel/drivers/pci-test.c", "pci-test.o"),
             ("kernel/runtime/kstring.c", "kstring.o"),
             ("kernel/runtime/kbuf.c", "kbuf.o"),
             ("kernel/runtime/krst.c", "krst.o"),
@@ -160,6 +178,7 @@ def build_image(root: Path, destination: Path | None = None, *,
                            f"-DRYNOR_INPUT_TEST={int(input_test)}",
                            f"-DRYNOR_PROC_TEST={int(proc_test)}",
                            f"-DRYNOR_PIPE_TEST={int(pipe_test)}",
+                           f"-DRYNOR_PCI_TEST={int(pci_test)}",
                            f"-DRYNOR_SHELL_BOOT={int(shell_boot)}",
                            f'-DSHELL_SCRIPT_PATH="{shell_script or ""}"']
             run_tool([

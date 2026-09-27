@@ -109,6 +109,10 @@ REQUIRED_FILES = (
     "tests/integration/test_display.py",
     "tests/repository/test_fb_output.py", "docs/design/framebuffer.md",
     "docs/reports/stage9.md",
+    # PCI-A1 discovery + BAR resources: transport, enumeration, BAR
+    # decode/sizing/mapping, registry, and the gated self-test.
+    "kernel/include/pci.h", "kernel/drivers/pci.c",
+    "kernel/drivers/pci-test.c",
     "kernel/include/kstring.h", "kernel/include/kbuf.h", "kernel/include/krst.h",
     "kernel/runtime/kstring.c", "kernel/runtime/kbuf.c", "kernel/runtime/krst.c",
     "kernel/runtime/runtime-test.c", "kernel/runtime/README.md",

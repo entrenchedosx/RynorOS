@@ -7,6 +7,7 @@
 #include "ksched.h"
 #include "kbd.h"
 #include "display.h"
+#include "pci.h"
 #include "krst.h"
 #include "shell.h"
 #include "blk.h"
@@ -36,6 +37,14 @@ void kernel_main(void)
     scheduler_self_test();
     keyboard_self_test();
     display_self_test();
+    /* PCI registry is silent and allocation-free (port I/O only) and
+       leaves config space bit-identical (BAR sizing fully restores),
+       but it runs after the bus-independent drivers anyway: each
+       layer's own checks then fire on its own failures instead of
+       observing another layer's residue. A FULL registry still boots
+       (partial discovery beats no OS; the gated test reports the
+       exact count). */
+    (void)pci_initialize();
     runtime_self_test();
     if (!pmm_check() || !vm_check(vm_kernel_space()) || !heap_check() || !scheduler_check()) {
         serial_write("[GATE] failure=");
@@ -82,6 +91,12 @@ void kernel_main(void)
        after the proc test; its [FREAD]/[PIPE] sections become the
        transcript terminator when enabled. Disabled prints nothing. */
     if (RYNOR_PIPE_TEST) pipe_self_test();
+    serial_flush();
+    /* PCI-A1 gated hardware test (test images only): its [PCI]
+       section becomes the transcript terminator when enabled.
+       Disabled prints nothing, so default transcripts stay
+       byte-identical. */
+    if (RYNOR_PCI_TEST) pci_self_test();
     serial_flush();
     /* Stage 18d Slice E shell boot (shell images only): mounts the
        filesystem, enters /bin/sh on the bootstrap thread, and never
