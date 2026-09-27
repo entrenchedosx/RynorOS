@@ -169,6 +169,102 @@ enum pmm_result pmm_allocate(cpu_u64 *physical)
     return PMM_INVALID;
 }
 
+static int run_clear(const cpu_u8 *bits, cpu_u64 start, cpu_u64 n)
+{
+    for (cpu_u64 j = 0; j < n; ++j) {
+        cpu_u64 index = start + j;
+        if ((bits[index / 8] >> (index % 8)) & 1) return 0;
+    }
+    return 1;
+}
+
+int pmm_scan_run(const struct pmm_region *regions, unsigned int count,
+                 const cpu_u8 *bits, cpu_u64 frame_count, cpu_u64 n,
+                 cpu_u64 align_bytes, cpu_u64 limit_end, cpu_u64 *start_index)
+{
+    if (!regions || !bits || !start_index || !n || !align_bytes ||
+        (align_bytes & (align_bytes - 1))) return 0;
+    if (!frame_count || n > frame_count) return 0;
+    /* Alignment step in frames: sub-page alignments are trivially true
+       (every frame starts 4 KiB-aligned); larger pow2 alignments step
+       whole frames. align_bytes <= 2^63 (nonzero u64 pow2), so
+       align_bytes/PAGE <= 2^51 and candidate arithmetic below cannot
+       wrap: every k stays <= frame_count <= 2^52. */
+    cpu_u64 step = align_bytes <= PMM_PAGE_SIZE ? 1 : align_bytes / PMM_PAGE_SIZE;
+    cpu_u64 offset = 0;
+    for (unsigned int i = 0; i < count; ++i) {
+        const struct pmm_region *r = &regions[i];
+        if (r->kind != PMM_USABLE) continue;
+        /* Malformed usable span: fail closed. The alignment math below
+           requires page-aligned bounds (the normalizer guarantees them). */
+        if (r->end <= r->base || (r->base | r->end) % PMM_PAGE_SIZE) return 0;
+        cpu_u64 pages = (r->end - r->base) / PMM_PAGE_SIZE;
+        if (!pages || offset > frame_count || pages > frame_count - offset) return 0;
+        cpu_u64 span = pages;
+        if (limit_end) {
+            if (limit_end <= r->base) { offset += pages; continue; }
+            cpu_u64 capped = limit_end < r->end ? limit_end : r->end;
+            span = (capped - r->base) / PMM_PAGE_SIZE;
+        }
+        if (span >= n) {
+            cpu_u64 first = 0;
+            if (step > 1) {
+                cpu_u64 miss = r->base & (align_bytes - 1);
+                if (miss) first = (align_bytes - miss) / PMM_PAGE_SIZE;
+            }
+            /* The bound uses subtraction (span - n) and every k
+               stays <= frame_count, so k += step cannot wrap (see
+               the step bound above). */
+            for (cpu_u64 k = first; k <= span - n; k += step)
+                if (run_clear(bits, offset + k, n)) {
+                    *start_index = offset + k;
+                    return 1;
+                }
+        }
+        offset += pages;
+    }
+    return 0;
+}
+
+enum pmm_result pmm_alloc_contiguous(cpu_u64 frames, cpu_u64 align_bytes,
+                                    cpu_u64 limit_end, cpu_u64 *physical)
+{
+    enum pmm_result result = context();
+    if (result != PMM_OK) return result;
+    if (!physical) return PMM_INVALID;
+    if (!frames || !align_bytes || (align_bytes & (align_bytes - 1))) return PMM_INVALID;
+    if (frame_count != stats.usable_bytes / PMM_PAGE_SIZE) return PMM_INVALID;
+    if (frames > frame_count) return PMM_OUT_OF_MEMORY;
+    cpu_u64 start = 0;
+    if (!pmm_scan_run(regions, region_count, allocated, frame_count,
+                      frames, align_bytes, limit_end, &start))
+        return PMM_OUT_OF_MEMORY;
+    cpu_u64 remaining = start;
+    for (unsigned int i = 0; i < region_count; ++i) {
+        const struct pmm_region *r = &regions[i];
+        if (r->kind != PMM_USABLE) continue;
+        cpu_u64 pages = (r->end - r->base) / PMM_PAGE_SIZE;
+        if (remaining >= pages) { remaining -= pages; continue; }
+        *physical = r->base + remaining * PMM_PAGE_SIZE;
+        for (cpu_u64 j = 0; j < frames; ++j) {
+            /* Distinct index name from pmm_allocate's set line: the
+               PMM suite mutates that line by exact text (count 1). */
+            cpu_u64 k = start + j;
+            allocated[k / 8] |= (cpu_u8)(1u << (k % 8));
+        }
+        /* The search cursor is deliberately not advanced: the run may
+           start past alignment-skipped free frames, and pmm_check
+           forbids any free bit below the cursor. The scan itself is
+           absolute first-fit from frame 0, so determinism does not
+           depend on the cursor. */
+        cpu_u64 bytes = frames * PMM_PAGE_SIZE;
+        stats.free_bytes -= bytes;
+        stats.allocated_bytes += bytes;
+        return PMM_OK;
+    }
+    return PMM_INVALID;
+}
+
 enum pmm_result pmm_query(cpu_u64 physical, enum pmm_state *state)
 {
     enum pmm_result result = context();

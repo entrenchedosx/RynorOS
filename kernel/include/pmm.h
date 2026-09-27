@@ -24,6 +24,23 @@ struct pmm_statistics {
 enum pmm_result pmm_initialize(const struct boot_memory_map *map, unsigned int physical_bits);
 enum pmm_result pmm_allocate(cpu_u64 *physical);
 enum pmm_result pmm_release(cpu_u64 physical);
+/* N physically consecutive frames, first-fit, start aligned to
+   align_bytes (nonzero power of two). limit_end is an exclusive
+   physical end bound (0 = no limit); a run qualifies only when its
+   exclusive end <= limit_end. Same bitmap/statistics as pmm_allocate;
+   the search cursor is deliberately not advanced (see dma.md).
+   Failure leaves *physical untouched. */
+enum pmm_result pmm_alloc_contiguous(cpu_u64 frames, cpu_u64 align_bytes,
+                                    cpu_u64 limit_end, cpu_u64 *physical);
+/* Pure first-fit run scan shared by pmm_alloc_contiguous and tests:
+   over caller-supplied usable regions (compact frame order) and
+   bitmap, find N consecutive clear bits with a page-aligned,
+   align_bytes-aligned start inside one region span and (when
+   limit_end) an exclusive end <= limit_end. Returns nonzero with
+   *start_index on success. No allocator state is touched. */
+int pmm_scan_run(const struct pmm_region *regions, unsigned int count,
+                 const cpu_u8 *bits, cpu_u64 frame_count, cpu_u64 n,
+                 cpu_u64 align_bytes, cpu_u64 limit_end, cpu_u64 *start_index);
 enum pmm_result pmm_query(cpu_u64 physical, enum pmm_state *state);
 enum pmm_result pmm_statistics(struct pmm_statistics *out);
 const struct pmm_region *pmm_regions(unsigned int *count);

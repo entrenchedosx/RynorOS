@@ -8,6 +8,7 @@
 #include "kbd.h"
 #include "display.h"
 #include "pci.h"
+#include "dma.h"
 #include "krst.h"
 #include "shell.h"
 #include "blk.h"
@@ -45,11 +46,16 @@ void kernel_main(void)
        (partial discovery beats no OS; the gated test reports the
        exact count). */
     (void)pci_initialize();
+    /* DMA registry is silent and allocation-free until drivers ask;
+       a failed init is a broken memory subsystem, so fail closed. */
+    if (dma_initialize() != DMA_OK)
+        cpu_halt();
     runtime_self_test();
-    if (!pmm_check() || !vm_check(vm_kernel_space()) || !heap_check() || !scheduler_check()) {
+    if (!pmm_check() || !vm_check(vm_kernel_space()) || !heap_check() || !scheduler_check() ||
+        !dma_check()) {
         serial_write("[GATE] failure=");
         serial_write(!pmm_check() ? "pmm" : !vm_check(vm_kernel_space()) ? "vm" :
-                     !heap_check() ? "heap" : "scheduler");
+                     !heap_check() ? "heap" : !scheduler_check() ? "scheduler" : "dma");
         serial_write("\r\n");
         serial_flush();
         cpu_halt();
@@ -97,6 +103,12 @@ void kernel_main(void)
        Disabled prints nothing, so default transcripts stay
        byte-identical. */
     if (RYNOR_PCI_TEST) pci_self_test();
+    serial_flush();
+    /* DMA-A1 gated self-test (test images only): its [DMA]
+       section becomes the transcript terminator when enabled.
+       Disabled prints nothing, so default transcripts stay
+       byte-identical. */
+    if (RYNOR_DMA_TEST) dma_self_test();
     serial_flush();
     /* Stage 18d Slice E shell boot (shell images only): mounts the
        filesystem, enters /bin/sh on the bootstrap thread, and never
