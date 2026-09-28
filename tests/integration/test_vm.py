@@ -14,6 +14,7 @@ from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
 from pmm_output import PMM_END, parse_pmm_output
 from vm_output import VM_END, parse_vm_output
 from timer_output import EXCEPTION_END
+from boot_layout import elf_boot_layout
 from boot_output import POST_IRQ
 from test_boot import elf_symbol
 
@@ -30,13 +31,15 @@ class VirtualMemoryTests(unittest.TestCase):
         manifest = build_image(ROOT, destination)
         self.assertGreater(manifest["payload_sectors"], 64)  # Real multi-read loader regression.
         output = boot_image(destination / "rynoros.img", destination / "logs")
-        pmm = parse_pmm_output(output.partition(EXCEPTION_END)[2].partition(PMM_END)[0] + PMM_END)
-        vm = parse_vm_output(output.partition(PMM_END)[2].partition(VM_END)[0] + VM_END, pmm)
         elf = destination / "rynorkernel.elf"
+        layout = elf_boot_layout(elf)
+        kernel = (layout["kernel_start"], layout["kernel_end"])
+        pmm = parse_pmm_output(output.partition(EXCEPTION_END)[2].partition(PMM_END)[0] + PMM_END, kernel)
+        vm = parse_vm_output(output.partition(PMM_END)[2].partition(VM_END)[0] + VM_END, pmm, layout)
         self.assertEqual(vm["faults"][0][2], elf_symbol(elf, "vm_test_write_fault"))
         self.assertEqual(vm["faults"][2][2], elf_symbol(elf, "vm_test_read_fault"))
         self.assertEqual(vm["faults"][1][2], 0x40000000)
-        self.assertEqual(vm["allocated"], 7 * 4096)
+        self.assertEqual(vm["allocated"], 8 * 4096)
         self.assertIsNotNone(re.search(re.escape(POST_IRQ), output))
         for name in ("__text_end", "__rodata_end", "__data_start"):
             self.assertEqual(elf_symbol(elf, name) % 4096, 0)

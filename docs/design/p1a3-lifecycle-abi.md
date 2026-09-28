@@ -221,8 +221,9 @@ fstat size first, then exact-length chunked fread (no new ceiling).
 
 `tests/integration/test_p1a3.py`: kern battery (marker-gated
 `/p1a3-go`, kern-unreachable shapes only: buffer shapes, unlink
-fault leg, unmounted mappings -- the 0x70000 link budget is nearly
-spent, so all content/enumerate/reuse/reboot rows run in CPL3),
+fault leg, unmounted mappings -- under the old 0x70000 link budget,
+nearly spent at the time, so all content/enumerate/reuse/reboot rows
+run in CPL3),
 CPL3 probe matrix (stat/readdir/unlink + hostile pointers + alive
 checks + reboot-verify prelude), lifecycle e2e (create/list/stat/
 delete/reuse across two boots), dir-cycle + disk-cycle legs,

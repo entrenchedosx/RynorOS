@@ -33,16 +33,16 @@ class ShellOutputTests(unittest.TestCase):
         for output in (b"", b"garbage\r\n", SHELL_GOOD + b"extra\r\n",
                        SHELL_START + SHELL_END, SHELL_GOOD.replace(SHELL_END, b""),
                        SHELL_GOOD.replace(b"RynorOS 0.1.0", b"RynorOS 9.9.9"),
-                       SHELL_GOOD.replace(b"free_bytes=65802240", b"free_bytes=1"),
+                       SHELL_GOOD.replace(b"free_bytes=65798144", b"free_bytes=1"),
                        SHELL_GOOD.replace(b"[SHELL] interactive session skipped (host did not request input)\r\n", b""),
                        SHELL_GOOD.replace(b"[SHELL] self-test started", b"[SHELL] self-test missing"),
                        SHELL_GOOD * 2, SHELL_GOOD + b"\xff"):
             self.assertTrue(validate_shell_output(output), output[:80])
 
     def test_accounting_must_match_prior_baseline(self):
-        previous = dict(allocated=122880, free=65802240, tables=14)
+        previous = dict(allocated=126976, free=65798144, tables=15)
         self.assertEqual(validate_shell_output(SHELL_GOOD, previous), [])
-        for key, value in (("free", 65802239), ("tables", 13), ("allocated", 122881)):
+        for key, value in (("free", 65798143), ("tables", 14), ("allocated", 126977)):
             wrong = previous.copy(); wrong[key] = value
             self.assertTrue(validate_shell_output(SHELL_GOOD, wrong))
 

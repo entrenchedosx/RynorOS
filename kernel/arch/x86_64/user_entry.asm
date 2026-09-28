@@ -166,7 +166,7 @@ user_blob_ud2_end:
 global user_blob_readkern_lo
 global user_blob_readkern_lo_end
 user_blob_readkern_lo:
-    mov rax, 0x8000
+    mov rax, 0x800000
     mov rax, [rax]
     ud2
 user_blob_readkern_lo_end:

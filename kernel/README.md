@@ -113,7 +113,8 @@ No host libc, OS APIs, dynamic loader, compiler runtime library, floating-point,
 SIMD, stack protector runtime, or red zone. Stack alignment is 16 bytes before
 CALL. IF is enabled in timer waits and running threads, never inside a handler.
 PMM/VM/heap/stack mutation remains foreground IF=0. The linker enforces that
-the loaded payload and BSS end at or below 0x70000. Bootstrap state
+the kernel image starts at 0x800000 within the 8 MiB file / 16 MiB
+memory caps. Bootstrap state
 is statically reserved; only real E820-usable unreserved frames enter PMM.
 
 ## Implementation status

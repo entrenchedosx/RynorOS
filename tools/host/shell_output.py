@@ -130,7 +130,7 @@ def _fixture() -> bytes:
              "[SHELL] self-test started"]
     lines += _synthetic_lines()
     lines += ["[SHELL] interactive session skipped (host did not request input)"]
-    lines += ["[SHELL] final allocated_bytes=122880 free_bytes=65802240 table_pages=14",
+    lines += ["[SHELL] final allocated_bytes=126976 free_bytes=65798144 table_pages=15",
               "[TEST] shell monitor verified"]
     return ("\r\n".join(lines) + "\r\n").encode()
 

@@ -40,11 +40,11 @@ class SchedOutputTests(unittest.TestCase):
             self.assertTrue(validate_sched_output(output))
 
     def test_worker_state_and_resource_accounting(self):
-        heap = {"allocated": 106496, "free": 937984, "tables": 10}
+        heap = {"allocated": 110592, "free": 933888, "tables": 11}
         self.assertEqual(validate_sched_output(fixture(), heap), [])
         for old, new in ((b"worker=2", b"worker=1"), (b"preemptions=6", b"preemptions=0"),
                          (b"dispatches=6", b"dispatches=99"), (b"irq_rip=35000", b"irq_rip=0"),
-                         (b"free_bytes=937984", b"free_bytes=942080")):
+                         (b"free_bytes=933888", b"free_bytes=937984")):
             self.assertTrue(validate_sched_output(fixture().replace(old, new), heap))
 
     def test_missing_completion_and_identity(self):

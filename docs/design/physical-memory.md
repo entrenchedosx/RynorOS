@@ -96,12 +96,15 @@ holes remain unavailable. There is no low-memory reclamation API yet.
 | Linker `__kernel_stack_start/end`, entry uses end symbol | 0x7c000..0x80000 |
 | PMM-discovered metadata extent | First suitable usable range below the existing identity-map limit, rounded to pages; `kind=9` |
 
-The kernel checks that every linked live range is valid, below 1 MiB and covered
-by firmware usable RAM before applying reservations. The linker still restricts
-the loaded payload and BSS below 0x70000 without overlapping the stack. The
-original Stage 4 load limit was 32 KiB; Stage 5 added bounded sector reads and
-page-aligned section boundaries. BSS is still zeroed by entry, not loaded from
-disk. Reservations derive from actual linker symbols, never a guessed BSS size.
+The kernel checks that every linked live range is valid and covered
+by firmware usable RAM before applying reservations: the low ranges
+must sit below 1 MiB, while the high kernel image must sit at the
+frozen 8 MiB base within the file/memory caps. BOOT-A1 replaced the
+old 0x70000 load limit with the high-load header protocol (see
+`boot.md`); the original Stage 4 load limit was 32 KiB, Stage 5 added
+bounded sector reads and page-aligned section boundaries. BSS is
+still zeroed by entry, not loaded from disk. Reservations derive from
+actual linker symbols, never a guessed BSS size.
 
 Bitmap size derives from the count of discovered usable frames after low-memory
 reservation: one allocation bit per frame, rounded up to bytes and then pages.

@@ -59,7 +59,8 @@ def parse_heap_output(output: bytes, vm: dict | None = None) -> dict:
         raise ValueError("HEAP stress must fill then report out-of-memory")
     exact("[TEST] HEAP stress and OOM verified")
     allocated, free, tables = numeric(r"\[HEAP\] PMM allocated_bytes=(\d+) free_bytes=(\d+) table_pages=(\d+)")
-    if tables != 10 or allocated != (16 + tables) * 4096 or free % 4096:
+    want_tables = vm["tables"] + 3 if vm else 11
+    if tables != want_tables or allocated != (16 + tables) * 4096 or free % 4096:
         raise ValueError("HEAP PMM/table accounting invalid")
     if vm and (allocated + free != vm["allocated"] + vm["free"] or
                allocated - vm["allocated"] != (16 + 3) * 4096):

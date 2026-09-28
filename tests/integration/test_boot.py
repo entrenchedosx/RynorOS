@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/host"))
 from image import ARTIFACTS, build_image
 from qemu import EXPECTED_OUTPUT, boot_image
+from boot_layout import elf_boot_layout, fnv1a_32, make_boot_header, parse_boot_header
 from exception_output import validate_exception_output
 from timer_output import TIMER_OUTPUT
 from boot_output import validate_boot_output, POST_IRQ
@@ -45,13 +46,14 @@ class BootTests(unittest.TestCase):
     def setUpClass(cls):
         cls.manifest = build_image(ROOT)  # Always build, never rely on old binaries.
         cls.image = ROOT / "build/rynoros.img"
+        cls.boot = elf_boot_layout(ROOT / "build/rynorkernel.elf")
 
     def test_actual_kernel_boots_and_qemu_is_reaped(self):
         logs = ROOT / "build/boot-test"
         before = hashlib.sha256(self.image.read_bytes()).hexdigest()
         observed = boot_image(self.image, logs)
         self.assertTrue(observed.startswith(EXPECTED_OUTPUT))
-        self.assertEqual(validate_boot_output(observed), [])
+        self.assertEqual(validate_boot_output(observed, boot=self.boot), [])
         # The Stage 9/10 transcript ends with framebuffer then runtime then
         # post-IRQ accounting, now followed by Stage 11 shell (normal image).
         self.assertIn(POST_IRQ, observed)
@@ -129,8 +131,7 @@ class BootTests(unittest.TestCase):
         self.assertEqual(elf[:6], b"\x7fELF\x02\x01")
         self.assertEqual(struct.unpack_from("<H", elf, 18)[0], 62)
         entry = struct.unpack_from("<Q", elf, 24)[0]
-        self.assertGreaterEqual(entry, 0x8000)
-        self.assertLess(entry, 0x10000)
+        self.assertEqual(entry, 0x800000)
 
     def assert_timeout_and_cleanup(self, image, logs):
         logs.mkdir(parents=True, exist_ok=True)
@@ -157,10 +158,23 @@ class BootTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="bad-version-", dir=ROOT / "build") as temporary:
             directory = Path(temporary)
             image = directory / "wrong-version.img"
-            data = self.image.read_bytes()
+            data = bytearray(self.image.read_bytes())
             prefix_line = b"RynorOS 0.1.0 | x86_64 | stage1\r\n"
             self.assertEqual(data.count(prefix_line), 1)
-            image.write_bytes(data.replace(prefix_line, prefix_line.replace(b"0.1.0", b"9.9.9")))
+            offset = data.find(prefix_line)
+            data[offset:offset + len(prefix_line)] = prefix_line.replace(b"0.1.0", b"9.9.9")
+            # The image is checksummed: re-sign the header so the loader
+            # accepts the tampered version line and the HOST gate (not the
+            # loader) is what must reject this transcript.
+            header = parse_boot_header(bytes(data[9 * 512:10 * 512]))
+            file_bytes = header["file_sectors"] * 512
+            start = 10 * 512
+            self.assertLessEqual(start + file_bytes, len(data))
+            self.assertTrue(start <= offset < start + file_bytes)
+            data[9 * 512:10 * 512] = make_boot_header(
+                header["file_sectors"], header["mem_pages"],
+                fnv1a_32(bytes(data[start:start + file_bytes])))
+            image.write_bytes(bytes(data))
             self.assert_timeout_and_cleanup(image, directory / "logs")
             observed = (directory / "logs/serial.log").read_bytes()
             self.assertTrue(observed.startswith(b"Rynorkernel booted.\r\n"))

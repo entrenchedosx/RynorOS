@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "tools/rynorlang"))
 sys.path.insert(0, str(ROOT))
 from image import build_image
 from qemu import boot_image, boot_complete
+from boot_layout import elf_boot_layout
 from load_output import parse_serial, validate, VERIFIED_LINE
 from boot_output import validate_boot_output
 from test_filesystem import GOOD_ENTRIES
@@ -208,6 +209,7 @@ class LoadIntegrationTests(unittest.TestCase):
         logs = cls.work / "shared-good"
         cls.output = boot_image(cls.destination / "rynoros.img", logs, timeout=60,
                                 extra_drives=(cls.image,))
+        cls.boot = elf_boot_layout(cls.destination / "rynorkernel.elf")
         summary = __import__("json").loads((logs / "run.json").read_text(encoding="utf-8"))
         assert summary["reaped"], summary
 
@@ -218,9 +220,12 @@ class LoadIntegrationTests(unittest.TestCase):
 
     def test_good_load_full_evidence(self):
         self.assertEqual(validate(parse_serial(self.output), self._files()), [])
+        # The table count is layout-driven, not a fixed shape: a wrong
+        # expectation must be rejected, not silently accepted.
+        self.assertTrue(validate(parse_serial(self.output), self._files(), 8))
 
     def test_boot_output_accepts_load_section(self):
-        self.assertEqual(validate_boot_output(self.output), [])
+        self.assertEqual(validate_boot_output(self.output, boot=self.boot), [])
 
     def test_exit_rows_exact(self):
         evidence = parse_serial(self.output)
@@ -259,9 +264,9 @@ class LoadIntegrationTests(unittest.TestCase):
         self.assertEqual(len(evidence.destroys), 7)
 
     def test_completion_load_terminator(self):
-        self.assertTrue(boot_complete(self.output))
+        self.assertTrue(boot_complete(self.output, boot=self.boot))
         stripped = self.output.replace(VERIFIED_LINE, b"")
-        self.assertFalse(boot_complete(stripped))
+        self.assertFalse(boot_complete(stripped, boot=self.boot))
 
     def test_skip_marker_on_plain_image(self):
         plain = self.work / "plain.img"
@@ -271,7 +276,7 @@ class LoadIntegrationTests(unittest.TestCase):
                             extra_drives=(plain,))
         self.assertIn(b"[LOAD] no image, skipped", output)
         self.assertNotIn(b"[LOAD] load verified", output)
-        self.assertEqual(validate_boot_output(output), [])
+        self.assertEqual(validate_boot_output(output, boot=self.boot), [])
 
     def _run_load_mutation(self, pairs, source, timeout=60):
         tmp, root = _mutate_copy(pairs, source)

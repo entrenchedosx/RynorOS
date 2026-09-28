@@ -204,24 +204,27 @@ def _parse_rnyx_envelope(blob: bytes):
             "total": len(blob)}
 
 
-def validate(evidence: LoadEvidence, files: dict) -> list:
+def validate(evidence: LoadEvidence, files: dict, want_tables: int = 7) -> list:
     """Compare guest evidence against the image files. [] valid.
 
     files maps absolute paths ("/rnyx/exit42.rnx") to file bytes, as
     decoded from the filesystem image (never the build inputs).
+    want_tables is the layout-driven user-context table count (6 +
+    touched kernel regions); 7 is the stock single-region image.
     """
     errors = []
     if evidence.failures:
         errors.append(f"guest failures: {evidence.failures}")
-    # Six contexts created (P1/P2/P3/A/B/bsszero/sysprobe), all with 6
-    # tables; destroys must pair them exactly (slots reused across phases).
+    # Six contexts created (P1/P2/P3/A/B/bsszero/sysprobe), all with
+    # want_tables tables; destroys must pair them exactly (slots reused
+    # across phases).
     if len(evidence.creates) != 7:
         errors.append(f"want 7 creates, got {len(evidence.creates)}")
     if len(evidence.destroys) != 7:
         errors.append(f"want 7 destroys, got {len(evidence.destroys)}")
     if len(evidence.creates) == 7:
         tables = {row[2] for row in evidence.creates}
-        if tables != {6}:
+        if tables != {want_tables}:
             errors.append(f"create table counts differ: {sorted(tables)}")
         for _, size, _ in evidence.creates:
             if not 0 < size <= PAGE:

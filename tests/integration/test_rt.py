@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "tools/rynorlang"))
 sys.path.insert(0, str(ROOT))
 from image import build_image
 from qemu import boot_image, boot_complete
+from boot_layout import elf_boot_layout
 from rt_output import parse_serial as parse_rt, validate as validate_rt, \
     VERIFIED_LINE as RT_VERIFIED_LINE, PROGRAMS as RT_PROGRAMS, \
     CLASS_LINES as RT_CLASS_LINES, WRITE_PAYLOADS as RT_WRITE_PAYLOADS
@@ -153,6 +154,7 @@ class RtIntegrationTests(unittest.TestCase):
         logs = cls.work / "shared-good"
         cls.output = boot_image(cls.destination / "rynoros.img", logs, timeout=60,
                                 extra_drives=(cls.image,))
+        cls.boot = elf_boot_layout(cls.destination / "rynorkernel.elf")
         summary = __import__("json").loads((logs / "run.json").read_text(encoding="utf-8"))
         assert summary["reaped"], summary
 
@@ -161,9 +163,12 @@ class RtIntegrationTests(unittest.TestCase):
 
     def test_good_rt_full_evidence(self):
         self.assertEqual(validate_rt(parse_rt(self.output), self._writes()), [])
+        # The table count is layout-driven, not a fixed shape: a wrong
+        # expectation must be rejected, not silently accepted.
+        self.assertTrue(validate_rt(parse_rt(self.output), self._writes(), 8))
 
     def test_boot_output_accepts_rt_section(self):
-        self.assertEqual(validate_boot_output(self.output), [])
+        self.assertEqual(validate_boot_output(self.output, boot=self.boot), [])
 
     def test_exit_rows_exact(self):
         self.assertEqual(parse_rt(self.output).exits, [(0, 0)] * 7)
@@ -176,9 +181,9 @@ class RtIntegrationTests(unittest.TestCase):
         self.assertEqual([p for p, _, _, _, _ in evidence.programs], RT_PROGRAMS)
 
     def test_completion_rt_terminator(self):
-        self.assertTrue(boot_complete(self.output))
+        self.assertTrue(boot_complete(self.output, boot=self.boot))
         stripped = self.output.replace(RT_VERIFIED_LINE, b"")
-        self.assertFalse(boot_complete(stripped))
+        self.assertFalse(boot_complete(stripped, boot=self.boot))
 
     def test_skip_marker_on_plain_image(self):
         plain = self.work / "plain.img"
@@ -188,7 +193,7 @@ class RtIntegrationTests(unittest.TestCase):
                             extra_drives=(plain,))
         self.assertIn(b"[RT] no image, skipped", output)
         self.assertNotIn(b"[RT] rt verified", output)
-        self.assertEqual(validate_boot_output(output), [])
+        self.assertEqual(validate_boot_output(output, boot=self.boot), [])
 
     def test_rl_print_rebind_distinct_runtime(self):
         # The rebind is real: same source links different objects and the

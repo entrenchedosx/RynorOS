@@ -47,7 +47,7 @@ _TEST_RE = re.compile(rb"^\[TEST\] userspace self-test passed$")
 #   violation shape so link-address shifts never desync the two).
 _FAULT_ROWS = [
     (6, 0x0, None, None),
-    (14, 0x05, None, 0x8000),
+    (14, 0x05, None, 0x800000),
     (14, 0x04, None, 0xFFFFFFFF80000000),
     (14, 0x07, None, CODE_BASE),
     (14, 0x15, DATA_BASE, DATA_BASE),
@@ -237,7 +237,7 @@ def validate_user_section(part: bytes) -> list:
     return []
 
 
-def validate(evidence: UserEvidence) -> list:
+def validate(evidence: UserEvidence, want_tables: int = 7) -> list:
     """Compare guest evidence against Stage 18a expectations. [] valid."""
     errors = []
     if evidence.failures:
@@ -250,7 +250,7 @@ def validate(evidence: UserEvidence) -> list:
         errors.append(f"want 34 creates, got {len(evidence.creates)}")
     else:
         tables = {row[2] for row in evidence.creates}
-        if tables != {6}:
+        if tables != {want_tables}:
             errors.append(f"create table counts differ: {sorted(tables)}")
         for _, size, _ in evidence.creates:
             if not 0 < size <= PAGE:

@@ -155,6 +155,8 @@ static void heap_self_test_inner(void)
     hrequire(cpu_interrupts_disabled(), "context_if0");
     struct pmm_statistics pre;
     hrequire(pmm_statistics(&pre) == PMM_OK, "pmm_statistics_before");
+    /* VM baseline is BOOT-A1 size-driven; the heap itself adds 3 tables. */
+    const cpu_u64 tables = vm_kernel_space()->table_pages;
     initialization_tests();
     hrequire(heap_initialize() == HEAP_OK, "initialize");
     hrequire(heap_initialize() == HEAP_BUSY, "double_initialize");
@@ -250,7 +252,7 @@ static void heap_self_test_inner(void)
              pmm_statistics(&post) == PMM_OK &&
              post.allocated_bytes == pre.allocated_bytes + (HEAP_ARENA_PAGES + 3) * VM_PAGE_SIZE &&
              post.free_bytes + post.allocated_bytes == pre.free_bytes + pre.allocated_bytes &&
-             vm_kernel_space()->table_pages == 10, "post_heap_integrity");
+             vm_kernel_space()->table_pages == tables + 3, "post_heap_integrity");
     cpu_u64 frames[HEAP_ARENA_PAGES];
     for (unsigned int i = 0; i < HEAP_ARENA_PAGES; ++i) {
         enum pmm_state state;

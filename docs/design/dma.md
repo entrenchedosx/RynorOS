@@ -151,9 +151,10 @@ sub-page physical allocation, VA reuse.
   not-found rows print the `0xdead` sentinel, proving the output
   index is left untouched on failure.
 - Live witness (default 64 MiB topology): 35 allocations pinned
-  exactly, first-fit base `0x11f000`, VA cursor from
+  exactly, first-fit base `0x120000` (`0x11f000` before BOOT-A1, which
+  spends one more page-table page below the DMA pool), VA cursor from
   `0xffffc08000000000`, every `bus == phys`, every `virt != phys`,
-  reuse identities `0x11f000`/`0x124000`, two-boot determinism.
+  reuse identities `0x120000`/`0x124000`, two-boot determinism.
 - Mutants M1-M14 all RED for their designed tag and restored:
   M1/M4/M13 `s-found`, M2/M3 `s-start`, M5/M10 `pmm-rollback`,
   M6/M11/M12 `v-round`, M7 `v-refree`, M8 `v-unmapped`, M9 `r-zero`,
@@ -177,8 +178,9 @@ sub-page physical allocation, VA reuse.
 - Static: 768 B BSS registry (16 entries) + ~24 B cursor/limit/flag.
 - Code: `.text` +10811, `.rodata` +2312, `.data` +8, `.bss` +803 vs
   the PCI-A1 test image (production `dma.c`/`pmm.c` plus `-Os`
-  `dma-test.c`); `__bss_end` is `0x6E19C`, leaving 7780 bytes of the
-  0x70000 BIOS window.
+  `dma-test.c`); `__bss_end` was `0x6E19C`, leaving 7780 bytes of the
+  old 0x70000 BIOS window (removed by BOOT-A1; kept as the measurement
+  that motivated the high-load work).
 - Runtime per mapping: one shared PDPT+PD+PT chain (3 PMM frames,
   first mapping only), one PTE per page, one registry entry; DMA-A1
   tests consume 64 VA pages of the 1 GiB arena. No fixed DMA pool.

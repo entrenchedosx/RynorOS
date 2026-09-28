@@ -41,7 +41,8 @@ class ImageTests(unittest.TestCase):
         for payload in (b"", bytes(MAX_PAYLOAD + 1)):
             with self.assertRaises(ValueError):
                 make_image(sector, payload)
-        self.assertEqual(len(make_image(sector, bytes(MAX_PAYLOAD))), IMAGE_SIZE)
+        self.assertEqual(len(make_image(sector, bytes(512))), IMAGE_SIZE)
+        self.assertEqual(len(make_image(sector, bytes(MAX_PAYLOAD))), MAX_PAYLOAD + 512)
 
     def test_invalid_boot_timeouts_are_rejected_before_launch(self):
         for timeout in (0, -1, 61, float("nan"), float("inf")):

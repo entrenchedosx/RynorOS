@@ -57,19 +57,21 @@ while a user space is on-CPU. Consequences:
   only when exactly one table (the root) remains.
 
 Low-half replication: RynorKernel is a low-half kernel (linked at
-`0x8000`), so interrupt delivery on a user CR3 needs the low image
-mapped too: the CPU reads IDT/GDT/TSS and handler code through the
-active CR3 before any software switch can run. Each user space gets a
+`0x800000`), so interrupt delivery on a user CR3 needs the kernel
+image mapped too: the CPU reads IDT/GDT/TSS and handler code through
+the active CR3 before any software switch can run. Each user space gets a
 private deep copy of the kernel `PML4[0]` chain (`vm_clone_low`:
 private PDPT/PD/PTs, leaf values verbatim, `PML4[0]` linked last).
 Sharing is impossible (both contexts map identical user VAs, which
-would collide in shared tables); copying is sound because kernel low
+would collide in shared tables); copying is sound because kernel
 mappings are immutable after `vm_initialize` (`range_valid` forbids
-kernel low maps), and `vm_clone_low` refuses any kernel low chain
-outside PDPT entry 0 (`VM_UNSUPPORTED`) or any copied leaf with `U/S`
-set (`VM_CORRUPT`). Presence of the supervisor kernel text is
-spot-checked per context (`vm_query` of `0x8000` must read supervisor
-execute).
+kernel maps), and `vm_clone_low` refuses any kernel chain outside
+PDPT entry 0 (`VM_UNSUPPORTED`) or any copied leaf with `U/S` set
+(`VM_CORRUPT`). Presence of the supervisor kernel text is
+spot-checked per context (`vm_query` of `__kernel_start` must read
+supervisor execute). Table count per context is `6 + kernel_pts`
+(root, PDPT, PD, low-replica PT, kernel-replica PTs, code PT,
+data/stack PT).
 * Kernel code running with `IF=0` in foreground always runs on the
   kernel CR3. Interrupt, fault, and gate entry switch to the kernel CR3
   as the first C action, before any `vm_frame_access` window use: the
@@ -200,7 +202,7 @@ link-address shifts never desync the two.
 
 | Class | Blobs (all must fault, never complete) |
 |---|---|
-| Kernel read | `[0x8000]` supervisor text (`#PF` 5); high-half supervisor (`#PF` 4, unmapped slot 511); kernel-text landmark (`#PF` 5) |
+| Kernel read | `[0x800000]` supervisor text (`#PF` 5); high-half supervisor (`#PF` 4, unmapped slot 511); kernel-text landmark (`#PF` 5) |
 | Kernel write | user code page (`#PF` 7); kernel-data landmark (`#PF` 7); kernel stack-pointer push (`#PF` 7 at landmark−8) |
 | Kernel execute | user data page (`#PF` 15, NX); user stack page (`#PF` 15, NX); kernel-text landmark (`#PF` 15, `RIP == CR2`) |
 | Privileged insn | `cli`, `mov rax,cr3` (`#GP` 0); `syscall` with `SCE==0` (`#UD`) |

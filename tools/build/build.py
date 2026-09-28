@@ -26,6 +26,7 @@ from qemu import boot_image  # noqa: E402
 # while unrelated tests keep the command green. Changes to the suite must update
 # this reviewed inventory alongside the new or removed tests.
 REPOSITORY_TEST_INVENTORY = {
+    "test_boot_layout": 8,
     "test_commands": 13, "test_exception_output": 6, "test_fb_output": 12,
     "test_forensic_repairs": 9, "test_heap_output": 6, "test_image": 5,
     "test_kbd_output": 12, "test_kernel_hardening": 5, "test_pmm_output": 6,
@@ -58,7 +59,7 @@ REPOSITORY_TEST_INVENTORY = {
     "test_dma_abi": 9,
 }
 INTEGRATION_TEST_INVENTORY = {
-    "test_audit": 4, "test_boot": 14, "test_display": 31, "test_heap": 5,
+    "test_audit": 5, "test_boot": 14, "test_display": 31, "test_heap": 5,
     "test_keyboard": 26, "test_pmm": 7, "test_runtime": 35,
     "test_scheduler": 23, "test_shell": 9, "test_vm": 8,
     "test_storage": 10, "test_filesystem": 19, "test_userspace": 18,

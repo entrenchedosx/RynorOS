@@ -47,6 +47,25 @@ static void verify_existing_mapping(void)
     require((pml4[0] & ~0x20ULL) == ((root + PMM_PAGE_SIZE) | 3) &&
             (pdpt[0] & ~0x20ULL) == ((root + 2 * PMM_PAGE_SIZE) | 3) &&
             (pd[0] & ~0x60ULL) == 0x83, "boot_mapping_readback");
+    /* BOOT-A1: the loader maps ceil(kernel_mem_end / 2 MiB) identity large
+       pages from the validated header; read back exactly that count. */
+    const cpu_u64 kend = (cpu_u64)__kernel_end;
+    const cpu_u64 krounded = (kend + 0x1FFFFFULL) & ~0x1FFFFFULL;
+    require((cpu_u64)__kernel_start == (cpu_u64)__kernel_phys_base &&
+            kend > (cpu_u64)__kernel_start && krounded >= kend &&
+            krounded - (cpu_u64)__kernel_start <= (cpu_u64)__kernel_mem_max,
+            "boot_kernel_extent");
+    const unsigned int want = (unsigned int)(krounded / 0x200000ULL);
+    require(want >= 1 && want <= 12, "boot_pd_count");
+    for (unsigned int i = 0; i < 512; ++i) {
+        if (i < want)
+            require((pd[i] & ~0x60ULL) == ((cpu_u64)i * 0x200000ULL | 0x83),
+                    "boot_pd_readback");
+        else
+            require(pd[i] == 0, "boot_pd_zero");
+        if (i)
+            require(pml4[i] == 0 && pdpt[i] == 0, "boot_upper_zero");
+    }
 }
 
 /* Explicitly synthetic adversarial map fixtures test the same normalizer used
@@ -160,6 +179,11 @@ void pmm_bootstrap_and_test(void)
     for (cpu_u64 address = 0; address < 0x100000; address += PMM_PAGE_SIZE)
         require(pmm_query(address, &state) == PMM_OK && state != PMM_STATE_FREE &&
                 state != PMM_STATE_ALLOCATED, "bootstrap_reservation");
+    const cpu_u64 kstart = (cpu_u64)__kernel_start;
+    const cpu_u64 kpage_end = ((cpu_u64)__kernel_end + PMM_PAGE_SIZE - 1) & ~(PMM_PAGE_SIZE - 1);
+    for (cpu_u64 address = kstart; address < kpage_end; address += PMM_PAGE_SIZE)
+        require(pmm_query(address, &state) == PMM_OK && state != PMM_STATE_FREE &&
+                state != PMM_STATE_ALLOCATED, "kernel_reservation");
     require(pmm_allocate((void *)0) == PMM_INVALID && pmm_release(1) == PMM_INVALID &&
             pmm_release(1ULL << bits) == PMM_UNAVAILABLE, "invalid_api_requests");
     text("[TEST] PMM reservations verified\r\n");

@@ -56,7 +56,7 @@ def total_fold() -> int:
 def fixture(previous: dict | None = None, ram_mib: int = 4) -> bytes:
     """Synthetic Stage 10 transcript. Reuses the Stage 9 display accounting for
     the final line so a composed repository fixture stays internally coherent."""
-    accounting = previous or dict(allocated=122880, free=ram_mib * 1024 * 1024 - 122880, tables=14)
+    accounting = previous or dict(allocated=126976, free=ram_mib * 1024 * 1024 - 126976, tables=15)
     parts = [RUNTIME_START,
              (STR_FMT + "\r\n").encode(), (STR_END + "\r\n").encode(),
              (BUF_WRAP + "\r\n").encode(), (BUF_END + "\r\n").encode(),
@@ -73,7 +73,7 @@ def fixture(previous: dict | None = None, ram_mib: int = 4) -> bytes:
 
 # Accounting used in the synthetic repository fixture, matching the Stage 9
 # DISPLAY_GOOD end state so full-boot composition stays internally coherent.
-DISPLAY_ACCOUNTING = dict(allocated=122880, free=921600, tables=14)
+DISPLAY_ACCOUNTING = dict(allocated=126976, free=917504, tables=15)
 RUNTIME_GOOD = fixture(DISPLAY_ACCOUNTING)
 
 

@@ -7,8 +7,8 @@ unlink fault-injection leg. Everything else -- the stat content
 matrix, dense-ordinal enumeration, deletion lifecycles, slot/block
 reuse, reboot persistence of deletion, exhaustion cycles, and the
 ls/stat/rm shell surface -- runs through the real gate in CPL3 probe
-and shell tests below (image bytes are free; kernel bytes share the
-0x70000 link budget).
+and shell tests below (image bytes are free; the kernel loads high
+under BOOT-A1 with a 16 MiB memory budget, not the old link window).
 """
 import sys
 import unittest

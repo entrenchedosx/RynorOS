@@ -28,9 +28,16 @@ def diagnostic_pattern(vector: int) -> str:
     return pattern + re.escape(f"[EXCEPTION] action={action}\r\n[TEST] exception handling verified\r\n")
 
 
-def validate_exception_output(output: bytes, vector: int = 3) -> list[str]:
+def validate_exception_output(output: bytes, vector: int = 3, kernel=None) -> list[str]:
     if type(vector) is not int or vector not in VECTOR_NAMES:
         return ["unsupported expected exception vector"]
+    if kernel is None:
+        kernel = (0x800000, 0x1800000)
+    if (type(kernel) is not tuple or len(kernel) != 2 or
+            any(type(v) is not int or isinstance(v, bool) for v in kernel) or
+            kernel[0] != 0x800000 or not kernel[0] < kernel[1] <= 0x1800000 or
+            (kernel[0] | kernel[1]) % 4096):
+        return ["captured RIP kernel window invalid"]
     try:
         text = output.decode("ascii")
     except UnicodeDecodeError:
@@ -54,10 +61,10 @@ def validate_exception_output(output: bytes, vector: int = 3) -> list[str]:
     if vector == 13:
         expected.update(rax=0x38)
     if vector == 14:
-        expected.update(cr2=0x200000)
+        expected.update(cr2=0x2000000)
     errors = [f"captured {name}: expected 0x{value:x}, got 0x{state[name]:x}"
               for name, value in expected.items() if state[name] != value]
-    if not 0x8000 <= state["rip"] < 0x10000:
+    if not kernel[0] <= state["rip"] < kernel[1]:
         errors.append("captured RIP is outside the linked kernel window")
     if not 0x7c000 <= state["rsp"] < 0x80000 or state["rsp"] % 8:
         errors.append("captured RSP is outside/aligned incorrectly for the fixed kernel stack")

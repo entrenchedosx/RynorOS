@@ -185,10 +185,25 @@ class KeyboardTests(unittest.TestCase):
         self.assertNotIn(KBD_END,(logs/"serial.log").read_bytes())
     def test_canned_success_output_cannot_prove_hardware(self):
         from kbd_output import KBD_GOOD
-        canned=KBD_GOOD.replace(b"free_bytes=937984",b"free_bytes=65818624").decode()
+        # The forgery must be transcript-perfect: hardcoded numbers fail
+        # the accounting chain instead of reaching the I/O trace gate.
+        # Snapshot the live scheduler baseline (keyboard allocates
+        # nothing) for the final line; the fabricated events still
+        # prove nothing was read.
+        head=KBD_GOOD.partition(b"[KBD] final")[0].decode()
+        injected=("void keyboard_self_test(void)\n{\n{\n"
+                  "    struct pmm_statistics before;\n"
+                  '    require(pmm_statistics(&before)==PMM_OK,"statistics");\n'
+                  "    cpu_u64 tables=vm_kernel_space()->table_pages;\n"
+                  "    text("+json.dumps(head)+");\n"
+                  '    field("[KBD] final allocated_bytes=",before.allocated_bytes);\n'
+                  '    field(" free_bytes=",before.free_bytes);\n'
+                  '    field(" table_pages=",tables);\n'
+                  '    text("\\r\\n[TEST] keyboard input verified\\r\\n");\n'
+                  '    require(serial_flush(),"flush_final");\n'
+                  "    return;\n}\n")
         self.variant("canned-output","kernel/drivers/keyboard-test.c",
-                     "void keyboard_self_test(void)\n{",
-                     "void keyboard_self_test(void)\n{\n    text("+json.dumps(canned)+"); return;",
+                     "void keyboard_self_test(void)\n{",injected,
                      ("Keyboard completed without all host inputs",
                       "QEMU data-port reads do not match injected input"),guest_halt=False)
         logs = ROOT / 'build/kbd-tests/canned-output'

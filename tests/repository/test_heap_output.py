@@ -15,7 +15,7 @@ def fixture(stress=227, oom=1):
              "[HEAP] coalesced free_blocks=1 used=0", "[TEST] HEAP coalescing verified",
              "[TEST] HEAP invalid calls rejected",
              f"[HEAP] stress blocks={stress} oom={oom}", "[TEST] HEAP stress and OOM verified",
-             "[HEAP] PMM allocated_bytes=106496 free_bytes=937984 table_pages=10",
+             "[HEAP] PMM allocated_bytes=110592 free_bytes=933888 table_pages=11",
              "[HEAP] final used=0 mapped=65536", "[TEST] HEAP self-test passed"]
     return ("\r\n".join(lines) + "\r\n").encode()
 
@@ -61,9 +61,9 @@ class HeapOutputTests(unittest.TestCase):
         self.assertTrue(validate_heap_output(fixture(stress=1)))
 
     def test_cross_subsystem_accounting(self):
-        vm = {"allocated": 28672, "free": 1015808}
+        vm = {"allocated": 32768, "free": 1011712, "tables": 8}
         self.assertEqual(validate_heap_output(fixture(), vm), [])
         self.assertTrue(validate_heap_output(fixture(), {**vm, "free": vm["free"] + 4096}))
-        for old, new in ((b"table_pages=10", b"table_pages=7"),
-                         (b"allocated_bytes=106496", b"allocated_bytes=28672")):
+        for old, new in ((b"table_pages=11", b"table_pages=10"),
+                         (b"allocated_bytes=110592", b"allocated_bytes=106496")):
             self.assertTrue(validate_heap_output(fixture().replace(old, new), vm))

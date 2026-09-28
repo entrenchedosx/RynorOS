@@ -31,22 +31,26 @@ POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
 
 def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
-                         require_shell: bool = False, shell_script=SCRIPT) -> list[str]:
+                         require_shell: bool = False, shell_script=SCRIPT,
+                         boot: dict | None = None) -> list[str]:
+    kernel = (boot["kernel_start"], boot["kernel_end"]) if boot else None
     if vector != 3:
-        return validate_exception_output(output, vector)
+        return validate_exception_output(output, vector, kernel)
     cpu, end, remaining = output.partition(EXCEPTION_END)
-    errors = validate_exception_output(cpu + end, vector)
+    errors = validate_exception_output(cpu + end, vector, kernel)
     pmm, end, remaining = remaining.partition(PMM_END)
-    pmm_errors = validate_pmm_output(pmm + end)
+    pmm_errors = validate_pmm_output(pmm + end, kernel)
     errors.extend(pmm_errors)
     vm, end, remaining = remaining.partition(VM_END)
-    vm_errors = validate_vm_output(vm + end, parse_pmm_output(pmm + PMM_END) if not pmm_errors else None)
+    vm_errors = validate_vm_output(vm + end,
+                                   parse_pmm_output(pmm + PMM_END, kernel) if not pmm_errors else None,
+                                   boot)
     errors.extend(vm_errors)
-    vm_state = parse_vm_output(vm + end) if not vm_errors else None
+    vm_state = parse_vm_output(vm + end, None, boot) if not vm_errors else None
     heap, end, timer = remaining.partition(HEAP_END)
     heap_errors = validate_heap_output(heap + end, vm_state)
     errors.extend(heap_errors)
-    heap_state = parse_heap_output(heap + end) if not heap_errors else None
+    heap_state = parse_heap_output(heap + end, vm_state) if not heap_errors else None
     sched, end, after = timer.partition(SCHED_START)
     expected_timer = TIMER_OUTPUT
     if sched != expected_timer:

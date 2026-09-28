@@ -67,7 +67,8 @@ static void balanced(struct accounting before)
    staging area for the boot-time test drivers (load/rt/fs). The drivers
    run strictly sequentially and every use fills the buffer before
    reading it, so sharing is sound; it saves 32 KiB of kernel BSS
-   against the fixed 0x70000 link budget (see rt-test.c, fs-test.c).
+   against the old fixed link budget (see rt-test.c, fs-test.c;
+   BOOT-A1 has since moved the kernel high with room to spare).
    Production syscall staging (load.c) never uses this buffer. */
 _Alignas(2) cpu_u8 load_file_buf[16384u];
 #define file_buf load_file_buf

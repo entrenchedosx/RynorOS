@@ -80,7 +80,7 @@ static int expected_test_frame(const struct exception_frame *f, cpu_u64 cr2)
     return f->vector == RYNOR_TEST_VECTOR && f->rip == rip &&
            f->cs == CPU_CODE_SELECTOR && f->ss == CPU_DATA_SELECTOR &&
            f->rsp == cpu_test_rsp && f->rflags == flags && f->error == error &&
-           (RYNOR_TEST_VECTOR != 14 || cr2 == 0x200000);
+           (RYNOR_TEST_VECTOR != 14 || cr2 == 0x2000000);
 }
 
 void exception_dispatch(struct exception_frame *frame, cpu_u64 cr2)

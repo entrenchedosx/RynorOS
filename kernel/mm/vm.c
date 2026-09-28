@@ -7,6 +7,7 @@ static struct vm_space kernel_space;
 static cpu_u64 window_pt;
 static cpu_u64 physical_limit;
 static int active;
+enum { VM_BOOT_FIXED_TABLES = 7, VM_BOOT_MAX_TABLES = 15 };
 #define VM_DEVICE_UC 8u /* Internal only: PAT index 3 (PCD|PWT), verified UC. */
 extern char __text_end[], __rodata_end[], __data_start[], __fb_info_start[], __fb_info_end[];
 
@@ -128,6 +129,14 @@ static enum vm_result range_valid(struct vm_space *s, cpu_u64 va, cpu_u64 pages)
        unmap_range. The active low bootstrap footprint is immutable. */
     if (page_index(last, 3) >= 509 || (s == &kernel_space && va < (cpu_u64)__identity_limit))
         return VM_PERMISSION;
+    if (s == &kernel_space) {
+        /* BOOT-A1: the high kernel image is immutable bootstrap footprint.
+           No overflow: pages * PAGE <= ~0 - va was checked above. */
+        const cpu_u64 kstart = (cpu_u64)__kernel_start;
+        const cpu_u64 kend = ((cpu_u64)__kernel_end + VM_PAGE_SIZE - 1) & ~(VM_PAGE_SIZE - 1);
+        if (kstart < kend && va < kend && va + pages * VM_PAGE_SIZE > kstart)
+            return VM_PERMISSION;
+    }
     return VM_OK;
 }
 
@@ -542,6 +551,42 @@ enum vm_result vm_release_low(struct vm_space *dst)
 }
 struct vm_space *vm_kernel_space(void) { return active ? &kernel_space : (void *)0; }
 
+/* BOOT-A1: identity-map the high kernel image with exact permissions
+   (RX text, R rodata, RW data/BSS). One PT per touched 2 MiB region
+   under the low PD; allocated frames join the caller's rollback set,
+   so failure here unwinds like any other init failure. */
+static enum vm_result map_kernel_image(cpu_u64 *f, unsigned int *got, cpu_u64 low_pd)
+{
+    const cpu_u64 kstart = (cpu_u64)__kernel_start;
+    const cpu_u64 kend = ((cpu_u64)__kernel_end + VM_PAGE_SIZE - 1) & ~(VM_PAGE_SIZE - 1);
+    if (kstart != (cpu_u64)__kernel_phys_base || kstart >= kend ||
+        kend - kstart > (cpu_u64)__kernel_mem_max ||
+        (cpu_u64)__text_end <= kstart ||
+        (cpu_u64)__rodata_end < (cpu_u64)__text_end ||
+        (cpu_u64)__data_start < (cpu_u64)__rodata_end)
+        return VM_CORRUPT;
+    cpu_u64 kpt[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    for (cpu_u64 va = kstart; va < kend; va += VM_PAGE_SIZE) {
+        unsigned int p = 0;
+        if (va < (cpu_u64)__text_end) p = VM_EXECUTE;
+        else if (va < (cpu_u64)__rodata_end) p = 0;
+        else if (va >= (cpu_u64)__data_start) p = VM_WRITE;
+        else return VM_CORRUPT; /* Gap in the linked image: refuse to guess. */
+        const unsigned int pdi = page_index(va, 1);
+        if (pdi < 4 || pdi > 11) return VM_CORRUPT;
+        if (!kpt[pdi - 4]) {
+            if (*got >= VM_BOOT_MAX_TABLES) return VM_CORRUPT;
+            enum vm_result r = allocate_table(&kernel_space, &f[*got]);
+            if (r != VM_OK) return r;
+            kpt[pdi - 4] = f[*got];
+            ++*got;
+            write_entry(low_pd, pdi, (page_entry){kpt[pdi - 4] | PTE_TABLE_FLAGS});
+        }
+        write_entry(kpt[pdi - 4], page_index(va, 0), leaf(va, p));
+    }
+    return VM_OK;
+}
+
 enum vm_result vm_initialize(void)
 {
     if (!cpu_interrupts_disabled() || irq_in_context()) return VM_CONTEXT;
@@ -559,11 +604,12 @@ enum vm_result vm_initialize(void)
         return VM_UNSUPPORTED;
     struct pmm_statistics stats;
     if (pmm_statistics(&stats) != PMM_OK) return VM_NOT_READY;
-    /* Seven bootstrap frames, all from PMM: root, low PDPT/PD/PT, window PDPT/PD/PT. */
-    cpu_u64 f[7];
+    /* Bootstrap frames, all from PMM: root, low PDPT/PD/PT, window
+       PDPT/PD/PT, plus one PT per touched 2 MiB kernel region (BOOT-A1). */
+    cpu_u64 f[VM_BOOT_MAX_TABLES];
     unsigned int got = 0;
     enum vm_result r;
-    for (; got < 7; ++got) {
+    for (; got < VM_BOOT_FIXED_TABLES; ++got) {
         r = allocate_table(&kernel_space, &f[got]);
         if (r != VM_OK) {
             while (got) release_table(&kernel_space, f[--got]);
@@ -579,18 +625,27 @@ enum vm_result vm_initialize(void)
     write_entry(f[4], 0, (page_entry){f[5] | PTE_TABLE_FLAGS});
     write_entry(f[5], 0, (page_entry){f[6] | PTE_TABLE_FLAGS});
     write_entry(f[6], 1, leaf(f[6], VM_WRITE));
-    /* Only live objects survive: code RX, rodata R/NX, data/stacks/bitmap RW/NX.
-       Null, old boot tables and unused low-memory holes are no longer mapped. */
+    /* Only live objects survive: stacks/bitmap RW/NX plus the retained
+       handoff pages below; the high kernel image (RX text, R rodata,
+       RW data/BSS) is mapped next. Null, old boot tables, the boot
+       part and unused low-memory holes are no longer mapped. */
     for (cpu_u64 va = 0; va < (cpu_u64)__identity_limit; va += VM_PAGE_SIZE) {
         unsigned int p = 0; int mapped = 0;
-        if (va >= (cpu_u64)__kernel_start && va < (cpu_u64)__text_end) { mapped = 1; p = VM_EXECUTE; }
-        else if (va >= (cpu_u64)__text_end && va < (cpu_u64)__rodata_end) mapped = 1;
-        else if ((va >= (cpu_u64)__data_start && va < (cpu_u64)__kernel_end) ||
-                 (va >= (cpu_u64)__kernel_stack_start && va < (cpu_u64)__kernel_stack_end) ||
-                 (va >= stats.metadata_base && va < stats.metadata_base + stats.metadata_bytes)) { mapped = 1; p = VM_WRITE; }
+        if ((va >= (cpu_u64)__kernel_stack_start && va < (cpu_u64)__kernel_stack_end) ||
+            (va >= stats.metadata_base && va < stats.metadata_base + stats.metadata_bytes)) {
+            mapped = 1; p = VM_WRITE;
+        }
         else if (va >= (cpu_u64)__boot_map_start && va < (cpu_u64)__boot_map_end) mapped = 1;
         else if (va >= (cpu_u64)__fb_info_start && va < (cpu_u64)__fb_info_end) mapped = 1;
         if (mapped) write_entry(f[3], page_index(va, 0), leaf(va, p));
+    }
+    r = map_kernel_image(f, &got, f[2]);
+    if (r != VM_OK) {
+        while (got) release_table(&kernel_space, f[--got]);
+        kernel_space.root = 0;
+        kernel_space.identity = (void *)0;
+        window_pt = 0;
+        return r;
     }
     /* Enable NX before publishing NX-bearing entries, then replace all boot tables. */
     __asm__ volatile ("rdmsr" : "=a"(a), "=d"(d) : "c"(0xc0000080));

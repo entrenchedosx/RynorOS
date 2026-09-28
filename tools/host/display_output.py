@@ -21,7 +21,7 @@ def fixture() -> bytes:
             b"[FB] lfb=4244635648 fb_bytes=3145728 pages=768\r\n"
             b"[FB] lfb_end=4247781376\r\n"
             b"[FB] mapped va=18446742424442109952\r\n"
-            b"[FB] final allocated_bytes=122880 free_bytes=921600 table_pages=14\r\n" +
+            b"[FB] final allocated_bytes=126976 free_bytes=917504 table_pages=15\r\n" +
             DISPLAY_END)
 
 
@@ -83,7 +83,8 @@ def parse_display_output(output: bytes, previous: dict | None = None) -> dict:
                                           previous["free"] - delta * 4096,
                                           previous["tables"] + delta):
             raise ValueError("Display table accounting does not match keyboard baseline")
-    if tables != 10 + (pages + 511) // 512 + 2 or allocated % 4096 or free % 4096:
+    base = previous["tables"] if previous else 11
+    if tables != base + (pages + 511) // 512 + 2 or allocated % 4096 or free % 4096:
         raise ValueError("Display table page count invalid")
     _exact(lines, "[TEST] framebuffer api verified")
     if next(lines, None) is not None:

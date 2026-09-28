@@ -116,10 +116,20 @@ class RuntimeTests(unittest.TestCase):
     def test_truthful_canned_runtime_is_rejected(self):
         # No intentionally wrong digest: the entire claimed serial result is
         # correct. Independent execution evidence must still reject the fake.
-        canned = RUNTIME_GOOD.replace(b"free_bytes=921600", b"free_bytes=65802240").decode('ascii')
+        # Snapshot the live display baseline (runtime allocates nothing) so
+        # the forgery is transcript-perfect; only the pmem evidence gate
+        # can reject it.
+        head = RUNTIME_GOOD.partition(b"[RUNTIME] final")[0].decode("ascii")
+        injected = ("void runtime_self_test(void)\n{\n{\n"
+                    "    struct accounting snap = account();\n"
+                    "    text(" + json.dumps(head) + ");\n"
+                    '    field("[RUNTIME] final allocated_bytes=",snap.pmm.allocated_bytes);\n'
+                    '    field(" free_bytes=",snap.pmm.free_bytes);\n'
+                    '    field(" table_pages=",snap.tables);\n'
+                    '    text("\\r\\n[TEST] runtime api verified\\r\\n");\n'
+                    "    return;\n}\n")
         self.run_failure("runtime execution evidence",
-            [("void runtime_self_test(void)\n{\n",
-              "void runtime_self_test(void)\n{\n    text(" + json.dumps(canned) + "); return;\n")])
+            [("void runtime_self_test(void)\n{\n", injected)])
 
     def test_krst_digest_mutation_caught_by_host(self):
         # Break the FNV constant: guest stays self-consistent, so only the
@@ -167,14 +177,23 @@ class RuntimeTests(unittest.TestCase):
         good = ("[RUNTIME] worker=0 acc=0x%X rounds=40" % worker_acc(W_INPUT[0])).encode()
         bad = ("[RUNTIME] worker=0 acc=0x%X rounds=40" % (worker_acc(W_INPUT[0]) + 1)).encode()
         total = ("[RUNTIME] total=%d" % total_fold()).encode()
-        canned = (RUNTIME_GOOD
-                  .replace(b"free_bytes=921600", b"free_bytes=65802240")
+        forged = (RUNTIME_GOOD
                   .replace(good, bad)
-                  .replace(total, ("[RUNTIME] total=%d" % (total_fold() + 1)).encode())
-                  .decode("ascii"))
+                  .replace(total, ("[RUNTIME] total=%d" % (total_fold() + 1)).encode()))
+        # Live display baseline for the final line (see
+        # test_truthful_canned_runtime_is_rejected); only the digest and
+        # total lies must trip the host fold check.
+        head = forged.partition(b"[RUNTIME] final")[0].decode("ascii")
+        injected = ("void runtime_self_test(void)\n{\n{\n"
+                    "    struct accounting snap = account();\n"
+                    "    text(" + json.dumps(head) + ");\n"
+                    '    field("[RUNTIME] final allocated_bytes=",snap.pmm.allocated_bytes);\n'
+                    '    field(" free_bytes=",snap.pmm.free_bytes);\n'
+                    '    field(" table_pages=",snap.tables);\n'
+                    '    text("\\r\\n[TEST] runtime api verified\\r\\n");\n'
+                    "    return;\n}\n")
         self.run_failure("worker digest/fold mismatch",
-                         [("void runtime_self_test(void)\n{\n",
-                           "void runtime_self_test(void)\n{\n    text(" + json.dumps(canned) + "); return;\n")],
+                         [("void runtime_self_test(void)\n{\n", injected)],
                          source="kernel/runtime/runtime-test.c")
 
     def test_runtime_self_test_keeps_runner_armed(self):
@@ -301,7 +320,10 @@ class RuntimeTests(unittest.TestCase):
             source='kernel/runtime/kstring.c')
 
     def test_forged_serial_and_memory_need_real_cpu_execution(self):
-        canned = RUNTIME_GOOD.replace(b'free_bytes=921600', b'free_bytes=65802240').decode('ascii')
+        # Live display baseline for the final line (see
+        # test_truthful_canned_runtime_is_rejected); the forged memory
+        # still lacks CPU-trace corroboration.
+        head = RUNTIME_GOOD.partition(b"[RUNTIME] final")[0].decode("ascii")
         assignments = []
         for i, inp in enumerate(W_INPUT):
             probe = fnv1a(bytes((j + i) & 255 for j in range(4096)))
@@ -309,6 +331,14 @@ class RuntimeTests(unittest.TestCase):
                 f'runtime_evidence[{i}] = (struct worker_out){{{worker_acc(inp)}ULL, 40, {50+i}, '
                 f'KSTACK_BASE+{i*5*4096}ULL, 2, (cpu_u64)__runtime_service_start, '
                 f'KSTACK_BASE+{i*5*4096+8192}ULL, {probe}ULL, 2}};')
+        injected = ("void runtime_self_test(void)\n{\n{\n"
+                    + "".join("    " + a + "\n" for a in assignments)
+                    + "    struct accounting snap = account();\n"
+                    + "    text(" + json.dumps(head) + ");\n"
+                    + '    field("[RUNTIME] final allocated_bytes=",snap.pmm.allocated_bytes);\n'
+                    + '    field(" free_bytes=",snap.pmm.free_bytes);\n'
+                    + '    field(" table_pages=",snap.tables);\n'
+                    + '    text("\\r\\n[TEST] runtime api verified\\r\\n");\n'
+                    + "    return;\n}\n")
         self.run_failure('CPU IRQ trace does not corroborate worker', [
-            ('void runtime_self_test(void)\n{\n', 'void runtime_self_test(void)\n{\n    ' +
-             '\n    '.join(assignments) + '\n    text(' + json.dumps(canned) + '); return;\n')])
+            ('void runtime_self_test(void)\n{\n', injected)])

@@ -14,7 +14,7 @@ def parser_fixture() -> bytes:
         b"[CPU] GDT initialized\r\n[CPU] IDT initialized\r\n"
         b"[TEST] triggering controlled exception\r\n"
         b"[EXCEPTION] vector=03 name=breakpoint error_source=synthetic error=0x0000000000000000\r\n"
-        b"[STATE] rip=0x0000000000008200 cs=0x0000000000000008 rflags=0x0000000000000402 "
+        b"[STATE] rip=0x0000000000800200 cs=0x0000000000000008 rflags=0x0000000000000402 "
         b"rsp=0x000000000007fff8 ss=0x0000000000000010\r\n"
     )
     value = 0x101
@@ -45,7 +45,7 @@ class ExceptionOutputTests(unittest.TestCase):
             (b"error=0x0000000000000000", b"error=0x0000000000000001"),
             (b"cs=0x0000000000000008", b"cs=0x0000000000000018"),
             (b"rflags=0x0000000000000402", b"rflags=0x0000000000000002"),
-            (b"rip=0x0000000000008200", b"rip=0x0000000000000000"),
+            (b"rip=0x0000000000800200", b"rip=0x0000000000000000"),
             (b"rsp=0x000000000007fff8", b"rsp=0x0000000000000000"),
             (b"r15=0x000000000000010f", b"r15=0x0000000000000000"),
             (b"action=resume", b"action=halt"),

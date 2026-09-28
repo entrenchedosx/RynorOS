@@ -8,10 +8,15 @@ import shutil
 import subprocess
 import tempfile
 from resources import package_resources
+from boot_layout import (BOOT_PART_SECTORS, MAX_BOOT_PAYLOAD,
+                         REQUIRED_BOOT_SYMBOLS, assemble_boot_payload,
+                         check_boot_layout, split_linked_binary)
+from kernel_elf import read_symbols
 
 
-IMAGE_SIZE = 1024 * 1024
-MAX_PAYLOAD = 0x70000 - 0x8000
+IMAGE_MIN_SIZE = 1024 * 1024
+IMAGE_SIZE = IMAGE_MIN_SIZE
+MAX_PAYLOAD = MAX_BOOT_PAYLOAD
 ARTIFACTS = ("boot.bin", "rynorkernel.elf", "rynorkernel.bin", "rynoros.img", "rynoros-resources.zip")
 
 
@@ -40,9 +45,9 @@ def run_tool(command: list[str], root: Path) -> str:
 def make_image(boot: bytes, payload: bytes) -> bytes:
     if len(boot) != 512 or boot[510:] != b"\x55\xaa":
         raise ValueError("Boot sector must be 512 bytes with the BIOS 55aa signature")
-    if not 0 < len(payload) <= MAX_PAYLOAD:
-        raise ValueError(f"Payload must occupy 1..{MAX_PAYLOAD} bytes")
-    return (boot + payload).ljust(IMAGE_SIZE, b"\0")
+    if not 0 < len(payload) <= MAX_BOOT_PAYLOAD:
+        raise ValueError(f"Payload must occupy 1..{MAX_BOOT_PAYLOAD} bytes")
+    return (boot + payload).ljust(max(IMAGE_MIN_SIZE, len(boot) + len(payload)), b"\0")
 
 
 def build_image(root: Path, destination: Path | None = None, *,
@@ -82,13 +87,14 @@ def build_image(root: Path, destination: Path | None = None, *,
     linker = find_tool("ld.lld", "RYNOR_LLD")
     nasm = find_tool("nasm", "RYNOR_NASM")
     version = json.loads((root / "project.json").read_text(encoding="utf-8"))["version"]
-    # Size-critical test-only TUs compile -Os instead of -O2: the
-    # 0x70000 BIOS window is fixed and nearly spent, and test drivers
-    # have no hot paths. Production TUs stay -O2. (P1-A3 measured
-    # fs-test.c -Os saving ~4.7KB; PCI-A1 generalizes the rule to all
-    # test TUs after measuring pci-test.c -Os saving ~4.5KB alone.
-    # Behavior is unchanged: the full QEMU suites re-verify every
-    # self-test under -Os before any commit carrying this rule.)
+    # Size-critical test-only TUs compile -Os instead of -O2: test
+    # drivers have no hot paths, while production TUs stay -O2. (P1-A3
+    # measured fs-test.c -Os saving ~4.7KB; PCI-A1 generalizes the rule
+    # to all test TUs after measuring pci-test.c -Os saving ~4.5KB
+    # alone. Behavior is unchanged: the full QEMU suites re-verify
+    # every self-test under -Os before any commit carrying this rule.
+    # BOOT-A1 removed the old BIOS window that motivated the diet, but
+    # the smaller test images remain cheaper to boot and audit.)
     size_opt_sources = frozenset({
         "kernel/storage/blk-test.c", "kernel/storage/fs-test.c",
         "kernel/drivers/keyboard-test.c",
@@ -203,11 +209,23 @@ def build_image(root: Path, destination: Path | None = None, *,
                 "--build-id=none", "--fatal-warnings", "-nostdlib", *objects]
         run_tool([*link, "-o", str(output / "rynorkernel.elf")], root)
         run_tool([*link, "--oformat=binary", "-o", str(output / "rynorkernel.bin")], root)
-        payload = (output / "rynorkernel.bin").read_bytes()
-        if not 0 < len(payload) <= MAX_PAYLOAD:
-            raise ValueError("Linked payload exceeds the BIOS load window")
+        symbols = {name: value for name, (value, _size) in
+                   read_symbols(output / "rynorkernel.elf", REQUIRED_BOOT_SYMBOLS).items()}
+        layout_errors = check_boot_layout(symbols)
+        if layout_errors:
+            raise ValueError("Linked boot layout invalid: " + "; ".join(layout_errors))
+        boot_part, kernel_file = split_linked_binary(
+            (output / "rynorkernel.bin").read_bytes(),
+            symbols["__kernel_start"], symbols["__payload_end"])
+        payload, boot_metadata = assemble_boot_payload(
+            boot_part, kernel_file,
+            symbols["__kernel_end"] - symbols["__kernel_start"])
+        # The shipped flat binary is the contiguous on-disk boot payload
+        # (boot part + header + sector-padded kernel file), not the raw
+        # linker binary with its 8 MiB VMA gap.
+        (output / "rynorkernel.bin").write_bytes(payload)
         sectors = (len(payload) + 511) // 512
-        run_tool([nasm, "-f", "bin", "-Werror", f"-DPAYLOAD_SECTORS={sectors}",
+        run_tool([nasm, "-f", "bin", "-Werror",
                   "boot/sector.asm", "-o", str(output / "boot.bin")], root)
         image = make_image((output / "boot.bin").read_bytes(), payload)
         (output / "rynoros.img").write_bytes(image)
@@ -223,6 +241,10 @@ def build_image(root: Path, destination: Path | None = None, *,
             "experimental_shell_script": shell_script or "",
             "target": "x86_64-none-elf",
             "payload_sectors": sectors,
+            "boot_sectors": BOOT_PART_SECTORS,
+            "boot_header": {name: boot_metadata[name] for name in
+                            ("file_sectors", "mem_pages", "checksum",
+                             "kernel_file_bytes", "kernel_mem_bytes")},
             "tools": {"clang": run_tool([clang, "--version"], root).splitlines()[0],
                       "ld.lld": run_tool([linker, "--version"], root).splitlines()[0],
                       "nasm": run_tool([nasm, "-v"], root)},

@@ -60,7 +60,9 @@ cpu_test_fault:
 %elif RYNOR_TEST_VECTOR == 13
     mov ds, ax
 %elif RYNOR_TEST_VECTOR == 14
-    mov rax, [abs 0x200000]    ; First byte beyond existing boot identity map.
+    mov rax, [abs 0x2000000]   ; 32 MiB: above the 12-entry boot identity map
+                               ; (24 MiB cap), so never mapped when this pre-VM
+                               ; test runs, at any kernel size.
 %else
     %error "unsupported test vector"
 %endif

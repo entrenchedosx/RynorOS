@@ -185,21 +185,23 @@ def validate_rt_section(part: bytes) -> list:
     return []
 
 
-def validate(evidence: RtEvidence, writes: list) -> list:
+def validate(evidence: RtEvidence, writes: list, want_tables: int = 7) -> list:
     """Compare guest evidence against golden constants. [] valid.
 
     writes are (slot, fd, len, nwritten, payload) kernel-observed
     [LOAD] write rows backing the class lines plus the .rl prints.
+    want_tables is the layout-driven user-context table count (6 +
+    touched kernel regions); 7 is the stock single-region image.
     """
     errors = []
     if evidence.failures:
         errors.append(f"guest failures: {evidence.failures}")
-    # Seven contexts created, all with 6 tables; destroys pair exactly.
+    # Seven contexts created, all with want_tables tables; destroys pair exactly.
     if len(evidence.creates) != 7:
         errors.append(f"want 7 creates, got {len(evidence.creates)}")
     else:
         tables = {row[2] for row in evidence.creates}
-        if tables != {6}:
+        if tables != {want_tables}:
             errors.append(f"create table counts differ: {sorted(tables)}")
         for _, size, _ in evidence.creates:
             if not 0 < size <= PAGE:

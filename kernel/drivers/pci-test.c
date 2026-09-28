@@ -212,7 +212,7 @@ static const struct mock_fn mock_fixtures[MOCK_FNS] = {
    restored before the next is touched) and the transport tests
    read back the slot they just wrote, so one last-write latch, one
    sizing-armed flag, and one high-half latch are exact (BSS budget:
-   the flat BIOS window leaves no room for per-slot arrays). COMMAND
+   the old flat BIOS window left no room for per-slot arrays). COMMAND
    words are genuinely concurrent across fixtures and stay per-fixture.
    Reset before each mock phase. */
 static cpu_u8 mock_last_valid;

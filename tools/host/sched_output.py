@@ -15,7 +15,7 @@ SCHED_GOOD = (SCHED_START +
      "[SCHED] non-yielding timer probe started\r\n").encode() +
     b"".join(f"[SCHED] worker={i+1} preemptions=6 dispatches=6 rsp={0xffffe00000004f00+i*20480} irq_rsp={0xffffe00000004f00+i*20480} irq_rip=35000\r\n".encode() for i in range(3)) +
     b"[SCHED] two-runnable ticks=24 switches=24\r\n[SCHED] single-runnable timer return verified\r\n" +
-    b"[SCHED] final allocated_bytes=106496 free_bytes=937984 table_pages=10\r\n" +
+    b"[SCHED] final allocated_bytes=110592 free_bytes=933888 table_pages=11\r\n" +
     SCHED_END + b"[TEST] preemptions=48 runs=1200000\r\n")
 
 
@@ -64,7 +64,8 @@ def parse_sched_output(output: bytes, heap: dict | None = None) -> dict:
     exact("[SCHED] two-runnable ticks=24 switches=24")
     exact("[SCHED] single-runnable timer return verified")
     allocated, free, tables = numbers(r"\[SCHED\] final allocated_bytes=(\d+) free_bytes=(\d+) table_pages=(\d+)")
-    if allocated != 106496 or free % 4096 or tables != 10:
+    want_allocated, want_tables = (heap["allocated"], heap["tables"]) if heap else (110592, 11)
+    if allocated != want_allocated or free % 4096 or tables != want_tables:
         raise ValueError("SCHED final accounting invalid")
     if heap and (allocated != heap["allocated"] or free != heap["free"] or tables != heap["tables"]):
         raise ValueError("SCHED leaked resources since heap test")

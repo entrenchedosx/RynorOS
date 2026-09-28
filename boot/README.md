@@ -30,10 +30,14 @@ The transition first enumerates E820 into the linker-owned 0x4000..0x5000 page,
 with 64 bounded slots, a versioned header and completion status. It preserves
 actual 20/24-byte lengths and rejects incomplete/oversized enumeration. Kernel
 validation/normalization is specified in `../docs/design/physical-memory.md`.
-It then enables the fast A20 gate, masks legacy IRQs/NMI, installs a
-minimal GDT, enters protected mode, checks CPUID long-mode support, initializes
-three static page tables, sets CR4.PAE/EFER.LME/CR0.PG and WP, and far-jumps into
-64-bit code. Then it jumps to `rynorkernel_entry`. See `../kernel/README.md`.
+It then enables the fast A20 gate, validates the build-generated boot
+header, chunk-reads the kernel file into low staging and copies it to
+its 8 MiB link base (unreal mode), verifies the file checksum, masks
+legacy IRQs/NMI, enters protected mode, checks CPUID long-mode
+support, initializes three static page tables sized for the kernel
+range, sets CR4.PAE/EFER.LME/CR0.PG and WP, and far-jumps into 64-bit
+code. Then it jumps to `rynorkernel_entry`. See `../kernel/README.md`
+and `../docs/design/boot.md`.
 The ELF file is a symbol-bearing diagnostic artifact; BIOS loads the separate
 flat binary, not ELF program headers. Entry is fixed by the linker, not a host shim.
 
@@ -43,22 +47,25 @@ flat binary, not ELF program headers. Entry is fixed by the linker, not a host s
 | --- | --- |
 | 0x1000–0x1fff | PML4 |
 | 0x2000–0x2fff | PDPT |
-| 0x3000–0x3fff | Page directory, one identity-mapped 2 MiB page |
+| 0x3000–0x3fff | Page directory, header-sized 2 MiB identity pages |
 | 0x4000–0x4fff | Versioned E820 handoff, retained after boot |
 | 0x5000–0x5fff | Version-2 PCI/BGA display handoff, retained read-only/NX |
+| 0x6000–0x6fff | Boot header scratch, transient |
 | 0x7000–0x7bff | Temporary boot stack area, top 0x7c00 |
 | 0x7c00–0x7dff | BIOS sector |
-| 0x8000–`__payload_end` | Loaded payload, linker-bounded below 0x70000 |
-| `__bss_start`–`__bss_end` | Kernel-zeroed BSS, linker-bounded below 0x70000 |
+| 0x8000–0x8fff | Fixed boot part (transition), retained, never reclaimed |
+| 0x10000–0x6ffff | Disk staging, transient; ordinary RAM after boot |
 | 0x7c000–0x7ffff | Fixed kernel stack, top 0x80000 |
+| 0x800000–`__kernel_end` | Kernel image, 8 MiB file / 16 MiB mem caps |
 
 These initial placements are the documented QEMU PC bootstrap contract, not
 inferred RAM capacity. PMM validates their actual linker ranges against E820
 before publishing an allocator and conservatively reserves the first MiB.
 The physical bitmap is placed in discovered usable mapped RAM, never at a
 guessed free address. Page tables are zeroed before use. No boot/firmware memory is
-reclaimed. The temporary first 2 MiB is supervisor writable/executable until
-Stage 5 replaces CR3 with seven PMM-backed table pages, removes unused boot
+reclaimed. The temporary identity map (low 2 MiB plus the header-sized kernel
+extent) is supervisor writable/executable until Stage 5 replaces CR3
+with 7 + kernel-PT PMM-backed table pages, removes unused boot
 mappings and applies real RX/R/NX/RW permissions. See `../docs/design/virtual-memory.md`.
 
 ## Tests

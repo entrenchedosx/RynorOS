@@ -28,7 +28,7 @@ def fixture(keys=KEYS):
                           for j in (2*i, 2*i+1))).encode() for i in range(8)) +
         b"[KBD] irqs=17 reads=16 received=16 dropped=0 errors=0 auxiliary=0 empty=1\r\n"
         b"[KBD] concurrent timer_ticks=80 worker_runs=5000\r\n"
-        b"[KBD] final allocated_bytes=106496 free_bytes=937984 table_pages=10\r\n" + KBD_END)
+        b"[KBD] final allocated_bytes=110592 free_bytes=933888 table_pages=11\r\n" + KBD_END)
 KBD_GOOD=fixture()
 def parse_kbd_output(output: bytes, keys=KEYS, previous=None) -> dict:
     if len(output)>16384: raise ValueError("KBD output too large")
@@ -60,7 +60,8 @@ def parse_kbd_output(output: bytes, keys=KEYS, previous=None) -> dict:
     ticks,runs=rec(r"\[KBD\] concurrent timer_ticks=(\d+) worker_runs=(\d+)")
     if not ticks or not runs: raise ValueError("KBD concurrent execution missing")
     allocated,free,tables=rec(r"\[KBD\] final allocated_bytes=(\d+) free_bytes=(\d+) table_pages=(\d+)")
-    if allocated!=106496 or free%4096 or tables!=10: raise ValueError("KBD final accounting invalid")
+    want_allocated, want_tables = (previous["allocated"], previous["tables"]) if previous else (110592, 11)
+    if allocated!=want_allocated or free%4096 or tables!=want_tables: raise ValueError("KBD final accounting invalid")
     if previous and (allocated,free,tables)!=(previous["allocated"],previous["free"],previous["tables"]):
         raise ValueError("KBD resources changed from scheduler baseline")
     exact("[TEST] keyboard input verified")

@@ -443,7 +443,7 @@ static void p1a_cases(int mounted_dev)
    plus kern-written content and a reboot leg. The full create/write
    error matrix, NOSPC legs, and remount rows run through the real
    gate in the CPL3 probe instead: image bytes are free, kernel bytes
-   are not (this TU shares the 0x70000 link budget).
+   are not (this TU shared the old 0x70000 link budget).
    Rows mirror the p1a shapes with numeric sys_err codes:
      [FS] p1a2-neg op=<create|write> id=<id> rc=<n>
      [FS] p1a2-write path=<p> size=<s> blocks=<b> sum=<s> wsum=<w>
@@ -493,6 +493,7 @@ static void p1a2_cases(int mounted_dev)
     struct fs_stat st;
     cpu_u64 m = P1A2_SENT;
     int rc;
+    (void)m; /* Consumed only by test code below that compiles out unarmed. */
     /* Kern-only checks first: all reject before existence is
        consulted (length/cap/buffer precede stat), so these rows
        print identically on fresh and reboot boots. No CPL3 path
@@ -614,7 +615,7 @@ static void p1a2_cases(int mounted_dev)
    p1a_cases discipline: only marker images run it, so every other
    image keeps byte-identical transcripts). Covers ONLY what CPL3
    cannot reach: unlink fault injection, unmounted mappings, and
-   kernel-buffer shapes. The 0x70000 link budget is nearly spent
+   kernel-buffer shapes. The old 0x70000 link budget was nearly spent
    (P1-A1+P1-A2 filled it), so every content/stat/enumerate/reuse/
    reboot row runs through the real gate in the CPL3 probe instead:
    image bytes are free, kernel bytes are not.
@@ -640,6 +641,7 @@ static void p1a3_cases(int mounted_dev)
     struct user_stat st;
     cpu_u64 m = P1A2_SENT;
     int rc;
+    (void)m; /* Consumed only by test code below that compiles out unarmed. */
     /* Kern-only shapes: identical on every boot (no CPL3 path stages
        kernel buffers or runs unmounted). */
     rc = kern_fstat("/one", 0);

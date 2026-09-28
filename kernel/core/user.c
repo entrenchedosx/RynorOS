@@ -573,13 +573,14 @@ int user_check(void)
         if (!query_exact((struct user_context *)c, USER_STACK_PAGE, VM_USER | VM_WRITE))
             return 0;
         struct vm_mapping m;
-        /* Guard page and null must report unmapped; the low kernel image
+        /* Guard page and null must report unmapped; the kernel image
            must be present supervisor-only (delivery reads IDT/GDT/TSS
            through the user CR3). */
         struct vm_space *space = &((struct user_context *)c)->space;
         if (vm_query(space, USER_GUARD_PAGE, &m) != VM_NOT_MAPPED) return 0;
         if (vm_query(space, 0, &m) != VM_NOT_MAPPED) return 0;
-        if (vm_query(space, 0x8000, &m) != VM_OK || m.permissions != VM_EXECUTE)
+        if (vm_query(space, (cpu_u64)__kernel_start, &m) != VM_OK ||
+            m.permissions != VM_EXECUTE)
             return 0;
         if (!clone_ok(c)) return 0;
     }
@@ -847,12 +848,20 @@ static int create_with_image(struct user_context **out, const char *code, cpu_u6
         dw[USER_DATA_KTEXT / 8] = (cpu_u64)&user_enter;
         dw[USER_DATA_KDATA / 8] = (cpu_u64)&user_kernel_cr3;
     }
-    /* Fixed layout, fixed table count: root, PDPT, PD, kernel-replica
-       PT, code PT, data/stack PT. Multi-page v2 windows stay inside one
-       PT each by address-map construction (code PD[2], data/stack
-       PD[3]); anything else trips fail-closed here for an explicit
-       revisit, never silently. */
-    if (c->space.table_pages != 6) goto fail;
+    /* Fixed layout, layout-driven table count: root, PDPT, PD, the
+       low-replica PT, one kernel-replica PT per touched 2 MiB kernel
+       region (BOOT-A1), code PT, data/stack PT. Multi-page v2 windows
+       stay inside one PT each by address-map construction (code PD[2],
+       data/stack PD[3]); anything else trips fail-closed here for an
+       explicit revisit, never silently. */
+    cpu_u64 kend_2m = ((cpu_u64)__kernel_end + 0x1FFFFFULL) & ~0x1FFFFFULL;
+    if ((cpu_u64)__kernel_start != (cpu_u64)__kernel_phys_base ||
+        kend_2m <= (cpu_u64)__kernel_start ||
+        kend_2m - (cpu_u64)__kernel_start > (cpu_u64)__kernel_mem_max)
+        goto fail;
+    const unsigned int want_tables =
+        6 + (unsigned int)((kend_2m - (cpu_u64)__kernel_start) / 0x200000ULL);
+    if (c->space.table_pages != want_tables) goto fail;
     c->table_pages_at_create = c->space.table_pages;
     c->code_size = code_len;
     c->rip = USER_CODE_BASE; c->rsp = USER_STACK_TOP; c->rflags = 0x202;

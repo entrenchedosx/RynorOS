@@ -438,10 +438,9 @@ int sys_fread(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
             return SYS_INVAL;
         return SYS_OK;
     }
-    /* Bounded chunk loop over the 4 KiB kernel stage (no 16 KiB static
-       staging against the link budget; each chunk is an independent
-       stateless read, so multi-chunk transfers are byte-identical to a
-       single call). */
+    /* Bounded chunk loop over the 4 KiB kernel stage (kept small under
+       the old link budget; each chunk is an independent stateless read,
+       so multi-chunk transfers are byte-identical to a single call). */
     while (done < len) {
         cpu_u64 chunk = len - done > SYSCALL_READ_MAX ? SYSCALL_READ_MAX : len - done;
         cpu_u64 m = 0;
@@ -641,10 +640,10 @@ int sys_fwrite(struct user_context *c, cpu_u64 path_ptr, cpu_u64 path_len,
         return SYS_OK;
     }
     if (buf + len < buf) return SYS_BADARG;
-    /* Bounded chunk loop over the 4 KiB kernel stage (no 16 KiB static
-       staging against the link budget; each chunk is an independent
-       stateless write, so multi-chunk transfers are byte-identical to
-       sequential single-chunk calls). */
+    /* Bounded chunk loop over the 4 KiB kernel stage (kept small under
+       the old link budget; each chunk is an independent stateless write,
+       so multi-chunk transfers are byte-identical to sequential
+       single-chunk calls). */
     while (done < len) {
         cpu_u64 chunk = len - done > SYSCALL_READ_MAX ? SYSCALL_READ_MAX : len - done;
         cpu_u64 m = 0;

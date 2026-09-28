@@ -203,7 +203,7 @@ static void fault_tests(void)
         enum user_blob blob; cpu_u64 vector, error, cr2, rip; int check_cr2; const char *why;
     } rows[] = {
         {USER_BLOB_UD2, 6, 0, 0, 0, 0, "ud2"},
-        {USER_BLOB_READKERN_LO, 14, 0x05, 0x8000, 0, 1, "readkern_lo"},
+        {USER_BLOB_READKERN_LO, 14, 0x05, (cpu_u64)__kernel_start, 0, 1, "readkern_lo"},
         {USER_BLOB_READKERN_HI, 14, 0x04, 0xFFFFFFFF80000000ULL, 0, 1, "readkern_hi"},
         {USER_BLOB_WRITE_RX, 14, 0x07, USER_CODE_BASE, 0, 1, "write_rx"},
         /* Fetch faults report the target as RIP: exact data address. */

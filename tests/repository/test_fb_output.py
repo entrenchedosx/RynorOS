@@ -23,17 +23,17 @@ class FbOutputTests(unittest.TestCase):
         parsed = parse_display_output(DISPLAY_GOOD)
         self.assertEqual((parsed["width"], parsed["height"], parsed["pitch"], parsed["bpp"]),
                          (1024, 768, 4096, 32))
-        self.assertEqual(parsed["tables"], 14)
+        self.assertEqual(parsed["tables"], 15)
         self.assertEqual(parsed["lfb"] % 4096, 0)
         self.assertEqual(parsed["lfb_end"], parsed["lfb"] + parsed["fb_bytes"])
 
     def test_accounting_against_keyboard_baseline(self):
-        previous = dict(allocated=106496, free=937984, tables=10)
+        previous = dict(allocated=110592, free=933888, tables=11)
         # 4 table pages exactly matches the 768-page display mapping.
         self.assertEqual(validate_display_output(DISPLAY_GOOD, previous), [])
-        for old, new in ((b"final allocated_bytes=122880", b"final allocated_bytes=122881"),
-                         (b"free_bytes=921600", b"free_bytes=922000"),
-                         (b"table_pages=14", b"table_pages=15")):
+        for old, new in ((b"final allocated_bytes=126976", b"final allocated_bytes=126977"),
+                         (b"free_bytes=917504", b"free_bytes=918000"),
+                         (b"table_pages=15", b"table_pages=16")):
             with self.subTest(old=old, new=new):
                 self.assertTrue(validate_display_output(DISPLAY_GOOD.replace(old, new), previous))
 

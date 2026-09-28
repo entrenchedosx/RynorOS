@@ -14,6 +14,7 @@ from image import build_image
 from qemu import boot_image
 from pmm_output import parse_pmm_output, PMM_END
 from timer_output import EXCEPTION_END
+from boot_layout import elf_boot_layout
 from boot_output import POST_IRQ
 from repository import REQUIRED_DIRECTORIES, REQUIRED_FILES
 from test_boot import elf_symbol
@@ -28,6 +29,7 @@ class PhysicalMemoryTests(unittest.TestCase):
     def setUpClass(cls):
         cls.destination = ROOT / "build/pmm-tests/normal"
         build_image(ROOT, cls.destination)
+        cls.layout = elf_boot_layout(cls.destination / "rynorkernel.elf")
 
     def verify_cleanup(self, logs):
         summary = json.loads((logs / "run.json").read_text(encoding="utf-8"))
@@ -45,7 +47,8 @@ class PhysicalMemoryTests(unittest.TestCase):
                 # deadline instead of inheriting the 10 s smoke-test default.
                 output = boot_image(self.destination / "rynoros.img", logs,
                                     memory_mib=memory, timeout=30)
-                data = parse_pmm_output(pmm_section(output))
+                kernel = (self.layout["kernel_start"], self.layout["kernel_end"])
+                data = parse_pmm_output(pmm_section(output), kernel)
                 self.assertIsNotNone(re.search(re.escape(POST_IRQ), output))
                 self.assertGreater(data["last_frame"], 0x200000)
                 self.assertEqual(data["exhausted_frames"] * 4096, data["free_bytes"])

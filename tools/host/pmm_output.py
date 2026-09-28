@@ -58,7 +58,7 @@ def reserve(regions, start, end, kind):
     return result
 
 
-def parse_pmm_output(output: bytes) -> dict:
+def parse_pmm_output(output: bytes, kernel=None) -> dict:
     if len(output) > 100000:
         raise ValueError("PMM output exceeds bounded record budget")
     try:
@@ -116,6 +116,13 @@ def parse_pmm_output(output: bytes) -> dict:
     firmware = firmware_regions(raw, bits)
     firmware_usable = sum(b - a for a, b, kind in firmware if kind == 1)
     boot_reserved = reserve(firmware, 0, 0x100000, 8)
+    if kernel is not None:
+        if (type(kernel) is not tuple or len(kernel) != 2 or
+                any(type(v) is not int or isinstance(v, bool) for v in kernel) or
+                kernel[0] != 0x800000 or not kernel[0] < kernel[1] <= 0x1800000 or
+                (kernel[0] | kernel[1]) % 4096):
+            raise ValueError("PMM kernel extent invalid")
+        boot_reserved = reserve(boot_reserved, kernel[0], kernel[1], 8)
     candidates = sum((b - a) // PAGE for a, b, kind in boot_reserved if kind == 1)
     expected_bytes = ((candidates + 7) // 8 + PAGE - 1) // PAGE * PAGE
     locations = [a for a, b, kind in boot_reserved
@@ -144,9 +151,9 @@ def parse_pmm_output(output: bytes) -> dict:
             "last_frame": last, "physical_bits": bits}
 
 
-def validate_pmm_output(output: bytes) -> list[str]:
+def validate_pmm_output(output: bytes, kernel=None) -> list[str]:
     try:
-        parse_pmm_output(output)
+        parse_pmm_output(output, kernel)
     except ValueError as error:
         return [str(error)]
     return []

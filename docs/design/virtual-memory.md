@@ -49,7 +49,7 @@ not inherited. A huge-page bit in a walked hierarchy is rejected; bit 7 in a
 
 | Virtual interval | Role after VM activation |
 | --- | --- |
-| Linked 0x8000..`__text_end` | Kernel/retained transition code, supervisor RX |
+| Linked 0x800000..`__text_end` | Kernel text, supervisor RX |
 | `__text_end`..`__rodata_end` | Page-aligned rodata, supervisor R/NX |
 | `__data_start`..rounded `__kernel_end` | Data/BSS, supervisor RW/NX, including GDT/IDT/PMM state |
 | 0x7c000..0x80000 | Existing kernel stack, supervisor RW/NX |
@@ -69,12 +69,17 @@ a complete overflow-recovery solution: TSS/IST and emergency stacks are absent.
 All first-MiB physical reservations remain retained by the PMM; unmapping old
 boot structures does not reclaim them.
 
-Before switching, seven frames are allocated through the real PMM and zeroed:
-PML4, low PDPT/PD/PT and window PDPT/PD/PT. Each must fit the existing 2 MiB
-bootstrap mapping for initial construction. A shortage or unmapped candidate
-causes rollback; no hidden low-memory allocator is used. The root connects the
-two branches. Only actual linked live objects, stack, handoff and bitmap are
-mapped. Page-aligned linker boundaries separate code, rodata and writable data.
+Before switching, seven frames plus one PT per touched 2 MiB kernel
+region are allocated through the real PMM and zeroed: PML4, low
+PDPT/PD/PT, window PDPT/PD/PT, and the kernel PTs under the low PD.
+Each must fit an existing bootstrap mapping for initial construction
+(low tables under 2 MiB, kernel tables under the header-sized kernel
+extent). A shortage or unmapped candidate causes rollback; no hidden
+low-memory allocator is used. The root connects the branches. Only
+actual linked live objects, stack, handoff and bitmap are mapped.
+Page-aligned linker boundaries separate code, rodata and writable
+data. The high kernel image is immutable bootstrap footprint: map,
+unmap, and protect refuse it exactly like the low bootstrap range.
 NX is enabled, CR3 is replaced with the new PMM root, CR3 is read back, and the
 hierarchy is checked. Code and stack retain their linked addresses, so execution,
 serial, exception return and IRQ return continue without relocation.
@@ -87,11 +92,12 @@ Only one temporary pointer may be live; every subsequent VM operation can change
 its target. No function may retain that pointer across another VM call or IRQ
 enable. All VM operations require one CPU and IF=0, and no IRQ handler calls VM.
 
-The additional code and page-aligned sections exceeded the old 32 KiB load bound.
-The existing BIOS loader now reads one sector at a time, bounded by the linked
-payload size within 0x8000..0x70000 (832 sectors maximum). Each request uses a
-zero offset and advances its segment by 0x20, avoiding 64 KiB boundary crossings.
-This is the same raw image format and original loader, not a new boot protocol.
+The BOOT-A1 BIOS loader (see `boot.md`) reads a fixed 4 KiB boot
+part, then chunk-reads the kernel file into low staging and copies it
+to the 8 MiB link base under a build-generated header (8 MiB file /
+16 MiB memory caps, FNV-1a verified). Disk requests stay within one
+64 KiB window each; the boot page tables map the header-sized kernel
+extent until this stage replaces them.
 
 ## Public interfaces and ownership
 

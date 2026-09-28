@@ -81,7 +81,7 @@ enables IRQ0 for its bounded timer test; NMI/UART interrupts remain disabled.
 | 3 | Breakpoint (#BP) | No | Real INT3; frame checked and IRETQ return verified |
 | 6 | Invalid Opcode (#UD) | No | Real UD2, controlled halt |
 | 13 | General Protection (#GP) | Yes | Real invalid selector load, error=0x38 |
-| 14 | Page Fault (#PF) | Yes | Real unmapped read, error=0 and CR2=0x200000 |
+| 14 | Page Fault (#PF) | Yes | Real unmapped read, error=0 and CR2=0x2000000 |
 | 2, 4, 5, 7 | NMI, Overflow, Bound Range, Device Unavailable | No | Wired, unexercised |
 | 8, 10, 11, 12 | Double Fault, Invalid TSS, Segment Not Present, Stack Fault | Yes | Wired, unexercised; no emergency stack |
 | 16, 18, 19, 20 | x87, Machine Check, SIMD, Virtualization | No | Wired; feature handling unsupported |
@@ -152,8 +152,9 @@ checks all restored GPRs, RSP, and RFLAGS after IRETQ, clears DF before returnin
 to C, and only then can `[TEST] exception handling verified` be printed.
 
 Separate integration images select one other required vector each. DIV/UD2,
-invalid DS selector 0x38, and an assembly read at the unmapped address 0x200000
-cause real faults without C undefined behavior; TF/NOP causes a real debug trap.
+invalid DS selector 0x38, and an assembly read at address 0x2000000 (above
+the 24 MiB boot-map cap, so never mapped at that point) cause real faults
+without C undefined behavior; TF/NOP causes a real debug trap.
 Their expected frame is checked, then the handler prints `action=halt` and the
 verified marker and halts without retrying the instruction. #PF uses only the
 existing Stage 1 static mapping and stops before the Stage 5 VM subsystem.

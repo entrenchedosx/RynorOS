@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/host"))
 from image import build_image
 from qemu import boot_image, boot_complete
+from boot_layout import elf_boot_layout
 from user_output import parse_serial, validate
 from boot_output import validate_boot_output
 
@@ -46,6 +47,7 @@ class UserspaceIntegrationTests(unittest.TestCase):
         build_image(ROOT, cls.destination)
         logs = cls.work / "shared-good"
         cls.output = boot_image(cls.destination / "rynoros.img", logs, timeout=60)
+        cls.boot = elf_boot_layout(cls.destination / "rynorkernel.elf")
         summary = __import__("json").loads((logs / "run.json").read_text(encoding="utf-8"))
         assert summary["reaped"], summary
 
@@ -53,7 +55,7 @@ class UserspaceIntegrationTests(unittest.TestCase):
         self.assertEqual(validate(parse_serial(self.output)), [])
 
     def test_boot_output_accepts_user_section(self):
-        self.assertEqual(validate_boot_output(self.output), [])
+        self.assertEqual(validate_boot_output(self.output, boot=self.boot), [])
 
     def test_exit_and_yield_rows_exact(self):
         evidence = parse_serial(self.output)
@@ -80,7 +82,7 @@ class UserspaceIntegrationTests(unittest.TestCase):
         f14 = [(e, rip, cr2) for _, v, e, rip, cr2 in evidence.faults
                if v == 14]
         self.assertEqual([c for _, _, c in f14[:5]],
-                         [0x8000, 0xFFFFFFFF80000000, 0x400000,
+                         [0x800000, 0xFFFFFFFF80000000, 0x400000,
                           0x600000, 0x0])
         self.assertEqual((f14[8][1], f14[8][2]), (0x7FF000, 0x7FF000))
         # Supervisor-violation rows carry link addresses the host cannot
@@ -270,18 +272,18 @@ class UserspaceIntegrationTests(unittest.TestCase):
     def test_completion_requires_verified_marker(self):
         # Lock in the completion-race fix: a fully valid transcript is
         # complete if and only if the final marker is present.
-        self.assertTrue(boot_complete(self.output))
+        self.assertTrue(boot_complete(self.output, boot=self.boot))
         stripped = self.output.replace(b"[USER] user verified\r\n", b"")
         self.assertNotIn(b"[USER] user verified", stripped)
-        self.assertFalse(boot_complete(stripped))
+        self.assertFalse(boot_complete(stripped, boot=self.boot))
 
     def test_completion_rejects_partial_userspace(self):
         # Shell-complete with a started-but-unfinished userspace section
         # (the old premature-success window) is not completion.
         head, sep, _ = self.output.partition(b"[USER] self-test started\r\n")
         self.assertTrue(sep)
-        partial = head + sep + b"[USER] create slot=0 code_size=14 tables=6\r\n"
-        self.assertFalse(boot_complete(partial))
+        partial = head + sep + b"[USER] create slot=0 code_size=14 tables=7\r\n"
+        self.assertFalse(boot_complete(partial, boot=self.boot))
 
     def test_completion_rejects_shell_only_boot(self):
         # Shell-complete with no userspace section at all: valid prefix,
@@ -289,7 +291,7 @@ class UserspaceIntegrationTests(unittest.TestCase):
         from shell_output import SHELL_END
         head, sep, _ = self.output.partition(SHELL_END)
         self.assertTrue(sep)
-        self.assertFalse(boot_complete(head + sep))
+        self.assertFalse(boot_complete(head + sep, boot=self.boot))
 
 
 if __name__ == "__main__":

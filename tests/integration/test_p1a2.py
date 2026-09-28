@@ -6,8 +6,8 @@ cores -- fault injection, unmounted mappings, kernel-buffer checks,
 content, and reboot legs. The full create/write error matrix, binary
 and multi-write coverage, relocation, adversarial probes, and the
 shell echo-redirect path run through the real gate in CPL3 probe and
-shell tests below (image bytes are free; kernel bytes share the
-0x70000 link budget).
+shell tests below (image bytes are free; the kernel loads high
+under BOOT-A1 with a 16 MiB memory budget, not the old link window).
 """
 import sys
 import unittest

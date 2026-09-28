@@ -1,13 +1,11 @@
 ; Original RynorOS BIOS hard-disk bootstrap. NASM flat binary, exactly 512 bytes.
+; BOOT-A1: the sector loads a fixed BOOT_SECTORS boot part only; kernel
+; size never affects this sector again. The boot part reads the header
+; sector and chunk-loads the kernel file itself.
 bits 16
 org 0x7c00
 
-%ifndef PAYLOAD_SECTORS
-    %error "PAYLOAD_SECTORS must be supplied by the image builder"
-%endif
-%if PAYLOAD_SECTORS < 1 || PAYLOAD_SECTORS > 832
-    %error "payload must fit physical 0x8000..0x70000"
-%endif
+BOOT_SECTORS equ 8
 
     jmp 0:start
 start:
@@ -45,6 +43,7 @@ start:
     dec word [remaining]
     jnz .read_sector
     cli
+    mov dl, [boot_drive]        ; BIOS may clobber DL; pass it explicitly.
     jmp 0:0x8000                ; Linked boot transition, not an ELF loader.
 
 disk_error:
@@ -91,9 +90,9 @@ packet:
     db 16, 0
     dw 1
     dw 0, 0x0800                ; Destination 0800:0000 = physical 0x8000.
-    dq 1                        ; Payload starts at disk sector 1.
+    dq 1                        ; Boot part starts at disk sector 1.
 boot_drive: db 0
-remaining: dw PAYLOAD_SECTORS
+remaining: dw BOOT_SECTORS
 error_text: db 'Rynor boot: BIOS disk read failed.', 13, 10, 0
 times 510 - ($ - $$) db 0
 dw 0xaa55

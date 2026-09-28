@@ -60,17 +60,33 @@ enum pmm_result pmm_initialize(const struct boot_memory_map *map, unsigned int b
         {(cpu_u64)__fb_info_start, (cpu_u64)__fb_info_end},
         {(cpu_u64)__boot_stack_start, (cpu_u64)__boot_stack_end},
         {(cpu_u64)__boot_sector_start, (cpu_u64)__boot_sector_end},
-        {(cpu_u64)__kernel_start, (cpu_u64)__kernel_end},
+        {(cpu_u64)__boot_start, (cpu_u64)__boot_end},
         {(cpu_u64)__kernel_stack_start, (cpu_u64)__kernel_stack_end},
     };
     for (unsigned int i = 0; i < sizeof(owned) / sizeof(owned[0]); ++i)
         if (owned[i][0] >= owned[i][1] || owned[i][1] > 0x100000 ||
             !originally_usable(owned[i][0], owned[i][1])) return PMM_BAD_LAYOUT;
+    /* The kernel image itself lives high (BOOT-A1); it must be E820-usable
+       and is reserved separately below, never folded into the low rule. */
+    if ((cpu_u64)__boot_end - (cpu_u64)__boot_start != (cpu_u64)__boot_file_size)
+        return PMM_BAD_LAYOUT;
+    const cpu_u64 kernel_start = (cpu_u64)__kernel_start;
+    const cpu_u64 payload_end = (cpu_u64)__payload_end;
+    const cpu_u64 kernel_end = (cpu_u64)__kernel_end;
+    const cpu_u64 kernel_rounded = (kernel_end + PMM_PAGE_SIZE - 1) & ~(PMM_PAGE_SIZE - 1);
+    if (kernel_start != (cpu_u64)__kernel_phys_base || kernel_start >= kernel_end ||
+        kernel_rounded < kernel_end ||
+        kernel_end - kernel_start > (cpu_u64)__kernel_mem_max ||
+        kernel_rounded - kernel_start > (cpu_u64)__kernel_mem_max ||
+        payload_end <= kernel_start || payload_end > kernel_end ||
+        payload_end - kernel_start > (cpu_u64)__kernel_file_max ||
+        !originally_usable(kernel_start, kernel_rounded)) return PMM_BAD_LAYOUT;
     stats = (struct pmm_statistics){0};
     for (unsigned int i = 0; i < region_count; ++i)
         if (regions[i].kind == PMM_USABLE)
             stats.firmware_usable_bytes += regions[i].end - regions[i].base;
     if (!reserve(0, 0x100000, PMM_BOOT_RESERVED)) return PMM_BAD_MAP;
+    if (!reserve(kernel_start, kernel_rounded, PMM_BOOT_RESERVED)) return PMM_BAD_MAP;
 
     cpu_u64 candidate_frames = 0;
     for (unsigned int i = 0; i < region_count; ++i)

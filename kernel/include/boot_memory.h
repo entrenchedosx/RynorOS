@@ -37,6 +37,9 @@ extern char __fb_info_start[], __fb_info_end[];
 extern char __page_tables_start[], __page_tables_end[];
 extern char __boot_stack_start[], __boot_stack_end[];
 extern char __boot_sector_start[], __boot_sector_end[];
+extern char __boot_start[], __boot_end[];
 extern char __kernel_start[], __kernel_end[], __payload_end[];
+extern char __kernel_phys_base[], __boot_file_size[];
+extern char __kernel_file_max[], __kernel_mem_max[];
 extern char __kernel_stack_start[], __kernel_stack_end[], __identity_limit[];
 #endif

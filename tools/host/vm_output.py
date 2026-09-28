@@ -4,9 +4,18 @@ import re
 VM_END = b"[TEST] VM self-test passed\r\n"
 
 
-def parse_vm_output(output: bytes, pmm: dict | None = None) -> dict:
+def parse_vm_output(output: bytes, pmm: dict | None = None, boot: dict | None = None) -> dict:
     if len(output) > 12000:
         raise ValueError("VM output too large")
+    if boot is None:
+        boot = {"kernel_start": 0x800000, "kernel_end": 0xA00000, "vm_tables": 8}
+    if (not {"kernel_start", "kernel_end", "vm_tables"} <= set(boot) or
+            any(type(v) is not int or isinstance(v, bool) for v in boot.values()) or
+            boot["kernel_start"] != 0x800000 or
+            not boot["kernel_start"] < boot["kernel_end"] <= 0x1800000 or
+            boot["kernel_end"] % 4096 or
+            boot["vm_tables"] != 7 + (boot["kernel_end"] - 0x800000 + 0x1FFFFF) // 0x200000):
+        raise ValueError("VM boot layout invalid")
     lines = iter(output.decode("ascii").splitlines(keepends=True))
     values = {}
 
@@ -30,7 +39,7 @@ def parse_vm_output(output: bytes, pmm: dict | None = None) -> dict:
     exact("[VM] kernel mappings verified")
     exact("[TEST] VM self-test started")
     va, physical, offset = numeric(r"\[VM\] mapping va=(\d+) physical=(\d+) offset_physical=(\d+)")
-    if tables != 7 or va != 0x40000000 or not physical or not root or physical % 4096 or root % 4096 or root == physical or offset != physical + 4088:
+    if tables != boot["vm_tables"] or va != 0x40000000 or not physical or not root or physical % 4096 or root % 4096 or root == physical or offset != physical + 4088:
         raise ValueError("VM invalid root/mapping/translation")
     exact("[TEST] VM mapping verified")
     exact("[TEST] VM invalid mappings rejected")
@@ -43,7 +52,7 @@ def parse_vm_output(output: bytes, pmm: dict | None = None) -> dict:
         if not match:
             raise ValueError("VM missing hardware fault state")
         address, actual, rip = (int(n, 16) for n in match.groups())
-        if address != va or actual != error or (rip != va if error == 17 else not 0x8000 <= rip < 0x70000):
+        if address != va or actual != error or (rip != va if error == 17 else not boot["kernel_start"] <= rip < boot["kernel_end"]):
             raise ValueError("VM fault address/error/RIP mismatch")
         exact(f"[VM] present={error & 1} write={(error >> 1) & 1} user=0 reserved=0 fetch={(error >> 4) & 1} cpl=0")
         exact("[VM] page fault action=resume_test")
@@ -71,9 +80,9 @@ def parse_vm_output(output: bytes, pmm: dict | None = None) -> dict:
     return values
 
 
-def validate_vm_output(output: bytes, pmm: dict | None = None) -> list[str]:
+def validate_vm_output(output: bytes, pmm: dict | None = None, boot: dict | None = None) -> list[str]:
     try:
-        parse_vm_output(output, pmm)
+        parse_vm_output(output, pmm, boot)
         return []
     except (ValueError, UnicodeDecodeError) as error:
         return [str(error)]

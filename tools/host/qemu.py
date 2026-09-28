@@ -25,6 +25,7 @@ from sh_output import terminal_stream as sh_stream
 from display_output import DISPLAY_END, DISPLAY_START, parse_display_output, verify_display_pixels, verify_display_scanout
 from shell_output import SHELL_END, SHELL_KEYS, SCANS as SHELL_SCANS
 from kernel_elf import read_symbols
+from boot_layout import elf_boot_layout
 from runtime_output import verify_runtime_memory, verify_runtime_trace
 
 
@@ -42,7 +43,7 @@ def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
                    require_shell: bool = False, shell_script=(),
                    require_input: bool = False, require_proc: bool = False,
                    require_pipe: bool = False, require_sh: bool = False,
-                   sh_done: bytes | None = None) -> bool:
+                   sh_done: bytes | None = None, boot: dict | None = None) -> bool:
     """Pure completion predicate for the boot loop (unit-testable).
 
     Defaults mirror boot_image's non-interactive path. A normal
@@ -54,7 +55,7 @@ def boot_complete(observed: bytes, test_vector: int = 3, keys=KEYS,
     """
     if validate_boot_output(observed, test_vector, key_sequence(keys),
                             require_shell=require_shell,
-                            shell_script=shell_script):
+                            shell_script=shell_script, boot=boot):
         return False
     if test_vector != 3:
         return True
@@ -264,7 +265,18 @@ def _capture_display_evidence(process, observed: bytes, logs: Path, deadline: fl
     display_section, sep, _ = display_section.partition(DISPLAY_END)
     if sep == b"":
         raise ValueError("Display framebuffer section incomplete")
-    display = parse_display_output(DISPLAY_START + display_section + DISPLAY_END)
+    # Capture runs only after the whole transcript passed strict
+    # validation, so the keyboard baseline below is already-proven
+    # data; without it the parse falls back to the stock table
+    # count and rejects every oversized kernel here.
+    match = re.search(rb"\[KBD\] final allocated_bytes=(\d+) free_bytes=(\d+) "
+                      rb"table_pages=(\d+)\r\n", observed)
+    if match is None:
+        raise ValueError("Display evidence missing keyboard baseline")
+    baseline = {"allocated": int(match.group(1)), "free": int(match.group(2)),
+                "tables": int(match.group(3))}
+    display = parse_display_output(DISPLAY_START + display_section + DISPLAY_END,
+                                   baseline)
     if process.stdin is None:
         raise RuntimeError("QEMU monitor input is unavailable for framebuffer dump")
     path = (logs / "display.pmem").resolve()
@@ -299,7 +311,7 @@ def _capture_runtime_evidence(process, image, logs, deadline):
     symbols = read_symbols(image.with_name('rynorkernel.elf'), names)
     address, size = symbols['runtime_evidence']
     low, high = symbols['__kernel_start'][0], symbols['__kernel_end'][0]
-    if size != 7 * 9 * 8 or not low <= address < address + size <= high <= 0x70000:
+    if size != 7 * 9 * 8 or not low <= address < address + size <= high <= 0x1800000:
         raise ValueError('runtime execution evidence: invalid ELF memory extent')
     path = (logs / 'runtime.pmem').resolve()
     path.unlink(missing_ok=True)
@@ -349,6 +361,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     for _evidence in ("display.pmem", "display.ppm", "runtime.pmem"):
         (logs / _evidence).unlink(missing_ok=True)
     keys = key_sequence(keys)
+    sibling_elf = image.with_name("rynorkernel.elf")
+    boot = elf_boot_layout(sibling_elf) if sibling_elf.is_file() else None
     if shell_keys is not None and not shell_interactive:
         raise ValueError("shell_keys requires shell_interactive")
     shell_keys = tuple(SHELL_KEYS if shell_keys is None else shell_keys) if shell_interactive else ()
@@ -486,7 +500,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                 if b"[SHELL] " in observed:
                     early_errors = validate_boot_output(observed, test_vector, keys,
                                                         require_shell=shell_interactive,
-                                                        shell_script=shell_keys)
+                                                        shell_script=shell_keys, boot=boot)
                     if early_errors and any("mismatch" in e for e in early_errors):
                         failure = "; ".join(early_errors)
                         break
@@ -503,7 +517,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                  require_proc=require_proc,
                                  require_pipe=require_pipe,
                                  require_sh=require_sh,
-                                 sh_done=sh_done):
+                                 sh_done=sh_done, boot=boot):
                     # The input stream is sized for worst-case retries; only
                     # consumed keys are asserted (by the input validator from
                     # transcript markers), so leftover tuple entries are fine.
@@ -526,7 +540,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                            "; ".join(validate_boot_output(
                                observed, test_vector, keys,
                                require_shell=shell_interactive,
-                               shell_script=shell_keys)))
+                               shell_script=shell_keys, boot=boot)))
         finally:
             # HMP quit gives QEMU a normal shutdown; terminate/kill are bounded
             # fallbacks only. Always reap this exact child, never other QEMU PIDs.
@@ -567,7 +581,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     observed = serial.read_bytes()
     errors = validate_boot_output(observed, test_vector, keys,
                                   require_shell=shell_interactive,
-                                  shell_script=shell_keys)
+                                  shell_script=shell_keys, boot=boot)
     if test_vector == 3 and KBD_END in observed and not errors:
         trace = debug.read_text(encoding="utf-8", errors="replace")
         try:
@@ -590,7 +604,8 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
         # well-formed section with wrong numbers (vectors, ticks,
         # counts) must fail the boot itself, not a later separate
         # check. Evidence failures join (never replace) earlier ones.
-        user_errors = validate_user_evidence(parse_user_serial(observed))
+        user_errors = validate_user_evidence(parse_user_serial(observed),
+                                              boot["user_tables"] if boot else 7)
         if user_errors:
             failure = "userspace evidence: " + "; ".join(user_errors)
     if failure:

@@ -20,7 +20,7 @@ class KbdOutputTests(unittest.TestCase):
                         (b"dropped=0",b"dropped=1"),(b"irqs=17",b"irqs=16"),
                         (b"worker_runs=5000",b"worker_runs=0"),(b"errors=0",b"errors=1")):
             self.assertTrue(validate_kbd_output(KBD_GOOD.replace(old,new)))
-        previous=dict(allocated=106496,free=942080,tables=10)
+        previous=dict(allocated=110592,free=937984,tables=11)
         self.assertTrue(validate_kbd_output(KBD_GOOD,previous=previous))
     def test_missing_completion_and_start(self):
         for token in (KBD_START,KBD_END):

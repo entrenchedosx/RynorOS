@@ -116,9 +116,17 @@ void vm_self_test(void)
     if (result != VM_OK) { field("[VM] init_error=", result); text("\r\n"); }
     require(result == VM_OK, "initialization");
     struct vm_space *k = vm_kernel_space();
+    /* BOOT-A1: seven fixed tables plus one PT per touched 2 MiB region
+       of the high kernel image; the host recomputes this from the ELF. */
+    cpu_u64 kend_2m = ((cpu_u64)__kernel_end + 0x1FFFFFULL) & ~0x1FFFFFULL;
+    require((cpu_u64)__kernel_start == (cpu_u64)__kernel_phys_base &&
+            kend_2m > (cpu_u64)__kernel_start &&
+            kend_2m - (cpu_u64)__kernel_start <= (cpu_u64)__kernel_mem_max, "boot_extent");
+    const unsigned int boot_tables =
+        7 + (unsigned int)((kend_2m - (cpu_u64)__kernel_start) / 0x200000ULL);
     text("[VM] paging subsystem initialized\r\n[VM] kernel address space created\r\n[VM] CR3 loaded\r\n");
     field("[VM] root=", k->root); field(" table_pages=", k->table_pages); text("\r\n");
-    require(pmm_statistics(&baseline) == PMM_OK && k->table_pages == 7 &&
+    require(pmm_statistics(&baseline) == PMM_OK && k->table_pages == boot_tables &&
             baseline.allocated_bytes == initial.allocated_bytes + k->table_pages * VM_PAGE_SIZE &&
             vm_initialize() == VM_BUSY && vm_destroy(k) == VM_BUSY, "table_ownership");
     struct vm_mapping m;
@@ -237,7 +245,7 @@ void vm_self_test(void)
     for (unsigned int i = 0; i < 3; ++i) require(pmm_release(data[i]) == PMM_OK, "data_release");
     require(vm_check(k) && pmm_check() && pmm_statistics(&final) == PMM_OK &&
             final.free_bytes == baseline.free_bytes && final.allocated_bytes == baseline.allocated_bytes &&
-            k->table_pages == 7, "final_vm_accounting");
+            k->table_pages == boot_tables, "final_vm_accounting");
     field("[VM] final table_pages=", k->table_pages); field(" allocated_bytes=", final.allocated_bytes);
     field(" free_bytes=", final.free_bytes); text("\r\n[TEST] VM self-test passed\r\n");
 }

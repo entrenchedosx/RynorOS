@@ -76,7 +76,7 @@ class DisplayTests(unittest.TestCase):
         parsed = parse_display_output(self.section(output))
         self.assertEqual((parsed["width"], parsed["height"], parsed["pitch"], parsed["bpp"]),
                          (1024, 768, 4096, 32))
-        self.assertEqual(parsed["tables"], 14)
+        self.assertEqual(parsed["tables"], 15)
         self.assertIn(POST_IRQ, output)
         dump = logs / "display.pmem"
         self.assertEqual(dump.stat().st_size, parsed["fb_bytes"])
@@ -154,15 +154,27 @@ class DisplayTests(unittest.TestCase):
 
     def test_canned_success_output_cannot_prove_hardware(self):
         from display_output import DISPLAY_GOOD
-        # The real 64 MiB keyboard baseline free is 65818624; the display adds
-        # 16384 bytes. Correct the canned accounting so the display section
-        # alone passes boot validation.
-        canned = (DISPLAY_GOOD.replace(b"free_bytes=921600", b"free_bytes=65802240")
-                  .decode("ascii"))
+        # The forgery must be transcript-perfect: hardcoded numbers fail the
+        # accounting chain instead of reaching the hardware gates. Snapshot
+        # the live keyboard baseline at display time (nothing is allocated
+        # between the two stages) and add the pinned-geometry framebuffer
+        # delta (768 pages need 4 tables). No mapping happens, so only the
+        # independent pixel/runtime evidence can reject this.
+        head = DISPLAY_GOOD.partition(b"[FB] final")[0].decode("ascii")
+        injected = ("void display_self_test(void)\n{\n{\n"
+                    "    struct pmm_statistics before;\n"
+                    '    require(pmm_statistics(&before)==PMM_OK,"statistics");\n'
+                    "    cpu_u64 tables=vm_kernel_space()->table_pages;\n"
+                    "    text(" + json.dumps(head) + ");\n"
+                    '    field("[FB] final allocated_bytes=",before.allocated_bytes+16384u);\n'
+                    '    field(" free_bytes=",before.free_bytes-16384u);\n'
+                    '    field(" table_pages=",tables+4u);\n'
+                    '    text("\\r\\n[TEST] framebuffer api verified\\r\\n");\n'
+                    '    require(serial_flush(),"flush_final");\n'
+                    "    return;\n}\n")
         root = self.mutate(self.build_fixture(),
                            "kernel/drivers/display-test.c",
-                           [("void display_self_test(void)\n{\n",
-                             "void display_self_test(void)\n{\n    text(" + json.dumps(canned) + "); return;\n")])
+                           [("void display_self_test(void)\n{\n", injected)])
         build_image(root)
         logs = ROOT / "build/fb-tests" / self._testMethodName
         try:
