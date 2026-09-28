@@ -187,7 +187,6 @@ capabilities, SR-IOV, interrupt routing. BAR entry/device bounds
 The flat BIOS window (`0x8000-0x70000`) held only 3,687 bytes of
 slack at P1-A3. PCI-A1 (~20KB text/rodata/BSS) fits only because
 test-only TUs now compile `-Os` (freed ~37KB; every self-test
-re-verified under `-Os` by the full QEMU suites). Remaining slack
-after PCI-A1: ~20KB and falling. The next memory-hungry slice
-(DMA buffers, driver heaps) must either keep the diet or move BSS
-above the window (entry-path mapping work).
+re-verified under `-Os` by the full QEMU suites). BOOT-A1 removed
+this window: the kernel loads high with an 8 MiB file / 16 MiB memory
+budget (see `boot.md`), so later slices size against that instead.

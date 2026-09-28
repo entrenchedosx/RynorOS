@@ -59,7 +59,8 @@ REPOSITORY_TEST_INVENTORY = {
     "test_dma_abi": 9,
 }
 INTEGRATION_TEST_INVENTORY = {
-    "test_audit": 5, "test_boot": 14, "test_display": 31, "test_heap": 5,
+    "test_audit": 5, "test_boot": 14, "test_boot_matrix": 4, "test_boot_mutants": 12,
+    "test_display": 31, "test_heap": 5,
     "test_keyboard": 26, "test_pmm": 7, "test_runtime": 35,
     "test_scheduler": 23, "test_shell": 9, "test_vm": 8,
     "test_storage": 10, "test_filesystem": 19, "test_userspace": 18,

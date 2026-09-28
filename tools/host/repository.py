@@ -58,6 +58,7 @@ REQUIRED_FILES = (
     "kernel/arch/x86_64/serial.c", "kernel/arch/x86_64/linker.ld",
     "kernel/core/main.c", "kernel/include/serial.h", "tools/host/image.py",
     "tools/host/qemu.py", "tests/repository/test_image.py", "tests/integration/test_boot.py",
+    "tests/integration/test_boot_matrix.py", "tests/integration/test_boot_mutants.py",
     "kernel/include/cpu.h", "kernel/arch/x86_64/cpu.c", "kernel/arch/x86_64/descriptors.asm",
     "kernel/arch/x86_64/exceptions.asm", "kernel/arch/x86_64/selftest.asm",
     "kernel/interrupts/exceptions.c", "tools/host/exception_output.py",

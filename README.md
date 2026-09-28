@@ -88,7 +88,7 @@ This is an explicit bounded test boot, not an interactive session or uptime serv
 
 PIT configuration is 1193182/11932 Hz (about 99.99849 Hz); serviced IRQs are not
 a wall-clock guarantee. Final retained memory in the normal display configuration
-is fourteen page-table frames plus sixteen heap frames: 122880 allocated bytes.
+is fifteen page-table frames plus sixteen heap frames: 126976 allocated bytes.
 The extra four table pages map foreign device VRAM, not PMM RAM. Worker stack frames and their
 temporary table branch are reclaimed after join.
 
@@ -121,8 +121,8 @@ comparisons and byte-identical rebuilds. `check` runs build and both suites.
 Artifacts under ignored `build/`: `boot.bin`, `rynorkernel.bin`,
 `rynorkernel.elf`, `rynoros.img`, `rynoros-resources.zip` and
 `build-manifest.json`. Logs include serial transcripts and owned-QEMU cleanup
-records. The reviewed inventory contains 1083 repository and 440 integration test
-methods (Stage 18d Slices A/B: input path + syscall substrate; Slice C: processes + loader; Slice D: files + pipes; Slice E: CPL3 shell + scripts; Slice F: resident evaluator; Slice G: len builtin; Stage 19 selfhost emit split; P1-A1/A2/A3: durable CPL3 file create/write/stat/enumerate/unlink; PCI-A1: PCI discovery + BAR resources). The build command checks exact per-module participation before discovery. Exact commands and evidence are in the
+records. The reviewed inventory contains 1100 repository and 474 integration test
+methods (Stage 18d Slices A/B: input path + syscall substrate; Slice C: processes + loader; Slice D: files + pipes; Slice E: CPL3 shell + scripts; Slice F: resident evaluator; Slice G: len builtin; Stage 19 selfhost emit split; P1-A1/A2/A3: durable CPL3 file create/write/stat/enumerate/unlink; PCI-A1: PCI discovery + BAR resources; BOOT-A1: 8 MiB high-load kernel + oversized matrix + loader mutants). The build command checks exact per-module participation before discovery. Exact commands and evidence are in the
 [forensic stabilization report](docs/reports/forensic-stabilization-final.md), [Stage 16 report](docs/reports/stage16.md), [Stage 15b report](docs/reports/stage15b.md), [Stage 15a report](docs/reports/stage15a.md), [Stage 14 report](docs/reports/stage14.md), [Stage 13 report](docs/reports/stage13.md) and [Stage 10 independent audit](docs/reports/stage10-audit.md); test counts alone are not correctness.
 Display evidence is retained as `display.pmem` and `display.ppm` beside each
 successful normal boot's serial log; this is emulator, not physical-hardware evidence.
