@@ -820,7 +820,7 @@ class RlEvalTests(unittest.TestCase):
              "E-CMD", None, "DOCUMENTED"),
             ('take "hello" 2', False, "SHELL_UNKNOWN_COMMAND", False,
              "E-CMD", None, "DOCUMENTED"),
-            ('upper "a" > "f"', True, None, False, "E-SYNTAX", None,
+            ('upper "a" > "f"', True, None, False, "E-CMD", None,
              "DOCUMENTED"),
             ("echo a b", False, "SEM_UNDECLARED", True, "E-CMD",
              None, "DOCUMENTED"),
@@ -837,7 +837,8 @@ class RlEvalTests(unittest.TestCase):
         self.assertEqual(validate_sh_section(out), [])
         dones = collect_done_statuses(out)
         # upper(empty ok), echo ok, cat ok, ls 127, frobnicate 127,
-        # take 127, redirect syntax 2, echo-ok, upper-ok, nope 127.
+        # take 127, redirect rejected 2 (non-echo `>` is `[SH] error
+        # redirect`, not a parse error), echo-ok, upper-ok, nope 127.
         self.assertEqual(dones, [0, 0, 0, 127, 127, 127, 2, 0, 0, 127,
                                  0])
         self._check_fixtures(out, fx)

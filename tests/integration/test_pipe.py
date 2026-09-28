@@ -301,9 +301,15 @@ class PipeIntegrationTests(unittest.TestCase):
         self._mutant("user-path", [
             ("kernel/core/load.c",
              "    fread_path[path_len] = 0;\n"
-             "    if (!fs_path_ok((const char *)fread_path)) return SYS_BADARG;",
+             "    if (!fs_path_ok((const char *)fread_path)) return SYS_BADARG;\n"
+             "    /* Output capability before any filesystem operation (A3: a hostile\n"
+             "       destination must fail here, never after state moves). The data\n"
+             "       buffer is untouched on zero-length calls. */",
              "    (void)fread_path;\n"
-             "    if (!fs_path_ok((const char *)path_ptr)) return SYS_BADARG;",
+             "    if (!fs_path_ok((const char *)path_ptr)) return SYS_BADARG;\n"
+             "    /* Output capability before any filesystem operation (A3: a hostile\n"
+             "       destination must fail here, never after state moves). The data\n"
+             "       buffer is untouched on zero-length calls. */",
              1),
             ("kernel/core/load.c",
              "        int rc = kern_fread((const char *)fread_path, offset, read_stage,\n"

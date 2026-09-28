@@ -311,7 +311,13 @@ def _capture_runtime_evidence(process, image, logs, deadline):
             verify_runtime_memory(path.read_bytes(), symbols['__runtime_service_start'][0],
                                   symbols['__runtime_service_end'][0])
             trace = logs / 'guest-errors.log'
-            if trace.stat().st_size > 32 * 1024 * 1024:
+            # 64 MiB storm guard (was 32 MiB from Stage 10): the longest
+            # shell sessions structurally emit ~34 MiB (~26K int events
+            # at ~1.3 KiB of -d int dump each; measured identical at
+            # HEAD and under BOOT-A1), so 32 MiB reds legitimate
+            # completing guests. Real interrupt storms are GB-scale
+            # and still trip this bound immediately.
+            if trace.stat().st_size > 64 * 1024 * 1024:
                 raise ValueError('runtime execution evidence: CPU trace oversized')
             verify_runtime_trace(path.read_bytes(), trace.read_text(encoding='ascii', errors='replace'),
                                  symbols['__runtime_service_start'][0], symbols['__runtime_service_end'][0])
