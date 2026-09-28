@@ -17,6 +17,13 @@ struct kbd_statistics {
    remains PIC-masked. No implicit retry with a partly configured device. */
 int kbd_initialize(void);
 const char *kbd_init_error(void);
+/* Re-enable IRQ1 after a masked window (READY, foreground IF=0 only).
+   Unmasks, then queues any bytes asserted while masked through the
+   ISR's exact classification; without this, a stale 8042 byte latches
+   the level-high line and IRQ1 goes silent (the IOAPIC drops masked
+   edges). All IRQ1 re-enables must go through here, never raw
+   irq_set_enabled(1, 1). */
+int kbd_enable(void);
 enum kbd_result kbd_poll(struct kbd_event *out);
 int kbd_statistics(struct kbd_statistics *out);
 /* Stage 18d Slice A: consume one raw scan byte for CPL3 delivery.

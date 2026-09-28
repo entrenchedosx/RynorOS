@@ -12,6 +12,7 @@ from kbd_output import KBD_GOOD
 from display_output import DISPLAY_GOOD
 from runtime_output import RUNTIME_GOOD
 from boot_output import validate_boot_output, POST_IRQ
+from apic_output import APIC_GOOD
 from test_exception_output import parser_fixture
 from test_pmm_output import fixture as pmm_fixture
 from test_vm_output import fixture as vm_fixture
@@ -33,7 +34,7 @@ def sched_and_kbd():
 
 class TimerOutputTests(unittest.TestCase):
     def test_complete_transcript(self):
-        self.assertEqual(validate_boot_output(complete_transcript()), [])
+        self.assertEqual(validate_boot_output(complete_transcript() + APIC_GOOD), [])
 
     def test_every_timer_line_required(self):
         for line in TIMER_OUTPUT.splitlines(keepends=True):

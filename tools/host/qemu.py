@@ -488,7 +488,9 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                                            b"[PIPE] failure=",
                                                            b"[SHD] failure=",
                                                            b"[PCI] failure=",
-                                                           b"[DMA] failure="))), None)
+                                                           b"[DMA] failure=",
+                                                           b"[APIC] failure=",
+                                                           b"[ACPI] failure="))), None)
                 if driver_failure is not None:
                     failure = driver_failure.decode('ascii', errors='replace')
                     break

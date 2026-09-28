@@ -107,6 +107,7 @@ def build_image(root: Path, destination: Path | None = None, *,
         "kernel/core/proc-test.c", "kernel/core/pipe-test.c",
         "kernel/mm/selftest.c", "kernel/mm/vm-test.c",
         "kernel/mm/heap-test.c", "kernel/mm/dma-test.c",
+        "kernel/interrupts/apic-test.c", "kernel/acpi/acpi-test.c",
     })
     if version != "0.1.0":
         raise ValueError("Unexpected boot banner version; update metadata and boot tests together")
@@ -170,6 +171,10 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/arch/x86_64/cpu.c", "cpu.o"),
             ("kernel/interrupts/exceptions.c", "exception-diagnostics.o"),
             ("kernel/interrupts/irq.c", "irq.o"),
+            ("kernel/interrupts/apic.c", "apic.o"),
+            ("kernel/interrupts/apic-test.c", "apic-test.o"),
+            ("kernel/acpi/acpi.c", "acpi.o"),
+            ("kernel/acpi/acpi-test.c", "acpi-test.o"),
             ("kernel/arch/x86_64/pic.c", "pic.o"),
             ("kernel/arch/x86_64/timer.c", "timer.o"),
             ("kernel/mm/map.c", "memory-map.o"),

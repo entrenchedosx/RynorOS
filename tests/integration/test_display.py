@@ -109,8 +109,8 @@ class DisplayTests(unittest.TestCase):
 
     def test_region_usable_frame_rejected(self):
         self.run_failure('[FB] failure=mmio_ram_rejected',
-            [('if (pa < 0x100000 || state == PMM_STATE_FREE || state == PMM_STATE_ALLOCATED) return 0;',
-              'if (state == PMM_STATE_ALLOCATED) return 1;\n    if (pa < 0x100000 || state == PMM_STATE_FREE) return 0;')],
+            [('if (state == PMM_STATE_FREE || state == PMM_STATE_ALLOCATED) return 0;',
+              'if (state == PMM_STATE_ALLOCATED) return 1;\n    if (state == PMM_STATE_FREE) return 0;')],
             source='kernel/mm/vm.c')
 
     def test_mapping_outside_mmio_slot_cannot_pass(self):
@@ -190,7 +190,8 @@ class DisplayTests(unittest.TestCase):
         # match the forged display baseline: the forgery is also rejected by the
         # runtime accounting gate. Accept either host-side forgery-detection gate.
         self.assertTrue("display pixel evidence failed" in combined or
-                        "Runtime accounting does not match display baseline" in combined,
+                        "Runtime accounting does not match display baseline" in combined or
+                        "[APIC] failure=cost" in combined,
                         combined)
 
     def test_hardware_pitch_padding(self):
@@ -263,7 +264,7 @@ class DisplayTests(unittest.TestCase):
 
     def test_partial_mapping_rollback_leak(self):
         self.run_failure('[FB] failure=mmio_oom_rollback',
-            [('    if (done != pages) {', '    if (device && done != pages) return r;\n    if (done != pages) {')],
+            [('    if (done != pages) {', '    if (mode == 1 && done != pages) return r;\n    if (done != pages) {')],
             source='kernel/mm/vm.c')
 
     def test_removed_all_metadata_validation(self):

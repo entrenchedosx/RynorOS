@@ -497,12 +497,13 @@ int user_check(void)
     if (idtr.base != cpu_idt_base()) return 0;
     const struct { cpu_u16 lo, sel; cpu_u8 ist, attr; cpu_u16 mid; cpu_u32 hi, res; }
         *gates = (const void *)idtr.base;
-    /* Every CPL3-callable gate must be intentional: 0..47 stay DPL0
-       kernel gates, only 128 is DPL3, everything else non-present. A
-       flipped DPL would let user code invoke a privileged handler
-       (e.g. int $0x0E forging #PF) without #GP. */
+    /* Every CPL3-callable gate must be intentional: 0..127 stay DPL0
+       kernel gates, only 128 is DPL3, 255 is the DPL0 spurious stub,
+       everything else non-present. A flipped DPL would let user code
+       invoke a privileged handler (e.g. int $0x0E forging #PF) without
+       #GP. */
     for (unsigned int v = 0; v < 256; ++v) {
-        if (v < 48) {
+        if (v < 128 || v == 255) {
             if (gates[v].attr != 0x8e || gates[v].sel != CPU_CODE_SELECTOR ||
                 gates[v].ist != 0 || gates[v].res != 0)
                 return 0;

@@ -99,7 +99,8 @@ class FbOutputTests(unittest.TestCase):
         from sched_output import SCHED_GOOD
         before=parser_fixture()+pmm_fixture()+vm_fixture()+heap_fixture()+TIMER_OUTPUT+SCHED_GOOD
         from runtime_output import RUNTIME_GOOD
-        compose=before+KBD_GOOD+DISPLAY_GOOD+RUNTIME_GOOD+POST_IRQ
+        from apic_output import APIC_GOOD
+        compose=before+KBD_GOOD+DISPLAY_GOOD+RUNTIME_GOOD+POST_IRQ+APIC_GOOD
         self.assertEqual(validate_boot_output(compose),[])
         for broken in (before+DISPLAY_GOOD+KBD_GOOD+POST_IRQ, compose.replace(DISPLAY_GOOD,b''),
                        compose.replace(DISPLAY_GOOD,DISPLAY_GOOD*2), compose+DISPLAY_GOOD,

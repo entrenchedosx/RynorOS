@@ -87,13 +87,11 @@ int kbd_decode(struct kbd_decoder *d, cpu_u8 scan, struct kbd_event *out)
     }
 }
 static void increment(cpu_u64 *n) { if (*n == ~0ULL) cpu_halt(); ++*n; }
-static void kbd_isr(void)
+/* Classify one present output byte. Shared by the ISR and the
+   enable-time drain so a stale byte can never take a different path
+   than an IRQ-delivered one. */
+static void deliver_byte(cpu_u8 status, cpu_u8 scan)
 {
-    if (state != READY || !cpu_interrupts_disabled() || !irq_in_context()) cpu_halt();
-    increment(&stats.irqs);
-    cpu_u8 status = io_in8(KBD_CMD);
-    if (!(status & STATUS_OBF)) { increment(&stats.empty_irqs); return; }
-    cpu_u8 scan = io_in8(KBD_DATA);
     increment(&stats.reads);
     if (status & STATUS_AUX) { increment(&stats.auxiliary); return; }
     if (status & STATUS_ERROR) {
@@ -106,6 +104,16 @@ static void kbd_isr(void)
         increment(&stats.errors); increment(&input.epoch); return;
     }
     if (kbd_ring_put(&input, scan) < 0) cpu_halt();
+}
+static void kbd_isr(cpu_u32 vector, void *opaque)
+{
+    (void)opaque;
+    if (vector != IRQ_BASE + 1) cpu_halt();
+    if (state != READY || !cpu_interrupts_disabled() || !irq_in_context()) cpu_halt();
+    increment(&stats.irqs);
+    cpu_u8 status = io_in8(KBD_CMD);
+    if (!(status & STATUS_OBF)) { increment(&stats.empty_irqs); return; }
+    deliver_byte(status, io_in8(KBD_DATA));
     /* IRQ dispatcher owns EOI. No polling, allocation, serial or STI here. */
 }
 enum kbd_result kbd_stream_next(struct kbd_ring *q, struct kbd_decoder *d,
@@ -233,6 +241,28 @@ static int keyboard_command(cpu_u8 value)
     return 0;
 }
 const char *kbd_init_error(void) { return init_error; }
+/* Re-enable IRQ1 delivery, recovering bytes asserted while masked. The
+   8042 raises a LEVEL while its output buffer holds a byte, and an edge
+   asserted while the IOAPIC entry is masked is lost (the IOAPIC, unlike
+   the PIC, does not pend masked edges). Draining before unmasking would
+   still latch: a byte arriving after the last OBF check sits stale, the
+   line is already high at unmask, no edge ever fires, and IRQ1 goes
+   silent forever. So unmask first (every later arrival edges, pending
+   under the caller's IF=0), then queue each stale byte through the
+   ISR's exact classification. Any edge the drain consumed surfaces as
+   a benign empty IRQ once the caller re-enables interrupts; a still-
+   full buffer after the bound is serviced by the now-live ISR. */
+int kbd_enable(void)
+{
+    if (state != READY || !cpu_interrupts_disabled() || irq_in_context()) return 0;
+    if (!irq_set_enabled(1, 1)) return 0;
+    for (unsigned int i = 0; i < FLUSH_LIMIT; ++i) {
+        cpu_u8 status = io_in8(KBD_CMD);
+        if (!(status & STATUS_OBF)) break;
+        deliver_byte(status, io_in8(KBD_DATA));
+    }
+    return 1;
+}
 int kbd_initialize(void)
 {
     if (!cpu_interrupts_disabled() || irq_in_context() || state != OFF) return 0;
@@ -254,9 +284,9 @@ int kbd_initialize(void)
     init_error = "config_readback";
     if (!set_config(CONFIG_RUNNING)) goto fail;
     init_error = "irq_registration";
-    if (!irq_register(1, kbd_isr)) goto fail;
+    if (!irq_register(1, kbd_isr, 0)) goto fail;
     state = READY; /* publish before unmask; IF still zero */
-    if (!irq_set_enabled(1, 1)) goto fail;
+    if (!kbd_enable()) goto fail;
     init_error = "none";
     return 1;
 fail:

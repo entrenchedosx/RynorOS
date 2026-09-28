@@ -4,16 +4,18 @@
 
 #define IRQ_BASE 32
 #define IRQ_COUNT 16
-typedef void (*irq_handler)(void);
+/* Frozen handler convention (INT-A1): vector delivered plus the opaque cookie
+   given at registration. Same convention for legacy ISA and future GSI/MSI. */
+typedef void (*irq_handler)(cpu_u32 vector, void *opaque);
 
 /* Single CPU only. Configuration requires IF=0; IRQ2 is reserved for cascade. */
 int irq_initialize(void);
-int irq_register(unsigned int irq, irq_handler handler);
+int irq_register(unsigned int irq, irq_handler handler, void *opaque);
 int irq_set_enabled(unsigned int irq, int enabled);
 /* Replace the handler installed for an already-registered IRQ (scheduler takes
    over IRQ0 from the one-shot heartbeat). Requires IF=0 and an initialized,
    non-cascade IRQ; never changes the enabled state. */
-int irq_set_handler(unsigned int irq, irq_handler handler);
+int irq_set_handler(unsigned int irq, irq_handler handler, void *opaque);
 int irq_in_context(void);
 /* Dispatch a hardware IRQ and return the frame to resume from. Returns the same
    frame unless the scheduler preempted, in which case it returns a pointer to

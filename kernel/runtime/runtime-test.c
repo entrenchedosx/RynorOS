@@ -206,8 +206,10 @@ volatile struct worker_out runtime_evidence[WORKERS];
 static volatile unsigned int irq_checks, irq_bad;
 extern char __runtime_service_start[], __runtime_service_end[];
 extern void runtime_boundary_tests(void);
-static void runtime_timer(void)
+static void runtime_timer(cpu_u32 vector, void *opaque)
 {
+    (void)opaque;
+    if (vector != IRQ_BASE) irq_bad = 1;
     cpu_u64 len = 123, output = 456;
     for (unsigned int op = 0; op < KRST_OP_COUNT; ++op)
         if (krst_call(op, "ab", 2, &output, 8, &len) != KRST_BAD_CONTEXT ||
@@ -282,7 +284,8 @@ static void thread_integration_tests(void)
     thread_id ids[WORKERS];
     for (unsigned int i = 0; i < WORKERS; ++i) runtime_evidence[i] = (struct worker_out){0};
     irq_checks = 0; irq_bad = 0;
-    require(irq_set_handler(0, runtime_timer) && irq_set_enabled(0, 1), "runtime_timer_start");
+    require(irq_set_handler(0, runtime_timer, 0) && irq_set_enabled(0, 1),
+            "runtime_timer_start");
     for (unsigned int i = 0; i < WORKERS; ++i) {
         if (!thread_create(&ids[i], digester, (void *)(cpu_u64)i)) {
             while (thread_ready_count() > 1) require(thread_yield(), "partial_run");

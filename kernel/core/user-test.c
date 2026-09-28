@@ -283,9 +283,11 @@ static void fault_tests(void)
     text("[USER] faults verified\r\n");
 }
 
-static void user_drive(void)
+static void user_drive(cpu_u32 vector, void *opaque)
 {
+    (void)opaque;
     /* Runs on either CR3: kernel-half statics only, no serial/heap/VM. */
+    require(vector == IRQ_BASE, "drive_vector");
     require(irq_in_context(), "drive_context");
 }
 
@@ -348,7 +350,7 @@ static void preempt_tests(void)
     require(scheduler_statistics(&s0), "preempt_stats0");
     struct thread_statistics bstats0;
     require(thread_statistics(thread_current(), &bstats0), "preempt_bstats0");
-    require(irq_set_handler(0, user_drive) && irq_set_enabled(0, 1), "drive_start");
+    require(irq_set_handler(0, user_drive, 0) && irq_set_enabled(0, 1), "drive_start");
     thread_id wid = 0;
     require(thread_create_with_flags(&wid, worker_main, 0, 0x002), "preempt_worker");
     struct user_context *b = 0;

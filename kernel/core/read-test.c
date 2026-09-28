@@ -107,7 +107,10 @@ static void wait_stream(cpu_u64 n, const char *why)
 }
 static void set_irq(unsigned int irq, int on, const char *why)
 {
-    require(irq_set_enabled(irq, on), why);
+    /* IRQ1 enables recover masked-window bytes (no-op here: the marker
+       protocol never stages while masked, proven by wait-before-mask). */
+    if (irq == 1 && on) require(kbd_enable(), why);
+    else require(irq_set_enabled(irq, on), why);
 }
 
 /* Data-page vector layout for readargs_probe (all u64). */

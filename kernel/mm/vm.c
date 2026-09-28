@@ -251,31 +251,44 @@ enum vm_result vm_translate(struct vm_space *s, cpu_u64 va, cpu_u64 *physical)
 
 /* Frame ownership preflight: normal mappings require PMM-owned data frames;
    device mappings require physical memory the PMM will never hand out again
-   (firmware-reserved or wholly undescribed MMIO), rejecting usable RAM. */
-static int physical_allowed(cpu_u64 pa, int device)
+   (firmware-reserved or wholly undescribed MMIO), rejecting usable RAM.
+   Firmware mappings (ACPI tables) additionally accept the ACPI kinds and the
+   sub-1MB BIOS area, but never usable RAM, the kernel image, or metadata. */
+static int physical_allowed(cpu_u64 pa, int mode)
 {
     enum pmm_state state;
     if (pmm_query(pa, &state) != PMM_OK) return 0;
-    if (!device) return state == PMM_STATE_ALLOCATED;
-    if (pa < 0x100000 || state == PMM_STATE_FREE || state == PMM_STATE_ALLOCATED) return 0;
+    if (!mode) return state == PMM_STATE_ALLOCATED;
+    if (state == PMM_STATE_FREE || state == PMM_STATE_ALLOCATED) return 0;
+    if (mode == 1 && pa < 0x100000) return 0;
+    if (pa + VM_PAGE_SIZE < pa) return 0;
     unsigned int count;
     const struct pmm_region *regions = pmm_regions(&count);
     if (!regions) return 0;
-    for (unsigned int i = 0; i < count; ++i)
-        if (pa < regions[i].end && pa + VM_PAGE_SIZE > regions[i].base &&
-            regions[i].kind != PMM_HOLE && regions[i].kind != PMM_RESERVED) return 0;
+    const cpu_u64 kstart = (cpu_u64)__kernel_start;
+    const cpu_u64 kend = ((cpu_u64)__kernel_end + VM_PAGE_SIZE - 1) & ~(VM_PAGE_SIZE - 1);
+    if (pa < kend && pa + VM_PAGE_SIZE > kstart) return 0;
+    for (unsigned int i = 0; i < count; ++i) {
+        if (pa >= regions[i].end || pa + VM_PAGE_SIZE <= regions[i].base) continue;
+        if (regions[i].kind == PMM_HOLE || regions[i].kind == PMM_RESERVED) continue;
+        if (mode == 2 && (regions[i].kind == PMM_ACPI_RECLAIM || regions[i].kind == PMM_ACPI_NVS))
+            continue;
+        if (mode == 2 && regions[i].kind == PMM_BOOT_RESERVED && pa + VM_PAGE_SIZE <= 0x100000)
+            continue;
+        return 0;
+    }
     return 1; /* Driver must additionally establish a real device aperture. */
 }
 
 static enum vm_result unmap_pages(struct vm_space *s, cpu_u64 va, cpu_u64 pages);
 
 static enum vm_result map_pages(struct vm_space *s, cpu_u64 va, cpu_u64 pa,
-                                cpu_u64 pages, unsigned int p, int device)
+                                cpu_u64 pages, unsigned int p, int mode)
 {
     if (pa % VM_PAGE_SIZE) return VM_ALIGNMENT;
     if (pa >= physical_limit || pages > (physical_limit - pa) / VM_PAGE_SIZE) return VM_PHYSICAL;
     for (cpu_u64 i = 0; i < pages; ++i) {
-        if (!physical_allowed(pa + i * VM_PAGE_SIZE, device)) return VM_PHYSICAL;
+        if (!physical_allowed(pa + i * VM_PAGE_SIZE, mode)) return VM_PHYSICAL;
         struct vm_mapping m;
         enum vm_result r = vm_query(s, va + i * VM_PAGE_SIZE, &m);
         if (r == VM_OK) return VM_EXISTS;
@@ -304,6 +317,37 @@ enum vm_result vm_map_range(struct vm_space *s, cpu_u64 va, cpu_u64 pa, cpu_u64 
     if ((r = permissions_valid(s, p)) != VM_OK) return r;
     return map_pages(s, va, pa, pages, p, 0);
 }
+
+/* PAT3 (IA32_PAT bits 31:24) must select plain UC for device mappings;
+   UC- would alias cached kernel memory. Checked once per device and
+   firmware map, before the first leaf is written. */
+static enum vm_result pat_check(void)
+{
+    cpu_u32 a, b, c, d;
+    __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1), "c"(0));
+    if (d & (1u << 16)) {
+        __asm__ volatile ("rdmsr" : "=a"(a), "=d"(d) : "c"(0x277));
+        if ((a >> 24) != 0) return VM_UNSUPPORTED; /* PAT3 must be UC, not UC-. */
+    }
+    return VM_OK;
+}
+/* Firmware tables (ACPI): same MMIO slot as devices, but the ownership rule
+   accepts ACPI-claimed and sub-1MB BIOS memory. Always mapped writable UC:
+   vm_query treats a UC leaf without PTE_WRITE as corrupt, so a read-only
+   firmware window could never be queried or torn down. The ACPI layer only
+   ever reads through these windows; writability satisfies the VM layer's
+   UC-implies-writable invariant. Never user, never executable. Teardown
+   reuses vm_unmap_device. */
+enum vm_result vm_map_firmware(struct vm_space *s, cpu_u64 va, cpu_u64 pa,
+                               cpu_u64 pages, unsigned int p)
+{
+    enum vm_result r = device_valid(s, va, pages);
+    if (r != VM_OK) return r;
+    if (p != 0 && p != VM_WRITE) return VM_PERMISSION;
+    p |= VM_WRITE;
+    if ((r = pat_check()) != VM_OK) return r;
+    return map_pages(s, va, pa, pages, p | VM_DEVICE_UC, 2);
+}
 enum vm_result vm_map(struct vm_space *s, cpu_u64 va, cpu_u64 pa, unsigned int p)
 { return vm_map_range(s, va, pa, 1, p); }
 
@@ -312,12 +356,7 @@ enum vm_result vm_map_device(struct vm_space *s, cpu_u64 va, cpu_u64 pa, cpu_u64
     enum vm_result r = device_valid(s, va, pages);
     if (r != VM_OK) return r;
     if (p != VM_WRITE) return VM_PERMISSION;
-    cpu_u32 a, b, c, d;
-    __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1), "c"(0));
-    if (d & (1u << 16)) {
-        __asm__ volatile ("rdmsr" : "=a"(a), "=d"(d) : "c"(0x277));
-        if ((a >> 24) != 0) return VM_UNSUPPORTED; /* PAT3 must be UC, not UC-. */
-    }
+    if ((r = pat_check()) != VM_OK) return r;
     return map_pages(s, va, pa, pages, p | VM_DEVICE_UC, 1);
 }
 

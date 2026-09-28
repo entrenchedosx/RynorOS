@@ -7,6 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/host"))
 from pmm_output import validate_pmm_output, firmware_regions
+from apic_output import APIC_GOOD
 from boot_output import validate_boot_output, POST_IRQ
 from timer_output import TIMER_OUTPUT
 from sched_output import SCHED_GOOD
@@ -43,7 +44,7 @@ class PmmOutputTests(unittest.TestCase):
         self.assertEqual(validate_pmm_output(fixture()), [])
         self.assertEqual(validate_boot_output(parser_fixture() + fixture() + vm_fixture() + heap_fixture()
                                               + TIMER_OUTPUT + SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD
-                                              + RUNTIME_GOOD + POST_IRQ), [])
+                                              + RUNTIME_GOOD + POST_IRQ + APIC_GOOD), [])
         self.assertTrue(validate_boot_output(parser_fixture() + fixture() + TIMER_OUTPUT + SCHED_GOOD + POST_IRQ))
         self.assertTrue(validate_boot_output(parser_fixture() + TIMER_OUTPUT))
 

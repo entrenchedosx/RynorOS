@@ -33,8 +33,9 @@ _Static_assert(__builtin_offsetof(struct x86_tss, ist) == 36, "TSS IST offset");
 _Static_assert(__builtin_offsetof(struct x86_tss, iomap) == 102, "TSS bitmap offset");
 static struct idt_gate kernel_idt[256] __attribute__((aligned(16)));
 extern const cpu_u64 exception_stub_table[32];
-extern const cpu_u64 irq_stub_table[16];
+extern const cpu_u64 irq_stub_table[96];
 extern const char user_exit_stub[];
+extern const char lapic_spurious_stub[];
 extern void cpu_load_gdt(const struct table_pointer *pointer);
 extern void cpu_load_task(cpu_u16 selector);
 
@@ -112,9 +113,10 @@ static int initialize_gdt(void)
 
 static int initialize_idt(void)
 {
-    /* Exceptions 0..31 and PIC IRQs 32..47 stay DPL0; vector 0x80 is the
-       DPL3 userspace gate. 48..255 remain non-present except 128. */
-    for (unsigned int vector = 0; vector < 48; ++vector) {
+    /* Exceptions 0..31, ISA IRQs 32..47 and the dynamic pool 48..127 stay
+       DPL0; vector 0x80 is the DPL3 userspace gate; 255 is the DPL0 LAPIC
+       spurious stub. 129..254 remain non-present. */
+    for (unsigned int vector = 0; vector < 128; ++vector) {
         cpu_u64 address = vector < 32 ? exception_stub_table[vector] : irq_stub_table[vector - 32];
         kernel_idt[vector] = (struct idt_gate){
             (cpu_u16)address, CPU_CODE_SELECTOR, 0, 0x8e,
@@ -125,6 +127,11 @@ static int initialize_idt(void)
     kernel_idt[128] = (struct idt_gate){
         (cpu_u16)gate, CPU_CODE_SELECTOR, 0, 0xee,
         (cpu_u16)(gate >> 16), (cpu_u32)(gate >> 32), 0
+    };
+    cpu_u64 spurious = (cpu_u64)lapic_spurious_stub;
+    kernel_idt[255] = (struct idt_gate){
+        (cpu_u16)spurious, CPU_CODE_SELECTOR, 0, 0x8e,
+        (cpu_u16)(spurious >> 16), (cpu_u32)(spurious >> 32), 0
     };
     const struct table_pointer desired = {sizeof(kernel_idt) - 1, (cpu_u64)kernel_idt};
     struct table_pointer actual;
@@ -142,7 +149,16 @@ static int initialize_idt(void)
                 return 0;
             continue;
         }
-        if (vector >= 48) {
+        if (vector == 255) {
+            cpu_u64 address = gate->offset_low | ((cpu_u64)gate->offset_middle << 16) |
+                              ((cpu_u64)gate->offset_high << 32);
+            if (address != (cpu_u64)lapic_spurious_stub ||
+                gate->selector != CPU_CODE_SELECTOR || gate->ist != 0 ||
+                gate->attributes != 0x8e || gate->reserved != 0)
+                return 0;
+            continue;
+        }
+        if (vector >= 128) {
             if (gate->attributes != 0) return 0;
             continue;
         }

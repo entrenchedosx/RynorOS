@@ -63,7 +63,7 @@ class KeyboardTests(unittest.TestCase):
                     self.assertNotIn(KBD_END,output); self.assertNotIn(POST_IRQ,output)
     def test_masked_irq1_cannot_receive_any_key(self):
         self.variant("masked-irq1","kernel/drivers/keyboard.c",
-                     "if (!irq_set_enabled(1, 1)) goto fail;","if (!irq_set_enabled(1, 0)) goto fail;",
+                     "if (!kbd_enable()) goto fail;","if (!irq_set_enabled(1, 0)) goto fail;",
                      "[KBD] waiting for input=0")
     def test_isr_discard_cannot_queue_keys(self):
         self.variant("discard","kernel/drivers/keyboard.c",
@@ -73,7 +73,8 @@ class KeyboardTests(unittest.TestCase):
         # With overrun classification, the never-read 0x00 byte is rejected as a
         # controller error instead of being queued, so the loss is also caught.
         self.variant("no-read","kernel/drivers/keyboard.c",
-                     "cpu_u8 scan = io_in8(KBD_DATA);","cpu_u8 scan = 0;",
+                     "if (!(status & STATUS_OBF)) { increment(&stats.empty_irqs); return; }\n    deliver_byte(status, io_in8(KBD_DATA));",
+                     "if (!(status & STATUS_OBF)) { increment(&stats.empty_irqs); return; }\n    deliver_byte(status, 0);",
                      ("[KBD] event=0 scan=0", "[KBD] failure=input_loss"))
     def test_live_read_counter_not_assertion_inversion(self):
         self.variant("counter","kernel/drivers/keyboard.c",
@@ -205,7 +206,8 @@ class KeyboardTests(unittest.TestCase):
         self.variant("canned-output","kernel/drivers/keyboard-test.c",
                      "void keyboard_self_test(void)\n{",injected,
                      ("Keyboard completed without all host inputs",
-                      "QEMU data-port reads do not match injected input"),guest_halt=False)
+                      "QEMU data-port reads do not match injected input",
+                      "[APIC] failure=kbd_route"),guest_halt=False)
         logs = ROOT / 'build/kbd-tests/canned-output'
         self.assertIn(POST_IRQ, (logs / 'serial.log').read_bytes())
         # Later runtime work can outlast all eight injections. Never depend on

@@ -125,10 +125,18 @@ PMM/VM/heap accounting; PIC ISR and masks are checked afterward.
 Host validation checks all sixteen actual bytes/identities/types against sent
 keys, byte/IRQ/error/drop counters and cross-stage memory statistics. Independent
 QEMU trace events must show device make/break in Set 2 with translation, then
-PIC acknowledgment of vector 33, then the matching port-60 read, for each byte.
-These traces are in `guest-errors.log` (the existing QEMU -D log); `run.json`
+CPU delivery of vector 33 (`-d int` `v=21` record), then the matching port-60
+read, for each byte. These traces are in `guest-errors.log` (the existing QEMU
+-D log); `run.json`
 records sent keys and owned-process cleanup. No test claims QEMU keys are
-physical keys on a real machine.
+physical keys on a real machine. The later APIC phase adds one
+controller-generated `0xEE` ECHO byte (IRQ + port read, no device event);
+see `acpi-apic.md` — the keyboard-phase bytes above are unaffected.
+Every IRQ1 re-enable goes through `kbd_enable()`, which unmasks first
+and then queues any bytes asserted while masked: the 8042 holds its
+IRQ level while a byte sits unread, and the IOAPIC drops masked
+edges, so enabling without draining would latch the line silent (the
+C6 flood is the regression test).
 
 Meaningful implementation mutations must fail. A serial transcript alone
 cannot satisfy the trace gate. This is empirical verification of reviewed code,
@@ -137,7 +145,7 @@ not cryptographic attestation against an adversary rewriting both kernel/tests.
 ## Dependencies and limitations
 
 No new executable dependency. The documented QEMU build must support
-`ps2_keyboard_event`, `pic_interrupt` and `pckbd_kbd_read_data` trace events.
+`ps2_keyboard_event`, `-d int` vector records and `pckbd_kbd_read_data` trace events.
 Missing/malformed trace evidence fails, never silently skips verification.
 Readiness markers avoid fixed startup sleeps; QEMU still times key release,
 and the harness polls with an overall bounded deadline. The guest has no

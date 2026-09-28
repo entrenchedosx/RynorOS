@@ -7,7 +7,7 @@ from resources import read_icon
 
 SOURCE_EXTENSION = ".rl"
 REQUIRED_DIRECTORIES = (
-    "kernel", "kernel/arch", "kernel/core", "kernel/mm", "kernel/interrupts",
+    "kernel", "kernel/acpi", "kernel/arch", "kernel/core", "kernel/mm", "kernel/interrupts",
     "kernel/drivers", "kernel/runtime", "kernel/shell", "kernel/storage", "kernel/include", "boot", "rynorlang", "rynorlang/lexer",
     "rynorlang/parser", "rynorlang/ast", "rynorlang/compiler", "rynorlang/runtime",
     "rynorlang/tests", "rynorlang/examples", "user", "user/shell", "user/lib",
@@ -64,6 +64,8 @@ REQUIRED_FILES = (
     "kernel/interrupts/exceptions.c", "tools/host/exception_output.py",
     "tests/repository/test_exception_output.py", "docs/design/cpu.md", "docs/reports/stage2.md",
     "kernel/include/io.h", "kernel/include/irq.h", "kernel/interrupts/irq.c",
+    "kernel/include/acpi.h", "kernel/acpi/acpi.c", "kernel/acpi/acpi-test.c",
+    "kernel/include/apic.h", "kernel/interrupts/apic.c", "kernel/interrupts/apic-test.c",
     "kernel/arch/x86_64/pic.c", "kernel/arch/x86_64/timer.c",
     "tools/host/timer_output.py", "tools/host/resources.py",
     "assets/README.md", "assets/branding/icon.png", "docs/reports/stage3.md",
@@ -125,6 +127,11 @@ REQUIRED_FILES = (
     "kernel/mm/dma-test.c", "tools/host/dma_output.py",
     "tests/integration/test_dma.py", "tests/repository/test_dma_abi.py",
     "docs/design/dma.md",
+    # INT-A1 modern interrupts: ACPI discovery, MADT parsing, LAPIC +
+    # IOAPIC drivers, unified IRQ layer, host validator, tests, design doc.
+    "tools/host/apic_output.py",
+    "tests/integration/test_apic.py", "tests/repository/test_apic_output.py",
+    "docs/design/acpi-apic.md",
     "kernel/include/kstring.h", "kernel/include/kbuf.h", "kernel/include/krst.h",
     "kernel/runtime/kstring.c", "kernel/runtime/kbuf.c", "kernel/runtime/krst.c",
     "kernel/runtime/runtime-test.c", "kernel/runtime/README.md",

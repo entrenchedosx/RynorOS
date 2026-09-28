@@ -47,19 +47,19 @@ class KbdOutputTests(unittest.TestCase):
         records=[]
         for i,(scan,_,_) in enumerate(expected_events(KEYS)):
             records.extend((f"ps2_keyboard_event addr lnx 1 down {1-i%2} modifier 0x0 modifiers 0x0 set 2 xlate 1",
-                            "pic_interrupt irq 1 intno 33",f"pckbd_kbd_read_data 0x{scan:02x}"))
+                            f"{i}: v=21 e=0000",f"pckbd_kbd_read_data 0x{scan:02x}"))
         trace="\n".join(records)
-        validate_keyboard_trace(trace)
+        validate_keyboard_trace(trace,expect_echo=False)
         # Firmware/controller can queue release before the make is consumed.
         queued=records.copy()
         queued[:6]=[records[0],records[3],records[1],records[2],records[4],records[5]]
-        validate_keyboard_trace('\n'.join(queued))
+        validate_keyboard_trace('\n'.join(queued),expect_echo=False)
         premature=records.copy(); premature[1],premature[2]=premature[2],premature[1]
-        with self.assertRaises(ValueError): validate_keyboard_trace('\n'.join(premature))
-        for bad in (trace.replace("pic_interrupt irq 1 intno 33",""),
+        with self.assertRaises(ValueError): validate_keyboard_trace('\n'.join(premature),expect_echo=False)
+        for bad in (trace.replace(": v=21 e=0000",""),
                     trace.replace("pckbd_kbd_read_data 0x1e","pckbd_kbd_read_data 0x00"),
                     trace.replace("set 2 xlate 1","set 2 xlate 0"),""):
-            with self.assertRaises(ValueError): validate_keyboard_trace(bad)
+            with self.assertRaises(ValueError): validate_keyboard_trace(bad,expect_echo=False)
     def test_trace_validates_optional_follow_on_input(self):
         records=[]
         scans=[scan for scan,_,_ in expected_events(KEYS)]
@@ -67,15 +67,37 @@ class KbdOutputTests(unittest.TestCase):
         for scan in extra: scans.extend((scan,scan|0x80))
         for i,scan in enumerate(scans):
             records.extend((f"ps2_keyboard_event addr lnx 1 down {1-i%2} modifier 0x0 modifiers 0x0 set 2 xlate 1",
-                            "pic_interrupt irq 1 intno 33",f"pckbd_kbd_read_data 0x{scan:02x}"))
+                            f"{i}: v=21 e=0000",f"pckbd_kbd_read_data 0x{scan:02x}"))
         trace="\n".join(records)
-        validate_keyboard_trace(trace,KEYS,extra)
-        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS)
-        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS,(0x16,0x19))
-        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS,(0,))
+        validate_keyboard_trace(trace,KEYS,extra,expect_echo=False)
+        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS,expect_echo=False)
+        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS,(0x16,0x19),expect_echo=False)
+        with self.assertRaises(ValueError): validate_keyboard_trace(trace,KEYS,(0,),expect_echo=False)
+    def test_trace_validates_apic_phase_echo(self):
+        records=[]
+        for i,(scan,_,_) in enumerate(expected_events(KEYS)):
+            records.extend((f"ps2_keyboard_event addr lnx 1 down {1-i%2} modifier 0x0 modifiers 0x0 set 2 xlate 1",
+                            f"{i}: v=21 e=0000",f"pckbd_kbd_read_data 0x{scan:02x}"))
+        # Controller-generated echo: IRQ + read, no host device event.
+        records.extend(("16: v=21 e=0000","pckbd_kbd_read_data 0xee"))
+        trace="\n".join(records)
+        validate_keyboard_trace(trace)
+        # Missing echo byte, missing echo IRQ, or a wrong echo value fails.
+        for bad in (trace.replace("\npckbd_kbd_read_data 0xee",""),
+                    trace.replace("\n16: v=21 e=0000",""),
+                    trace.replace("pckbd_kbd_read_data 0xee","pckbd_kbd_read_data 0xfa")):
+            with self.assertRaises(ValueError): validate_keyboard_trace(bad)
+        # Echo read before its IRQ, or echo IRQ inside the keyboard phase.
+        swapped=records.copy()
+        swapped[-2],swapped[-1]=swapped[-1],swapped[-2]
+        with self.assertRaises(ValueError): validate_keyboard_trace('\n'.join(swapped))
+        phase=records.copy()
+        echo_irq=phase.pop(48)
+        phase.insert(46,echo_irq)
+        with self.assertRaises(ValueError): validate_keyboard_trace('\n'.join(phase))
     def test_irq0_trace_floor(self):
-        record0 = "pic_interrupt irq 0 intno 32"
-        record1 = "pic_interrupt irq 1 intno 33"
+        record0 = "0: v=20 e=0000"
+        record1 = "0: v=21 e=0000"
         self.assertTrue(IRQ0_BEFORE_KEYBOARD >= 75)  # 3 timer + 72 scheduler
         # Timer+scheduler deliveries must precede the first keyboard IRQ1.
         before = "\n".join([record0] * IRQ0_BEFORE_KEYBOARD)

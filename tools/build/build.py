@@ -29,7 +29,7 @@ REPOSITORY_TEST_INVENTORY = {
     "test_boot_layout": 8,
     "test_commands": 13, "test_exception_output": 6, "test_fb_output": 12,
     "test_forensic_repairs": 9, "test_heap_output": 6, "test_image": 5,
-    "test_kbd_output": 12, "test_kernel_hardening": 5, "test_pmm_output": 6,
+    "test_kbd_output": 13, "test_kernel_hardening": 5, "test_pmm_output": 6,
     "test_repository": 12, "test_resources": 3, "test_rollback_discards": 4,
     "test_rtlib": 4, "test_runtime_output": 14,
     "test_rynorlang_lexer": 49,     "test_rynorlang_parser": 55,
@@ -57,6 +57,7 @@ REPOSITORY_TEST_INVENTORY = {
     "test_shell_abi": 10, "test_p1a2_abi": 9, "test_p1a3_abi": 13,
     "test_pci_abi": 11,
     "test_dma_abi": 9,
+    "test_apic_output": 9,
 }
 INTEGRATION_TEST_INVENTORY = {
     "test_audit": 5, "test_boot": 14, "test_boot_matrix": 4, "test_boot_mutants": 12,
@@ -68,7 +69,7 @@ INTEGRATION_TEST_INVENTORY = {
     "test_pipe": 15, "test_cplshell": 26, "test_rleval": 56,
     "test_rlen": 28, "test_native_backend": 7,
     "test_p1a": 8, "test_p1a2": 16, "test_p1a3": 14, "test_pci": 17,
-    "test_dma": 17,
+    "test_dma": 17, "test_apic": 21,
 }
 
 

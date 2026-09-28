@@ -1,5 +1,6 @@
 #include "shd.h"
 #include "io.h"
+#include "kbd.h"
 #include "load.h"
 #include "fs.h"
 #include "blk.h"
@@ -93,7 +94,7 @@ void shd_boot(void)
     /* Ticks (preemption evidence) and keyboard delivery for the
        interactive shell; the test drivers quiesced both. */
     if (!irq_set_enabled(0, 1)) halt("[SHD] failure=timer");
-    if (!irq_set_enabled(1, 1)) halt("[SHD] failure=kbd");
+    if (!kbd_enable()) halt("[SHD] failure=kbd");
     if (!mount_shell_fs()) {
         shd_balanced(base);
         halt("[SHD] missing /bin/sh");

@@ -114,11 +114,13 @@ def validate_input_section(part: bytes) -> list:
 def validate_input_trace(trace: str, sent_keys, stage8_keys) -> None:
     """Independent emulator evidence for the whole key stream: the port
     reads must equal stage-8 bytes followed by the sent input bytes
-    exactly (device event -> PIC IRQ1 ack -> port read per byte), with an
-    IRQ1 ack per byte plus the single startup empty IRQ."""
-    from kbd_output import expected_events
+    exactly (device event -> IRQ1 vector delivery -> port read per
+    byte), with an IRQ1 ack per byte plus the single startup empty IRQ."""
+    from kbd_output import ECHO_SCAN, IRQ1_DELIVERY, expected_events
     stage8 = [ev[0] for ev in expected_events(stage8_keys)]
-    expected = stage8 + expected_input_bytes(sent_keys)
+    # The INT-A1 APIC-phase ECHO byte lands between the stage-8 bytes and
+    # the stage-18d input bytes (no host device event for it).
+    expected = stage8 + [ECHO_SCAN] + expected_input_bytes(sent_keys)
     start = trace.find("ps2_keyboard_event ")
     if start < 0:
         raise ValueError("QEMU keyboard trace missing input events")
@@ -129,6 +131,6 @@ def validate_input_trace(trace: str, sent_keys, stage8_keys) -> None:
     # One IRQ1 ack per byte inside the slice. The single startup empty
     # IRQ predates the first device event (outside this slice); stage-8
     # pins empty==1 separately, so it is not double-counted here.
-    acks = len(re.findall(r"pic_interrupt irq 1 intno 33\b", trace))
+    acks = len(re.findall(IRQ1_DELIVERY, trace))
     if acks != len(expected):
         raise ValueError("QEMU IRQ1 acknowledgment count mismatch for input phase")

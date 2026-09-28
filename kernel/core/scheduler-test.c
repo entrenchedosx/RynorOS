@@ -215,8 +215,10 @@ static void preempt_worker(void *arg)
     sched_test_loop(&stop, p); /* no yield, no kernel calls in the measured loop */
     require(!p->error && p->iterations, "register_or_flags_restore");
 }
-static void test_timer(void)
+static void test_timer(cpu_u32 vector, void *opaque)
 {
+    (void)opaque;
+    require(vector == IRQ_BASE, "irq_vector");
     require(irq_in_context(), "irq_context");
     if (!irq_memory_context_checked) {
         cpu_u64 frame = 0x1122334455667788ULL;
@@ -248,7 +250,7 @@ void scheduler_self_test(void)
     stack_tests(); allocation_failure_tests(); synchronization_tests(); lifecycle_tests();
     thread_id ids[3];
     for (unsigned int i = 0; i < 3; ++i) require(thread_create(&ids[i], preempt_worker, &probes[i]), "preempt_create");
-    require(irq_set_handler(0, test_timer) && irq_set_enabled(0, 1), "start_irq");
+    require(irq_set_handler(0, test_timer, 0) && irq_set_enabled(0, 1), "start_irq");
     text("[SCHED] non-yielding timer probe started\r\n");
     __asm__ volatile ("sti" ::: "memory");
     while (!stop) __asm__ volatile ("pause" ::: "memory");

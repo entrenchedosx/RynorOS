@@ -19,16 +19,23 @@ exception_stub_%+vector:
 %assign vector vector + 1
 %endrep
 
-; PIC IRQs never push CPU error codes. Share the proven full-register entry
-; and IRETQ return, but dispatch to a separate C hardware-IRQ layer.
+; Hardware IRQs (legacy 32-47 plus the 48-127 dynamic pool) never push CPU
+; error codes. Share the proven full-register entry and IRETQ return, but
+; dispatch to a separate C hardware-IRQ layer.
 %assign vector 32
-%rep 16
+%rep 96
 irq_stub_%+vector:
     push qword 0
     push qword vector
     jmp exception_common
 %assign vector vector + 1
 %endrep
+
+; LAPIC spurious vector (255): no state, no EOI, no dispatch. The gate
+; clears IF and pushes the frame; a bare IRETQ restores everything.
+global lapic_spurious_stub
+lapic_spurious_stub:
+    iretq
 
 ; CPL3 exit gate. Pushes the same normalized error/vector slots and joins
 ; the shared entry; the common path routes vector 128 to user_handle_exit.
@@ -111,7 +118,7 @@ exception_stub_table:
 global irq_stub_table
 irq_stub_table:
 %assign vector 32
-%rep 16
+%rep 96
     dq irq_stub_%+vector
 %assign vector vector + 1
 %endrep

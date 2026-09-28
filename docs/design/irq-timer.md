@@ -8,6 +8,13 @@ a bounded hardware timer self-test, not a timekeeping service. Stage 7 subsequen
 uses the same IRQ0 source for the separate kernel scheduler.
 The CPU exception mechanisms and six execution-tested vectors remain intact.
 
+INT-A1 supersedes the backend (see `acpi-apic.md`): the kernel still boots
+on the PIC exactly as below, then discovers ACPI, programs the LAPIC/IOAPIC,
+and switches the same IRQ0/IRQ1 sources to interrupt vectors 32/33 via the
+IOAPIC (IRQ0 through the MADT override to GSI 2). Gates now cover vectors
+32-127 plus the spurious vector 255; 48-127 are reserved for INT-A2 MSI.
+The PIC path below is retained forever as the verified fallback.
+
 ## Controller and timer choice
 
 The pinned `pc-i440fx-10.0` machine supplies a legacy PIC and PIT. They need no
@@ -27,11 +34,12 @@ configuration. Master command/data ports are 0x20/0x21; slave 0xa0/0xa1.
 | 33 | Master IRQ1 | Stage 8 keyboard; separately enabled/tested |
 | 34..39 | Master IRQ2..7 | Installed gates; masked (IRQ2 reserved cascade) |
 | 40..47 | Slave IRQ8..15 | Installed gates; masked; slave then master EOI |
-| 48..255 | Unassigned | Non-present gates |
+| 48..255 | Unassigned at Stage 3 | Non-present gates (INT-A1 installs 48-127 and 255) |
 
 Mask updates maintain the cascade: IRQ2 is unmasked only when at least one slave
 line is enabled. Stage 3 enables only IRQ0. UART interrupt generation and NMI
-remain disabled. No APIC or SMP initialization is implemented.
+remain disabled. No APIC initialization existed at Stage 3 (added by INT-A1);
+no SMP initialization exists.
 
 PIT ports 0x43/0x40 receive control 0x34 (channel 0, low byte then high byte,
 binary mode 2) and divisor **11932** (0x2e9c). Status read-back command 0xe2

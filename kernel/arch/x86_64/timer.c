@@ -8,8 +8,10 @@
 static volatile cpu_u64 ticks;
 static volatile cpu_u64 samples[TEST_TICKS];
 
-static void timer_interrupt(void)
+static void timer_interrupt(cpu_u32 vector, void *opaque)
 {
+    (void)opaque;
+    if (vector != IRQ_BASE) cpu_halt();
     /* Only this actual IRQ0 callback writes the counter/samples. The bounded
        sample buffer tolerates delayed foreground execution without inventing ticks. */
     cpu_u64 current = ++ticks;
@@ -32,11 +34,11 @@ static int write_tick(cpu_u64 value)
 void timer_self_test(void)
 {
     if (!cpu_interrupts_disabled() || !irq_initialize() ||
-        !irq_register(0, timer_interrupt)) cpu_halt();
+        !irq_register(0, timer_interrupt, 0)) cpu_halt();
     /* Reject invalid, cascade, null, duplicate, and unregistered-enable requests
        without changing live dispatch state. Exercise the registration contract. */
-    if (irq_register(IRQ_COUNT, timer_interrupt) || irq_register(2, timer_interrupt) ||
-        irq_register(1, (irq_handler)0) || irq_register(0, timer_interrupt) ||
+    if (irq_register(IRQ_COUNT, timer_interrupt, 0) || irq_register(2, timer_interrupt, 0) ||
+        irq_register(1, (irq_handler)0, 0) || irq_register(0, timer_interrupt, 0) ||
         irq_set_enabled(1, 1)) cpu_halt();
     io_out8(0x43, 0x34); /* Channel 0, low/high count, mode 2, binary. */
     io_out8(0x40, (cpu_u8)PIT_DIVISOR);

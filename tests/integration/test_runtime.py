@@ -203,7 +203,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_no_timer_during_services_is_rejected(self):
         self.run_failure("service_preemption_missing", [
-            ('irq_set_enabled(0, 1), "runtime_timer_start"', 'irq_set_enabled(0, 0), "runtime_timer_start"'),
+            ('irq_set_enabled(0, 1),\n            "runtime_timer_start"',
+             'irq_set_enabled(0, 0),\n            "runtime_timer_start"'),
             ('attempt <= 131072', 'attempt <= 64')])
 
     def test_physical_evidence_cannot_be_omitted(self):

@@ -9,6 +9,12 @@ SCANS = {"a": 0x1e, "b": 0x30, "c": 0x2e, "d": 0x20, "spc": 0x39,
 STEPS = ("[KBD] queue FIFO, capacity, wrap and loss verified (synthetic)",
          "[KBD] Set-1 subset and prefix isolation verified (synthetic)",
          "[KBD] i8042 configured, Set-2 translated to Set-1, irq1 enabled")
+# CPU interrupt-delivery evidence from QEMU -d int ("<counter>: v=XX e=YYYY").
+# Counts and file order match the legacy pic_interrupt tracepoints
+# event-for-event in PIC mode, and keep working when delivery moves to
+# the IOAPIC (INT-A1), which emits no pic_interrupt records at all.
+IRQ0_DELIVERY = r": v=20 e=[0-9a-f]{4}\b"
+IRQ1_DELIVERY = r": v=21 e=[0-9a-f]{4}\b"
 def key_sequence(keys):
     if not isinstance(keys, (tuple, list)) or len(keys) != 8 or any(type(k) is not str or k not in SCANS for k in keys):
         raise ValueError("Exactly eight allowed QEMU keys required")
@@ -72,35 +78,54 @@ def validate_kbd_output(output, keys=KEYS, previous=None):
     try: parse_kbd_output(output,keys,previous)
     except (ValueError,UnicodeDecodeError) as error: return [str(error)]
     return []
-def validate_keyboard_trace(trace, keys=KEYS, extra_scans=()):
-    """Independent emulator evidence: device events, PIC acknowledgments, I/O reads.
+# INT-A1 APIC-phase 8042 ECHO reply: controller-generated, so it has an
+# IRQ1 delivery plus a port read but no host device event. It lands after
+# the keyboard-phase bytes (before any follow-on shell input).
+ECHO_SCAN = 0xEE
+def validate_keyboard_trace(trace, keys=KEYS, extra_scans=(), expect_echo=True):
+    """Independent emulator evidence: device events, CPU vector deliveries, I/O reads.
     Trace event support is required from the documented QEMU build."""
     start = trace.find("ps2_keyboard_event ")
     if start < 0:
         raise ValueError("QEMU keyboard trace missing input events")
     trace = trace[start:]
-    expected_scans = [ev[0] for ev in expected_events(keys)]
+    key_scans = [ev[0] for ev in expected_events(keys)]
     for scan in extra_scans:
         if type(scan) is not int or not 0 < scan < 0x80:
             raise ValueError("QEMU extra keyboard scan invalid")
-        expected_scans.extend((scan, scan | 0x80))
+    extra_bytes = []
+    for scan in extra_scans:
+        extra_bytes.extend((scan, scan | 0x80))
+    expected_reads = key_scans + ([ECHO_SCAN] if expect_echo else []) + extra_bytes
     reads = [int(v, 16) for v in re.findall(r"pckbd_kbd_read_data 0x([0-9a-f]+)", trace)]
-    if reads != expected_scans:
+    if reads != expected_reads:
         raise ValueError("QEMU data-port reads do not match injected input")
     events = re.findall(r"ps2_keyboard_event [^\r\n]* down ([01]) [^\r\n]* set (\d+) xlate (\d+)", trace)
-    count = len(expected_scans)
-    if events != [(str(i % 2 == 0 and 1 or 0), "2", "1") for i in range(count)]:
+    event_count = len(key_scans) + len(extra_bytes)
+    if events != [(str(i % 2 == 0 and 1 or 0), "2", "1") for i in range(event_count)]:
         raise ValueError("QEMU keyboard make/break or scan configuration mismatch")
-    if len(re.findall(r"pic_interrupt irq 1 intno 33\b", trace)) != count:
+    if len(re.findall(IRQ1_DELIVERY, trace)) != len(expected_reads):
         raise ValueError("QEMU IRQ1 acknowledgment count mismatch")
     positions = [[m.start() for m in re.finditer(pattern, trace)] for pattern in
-                 (r"ps2_keyboard_event ", r"pic_interrupt irq 1 intno 33\b", r"pckbd_kbd_read_data ")]
-    for i in range(count):
+                 (r"ps2_keyboard_event ", IRQ1_DELIVERY, r"pckbd_kbd_read_data ")]
+    for i in range(len(key_scans)):
         if not positions[0][i] < positions[1][i] < positions[2][i]:
             raise ValueError("QEMU input/IRQ1/read ordering invalid")
         # A release may already be queued before the guest consumes the make.
         # FIFO byte order and each byte's device -> IRQ -> read chain above are
         # required; no cross-byte timing assumption is valid here.
+    idx = len(key_scans)
+    if expect_echo:
+        # Echo causality (IRQ before its read) plus phase separation (the
+        # echo IRQ fires after the keyboard phase's last port read).
+        if not positions[1][idx] < positions[2][idx]:
+            raise ValueError("QEMU echo IRQ1/read ordering invalid")
+        if not positions[2][idx - 1] < positions[1][idx]:
+            raise ValueError("QEMU echo outside APIC phase")
+        idx += 1
+    for j in range(len(extra_bytes)):
+        if not positions[0][len(key_scans) + j] < positions[1][idx + j] < positions[2][idx + j]:
+            raise ValueError("QEMU input/IRQ1/read ordering invalid")
 
 
 # Minimum genuine IRQ0 deliveries that must precede the first IRQ1 (keyboard)
@@ -115,9 +140,9 @@ IRQ0_BEFORE_KEYBOARD = 3 + 72
 
 def validate_irq0_trace(trace):
     """Independent emulator evidence that the timer and scheduler phases were
-    driven by real PIC IRQ0 deliveries, not canned serial text."""
-    irq0 = [m.start() for m in re.finditer(r"pic_interrupt irq 0 intno 32\b", trace)]
-    irq1 = re.search(r"pic_interrupt irq 1 intno 33\b", trace)
+    driven by real IRQ0 deliveries, not canned serial text."""
+    irq0 = [m.start() for m in re.finditer(IRQ0_DELIVERY, trace)]
+    irq1 = re.search(IRQ1_DELIVERY, trace)
     before = len(irq0) if irq1 is None else sum(1 for p in irq0 if p < irq1.start())
     if irq1 is None:
         raise ValueError("QEMU trace missing IRQ1 keyboard deliveries")

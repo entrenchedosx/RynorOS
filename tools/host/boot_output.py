@@ -26,6 +26,7 @@ from sh_output import (has_shell_rows, strip_shell_lines,
                        validate_sh_section)
 from pci_output import validate_pci_section
 from dma_output import validate_dma_section
+from apic_output import extract_apic_section, parse_apic_output, strip_apic_section
 
 POST_IRQ = b"[TEST] PMM post-IRQ accounting verified\r\n"
 
@@ -164,6 +165,16 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
                 block = block[:start] + block[end:]
         return block, errs
 
+    # INT-A1 self-test section sits between the post-IRQ accounting line
+    # and the Stage 11 shell banner on every boot (required, not
+    # test-image-conditional). Validate and strip before the shell split
+    # so shell_head stays empty.
+    apic_section = extract_apic_section(post)
+    post, apic_errs = strip_apic_section(post)
+    errors.extend(apic_errs)
+    apic_state = None
+    if apic_section is not None and not apic_errs:
+        apic_state = parse_apic_output(apic_section)
     shell_head, shell_sep, shell_tail = post.partition(SHELL_START)
     if shell_sep != b"":
         shell_sec, tail_sep, tail = (SHELL_START + shell_tail).partition(SHELL_END)
@@ -173,7 +184,17 @@ def validate_boot_output(output: bytes, vector: int = 3, keys=KEYS,
             if runtime_state is None:
                 errors.append("Shell baseline accounting missing")
             else:
-                errors.extend(validate_shell_output(shell_sec + SHELL_END, runtime_state,
+                # The INT-A1 section legitimately owns frames/tables
+                # between the runtime and shell baselines; the shell
+                # accounts runtime + APIC cost, not runtime alone.
+                previous = runtime_state
+                if apic_state is not None:
+                    previous = dict(
+                        runtime_state,
+                        allocated=runtime_state["allocated"] + apic_state["frames"] * 4096,
+                        free=runtime_state["free"] - apic_state["frames"] * 4096,
+                        tables=runtime_state["tables"] + apic_state["tables"])
+                errors.extend(validate_shell_output(shell_sec + SHELL_END, previous,
                                                     shell_script))
             # Stage 18d input section trails the runtime section on test
             # images only; absent everywhere else (split returns head).

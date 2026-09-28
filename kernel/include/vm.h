@@ -43,6 +43,11 @@ enum vm_result vm_map_range(struct vm_space *, cpu_u64 va, cpu_u64 pa, cpu_u64 p
    verified when PAT exists). Ordinary APIs cannot edit this slot. Data frames
    never enter PMM ownership; tables do. Range failure rolls back new tables. */
 enum vm_result vm_map_device(struct vm_space *, cpu_u64 va, cpu_u64 pa, cpu_u64 pages, unsigned int permissions);
+/* Firmware tables (ACPI): same MMIO slot, but the ownership rule accepts
+   HOLE/RESERVED/ACPI kinds plus the sub-1MB BIOS area; never usable RAM, the
+   kernel image, or PMM metadata. p is 0 (read-only) or VM_WRITE; always
+   uncached; teardown reuses vm_unmap_device. */
+enum vm_result vm_map_firmware(struct vm_space *, cpu_u64 va, cpu_u64 pa, cpu_u64 pages, unsigned int p);
 enum vm_result vm_unmap_device(struct vm_space *, cpu_u64 va, cpu_u64 pages);
 enum vm_result vm_unmap(struct vm_space *, cpu_u64 va);
 enum vm_result vm_unmap_range(struct vm_space *, cpu_u64 va, cpu_u64 pages);

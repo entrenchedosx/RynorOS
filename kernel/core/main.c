@@ -1,4 +1,5 @@
 #include "serial.h"
+#include "apic.h"
 #include "cpu.h"
 #include "irq.h"
 #include "pmm.h"
@@ -62,6 +63,11 @@ void kernel_main(void)
     }
     serial_write("[TEST] PMM post-IRQ accounting verified\r\n");
     serial_flush();
+    /* Modern interrupt path: ACPI discovery, LAPIC/IOAPIC bring-up, and the
+       PIC-to-APIC switch with live timer proof. Falls back to PIC (with a
+       backend=pic announcement) when firmware lacks usable APIC topology;
+       everything after this point runs on whichever backend won. */
+    apic_self_test();
     shell_self_test();
     serial_flush();
     /* Storage last: its evidence lines trail the shell section so the

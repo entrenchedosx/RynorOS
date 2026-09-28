@@ -139,8 +139,9 @@ class RuntimeOutputTests(unittest.TestCase):
         from test_heap_output import fixture as heap_fixture
         from timer_output import TIMER_OUTPUT
         from sched_output import SCHED_GOOD
+        from apic_output import APIC_GOOD
         before = parser_fixture() + pmm_fixture() + vm_fixture() + heap_fixture() + TIMER_OUTPUT
-        compose = before + SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD + RUNTIME_GOOD + POST_IRQ
+        compose = before + SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD + RUNTIME_GOOD + POST_IRQ + APIC_GOOD
         self.assertEqual(validate_boot_output(compose), [])
         for broken in (before + SCHED_GOOD + KBD_GOOD + DISPLAY_GOOD + POST_IRQ,
                        compose.replace(RUNTIME_GOOD, b""),

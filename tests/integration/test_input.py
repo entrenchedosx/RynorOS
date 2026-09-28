@@ -145,8 +145,8 @@ class InputTests(unittest.TestCase):
         scheduler handoff, which must halt instead of resuming."""
         self.mutant("no-park", [(
             "kernel/interrupts/irq.c",
-            "sched_tick(frame) : sched_park_cpl3(frame)",
-            "sched_tick(frame) : frame",
+            "    else\n        resume = sched_park_cpl3(frame);",
+            "    else\n        resume = frame;",
             1)], ("[SCHED] failure=handoff_frame", "[SCHED] failure=handoff_stack"))
 
     def test_mutant_pause_before_ctrl_check_goes_red(self):

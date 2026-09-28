@@ -61,9 +61,10 @@ class ShellOutputTests(unittest.TestCase):
             parse_shell_output(b"not a shell section\r\n")
 
     def test_interactive_contract_cannot_accept_stage10_early(self):
+        from apic_output import APIC_GOOD
         transcript = (exception_fixture() + pmm_fixture() + vm_fixture() +
                       heap_fixture() + TIMER_OUTPUT + SCHED_GOOD + KBD_GOOD +
-                      DISPLAY_GOOD + RUNTIME_GOOD + POST_IRQ)
+                      DISPLAY_GOOD + RUNTIME_GOOD + POST_IRQ + APIC_GOOD)
         self.assertEqual(validate_boot_output(transcript), [])
         self.assertIn("Required interactive shell output missing",
                       validate_boot_output(transcript, require_shell=True))

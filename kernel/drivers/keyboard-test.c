@@ -86,8 +86,10 @@ static void decode_tests(void)
 }
 static volatile cpu_u64 timer_ticks, worker_runs;
 static volatile int worker_stop;
-static void input_timer(void)
+static void input_timer(cpu_u32 vector, void *opaque)
 {
+    (void)opaque;
+    require(vector == IRQ_BASE, "timer_vector");
     struct kbd_event e;
     require(kbd_poll(&e)==KBD_BAD_CONTEXT && !kbd_initialize(),"irq_api_context");
     ++timer_ticks;
@@ -135,7 +137,7 @@ void keyboard_self_test(void)
             "api_invalid_preserves_if0");
     text("[KBD] i8042 configured, Set-2 translated to Set-1, irq1 enabled\r\n");
     thread_id worker;
-    require(thread_create(&worker,input_worker,0) && irq_set_handler(0,input_timer) &&
+    require(thread_create(&worker,input_worker,0) && irq_set_handler(0,input_timer,0) &&
             irq_set_enabled(0,1),"timer_worker_start");
     /* No expected keys in the guest: the host chooses input after this build.
        Each sendkey produces two ordinary bytes. Unknown keys are reported too. */

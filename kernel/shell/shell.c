@@ -301,7 +301,7 @@ static void wait_key(struct kbd_event *press)
 static void interactive_session(cpu_u64 key_budget)
 {
     say_line("[SHELL] interactive session started");
-    if (!irq_set_enabled(1, 1)) { say_line("[SHELL] failure=irq_enable"); cpu_halt(); }
+    if (!kbd_enable()) { say_line("[SHELL] failure=irq_enable"); cpu_halt(); }
     struct shell_line line = { {0}, 0 };
     for (cpu_u64 n = 0; n < key_budget; ++n) {
         /* The marker lets the host advance its key stream; mirrors the */
