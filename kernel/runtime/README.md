@@ -1,7 +1,8 @@
 # Kernel runtime (Stage 10)
 
 Ring-0 runtime services and bounded primitives, deliberately **not** userspace
-(no syscalls, no Ring 3, no user page tables; protected tasks remain Stage 18).
+(no syscalls, no Ring 3, no user page tables; protected tasks arrived in
+Stage 18, and this directory stays ring-0-only).
 
 - `kstring.h` / `kstring.c` — bounded string/copy/cat/cmp/chr/move and a
   transactional bounded `kstr_format` (two-pass; failure leaves the buffer
@@ -11,6 +12,8 @@ Ring-0 runtime services and bounded primitives, deliberately **not** userspace
 - `krst.h` / `krst.c` — runtime services (FNV-1a 64 digest, uppercase, digit
   count) dispatched through `krst_call`, with overlap/undersize/bad-op/bad-arg
   rejection.
+- `region.h` — overflow-safe range/overlap arithmetic helpers shared by
+  memory and device code (no allocation, no I/O).
 - `runtime-test.c` — `runtime_self_test()`: synthetic bounds tests, then the
   services are driven from seven worker threads through the Stage 7 scheduler.
   Worker digest folds and formatted/buffer outputs are re-derived independently

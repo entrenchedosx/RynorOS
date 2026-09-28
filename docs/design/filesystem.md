@@ -1,10 +1,13 @@
-# RYNORFS v1: native filesystem (Stages 17b read, 17c overwrite)
+# RYNORFS v1: native filesystem (Stages 17b read, 17c overwrite, P1 mutation)
 
 Status: **implemented for Stage 17b (read) and Stage 17c
-(overwrite-in-extent writes)**. This document freezes
+(overwrite-in-extent writes)**, plus P1-A1/A2/A3 mutation
+(`fcreate`/`fwrite`/`fstat`/`readdir`/`unlink` via syscalls 9–13).
+This document freezes
 the on-disk format, path rules, read/write API, error model, and validation
-discipline. No allocation, no heap, no userspace. See `block-storage.md`
-(device layer), `ROADMAP.md` Stages 17b/17c, and `docs/reports/stage17b.md`
+discipline. See `block-storage.md`
+(device layer), `ROADMAP.md` Stages 17b/17c, `p1a2-cpl3-abi.md`,
+`p1a3-lifecycle-abi.md`, and `docs/reports/stage17b.md`
 / `stage17c.md`.
 
 ## 1. Format overview

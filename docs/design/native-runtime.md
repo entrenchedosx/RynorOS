@@ -111,7 +111,7 @@ mutation from becoming memory corruption (bounded output instead).
 polls; set-then-wait returns `RT_OK`, exhausted waits return
 `RT_AGAIN`. `max_yields` is caller-bounded: a huge value (including
 `U64_MAX`) intentionally yields that many times. Cross-context handoff
-is 18d scope: documented here, not implemented. There is deliberately
+arrived in 18d (spawn/wait/pipes) and P1 (files). There is deliberately
 no wall-clock, no sleep, and no blocking wait anywhere in this library.
 
 ### Print rebind (toolchain)
@@ -151,8 +151,8 @@ placement only, never new permissions), `kernel/core/rt-test.c` +
 `kernel/include/rttest.h` (sequential per-program create/run/destroy
 with balanced accounting, 7 programs), `tools/host/rt_output.py`,
 `tests/repository/test_rtlib.py` (4 pins), `tests/integration/
-test_rt.py` (12 methods: 7 evidence + 5 mutants). Planned: 18d
-cross-context handoff. Experimental: none.
+test_rt.py` (12 methods: 7 evidence + 5 mutants). Later: 18d
+cross-context handoff and P1 file calls (both done). Experimental: none.
 
 ## Tests
 

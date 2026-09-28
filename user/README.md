@@ -7,12 +7,12 @@ bindings, and `apps/` for RynorOS applications.
 
 ## Public interfaces
 
-`lib/rt/` (Stage 18c, 15 frozen functions): `rt_exit`, `rt_write`,
-`rt_print`/`rt_print_bytes`, `rt_fmt` (never NUL-terminates, use count),
-`rt_alloc`, `rt_free` (exact live pointer only), `rt_arena_watermark`/
-`rt_live_count`/`rt_ptr_off` (read-only evidence, no free authority),
-`rt_nap`, `rt_set_flag`, `rt_wait_flag`, honest `rt_open`/`rt_read`
-stubs. Shell commands remain planned, not host API aliases.
+`lib/rt/` (Stage 18c base, extended through P1): process/exit/write/print,
+bounded arena alloc/free with read-only evidence, nap/flag yields, fd
+read/write, filesystem calls (`fcreate`/`fread`/`fstat`/`fwrite`/`readdir`/
+`unlink`), and pipe calls (`pipe_read_once`/`pipe_write_all`/`spawn_pipe`).
+`shell/` holds the native CPL3 shell (REPL, scripts, pipelines, resident
+evaluator). Shell commands are real CPL3 programs, not host API aliases.
 
 ## Invariants
 
@@ -22,8 +22,8 @@ protected user processes. Use `.rl` for RynorLang source.
 ## Implementation status
 
 `lib/rt/` implemented and verified (freestanding C + one asm stub over the
-frozen 18b syscalls; seven CPL3 conformance programs). Shell and apps remain
-planned; the kernel monitor lives in the kernel until 18d.
+frozen syscalls; CPL3 conformance programs). The native shell shipped in
+Stage 18d; `apps/` remains reserved for future RynorOS applications.
 
 ## Tests
 
@@ -32,5 +32,6 @@ host-side rebind pins live in `tests/repository/test_rtlib.py`.
 
 ## Known limitations
 
-No shell, no heap growth, no blocking calls, no file reads. The write sink
-remains the 18b serial-hex evidence ABI.
+No heap growth (bounded arena only), no blocking calls, no argv. File reads
+and writes exist via the P1 syscalls; the write sink for evidence remains
+the serial-hex ABI where tests require it.

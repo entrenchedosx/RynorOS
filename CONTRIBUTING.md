@@ -2,13 +2,16 @@
 
 ## Scope and honesty
 
-The current scope includes boot, serial, CPU descriptors/exceptions, PIC/PIT,
+The current scope includes boot with high loading, serial, CPU
+descriptors/exceptions, ACPI/APIC interrupts over a retained PIC/PIT fallback,
 real E820/physical frames, four-level virtual memory, a bounded kernel heap,
-single-CPU kernel threads/preemption, PS/2 keyboard input, the validated
-framebuffer, bounded strings/byte rings and ring-0 runtime services on worker
-threads, the separately packaged icon and host verification. See
-`docs/reports/stage10-audit.md` for current guarantees and limitations.
-User isolation and processes are not implemented. Do not advance
+DMA buffers, PCI discovery, single-CPU kernel threads/preemption, PS/2
+keyboard input, the validated framebuffer, bounded strings/byte rings and
+ring-0 runtime services on worker threads, storage/filesystem, protected
+userspace with syscalls/processes/pipes/shell/durable files, the RynorLang
+toolchain and resident evaluator, the separately packaged icon and host
+verification. See the latest stage reports under `docs/reports/` for current
+guarantees and limitations. Do not advance
 the roadmap while an audit or correctness repair is still incomplete.
 Do not present a design, empty function, hardcoded
 demo, or TODO as working functionality. Scaffolding must say it is incomplete.

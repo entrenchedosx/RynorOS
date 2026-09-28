@@ -1,4 +1,4 @@
-# RynorOS syscall ABI (Stage 18b, `int $0x80` only)
+# RynorOS syscall ABI (Stages 18b–18d, P1; `int $0x80` only)
 
 ## Mechanism choice
 
@@ -36,11 +36,23 @@ and `SYSENTER_CS` stay enforced zero; CPL3 `SYSCALL` still faults.
 | 1 | yield | — | resumes (no evidence row) |
 | 2 | write | `EBX` = fd, `ECX` = buf, `EDX` = len | bytes written, or `(u64)-1` |
 | 3 | read | `EBX` = fd (0), `ECX` = buf, `EDX` = len, `ESI` = nread_out, `EDI` = flags (0), `EBP` = 0 | `sys_err` in `RAX`, count via `*nread_out` |
+| 4 | spawn | `EBX` = spec_ptr, `ECX` = handle_out | `sys_err` in `RAX` |
+| 5 | wait | `EBX` = handle, `ECX` = status_out | `sys_err` in `RAX` |
+| 6 | terminate | `EBX` = handle | `sys_err` in `RAX` |
+| 7 | fread | `EBX` = path_ptr, `ECX` = path_len, `EDX` = offset, `ESI` = buf, `EDI` = len, `EBP` = nread_out | `sys_err` in `RAX` |
+| 8 | spawn_pipe | `EBX` = spec_a, `ECX` = spec_b, `EDX` = handle_a_out, `ESI` = handle_b_out | `sys_err` in `RAX` |
+| 9 | fcreate | see `p1a2-cpl3-abi.md` G2 | `sys_err` in `RAX` |
+| 10 | fwrite | see `p1a2-cpl3-abi.md` G2 | `sys_err` in `RAX` |
+| 11 | fstat | see `p1a3-lifecycle-abi.md` | `sys_err` in `RAX` |
+| 12 | readdir | see `p1a3-lifecycle-abi.md` | `sys_err` in `RAX` |
+| 13 | unlink | see `p1a3-lifecycle-abi.md` | `sys_err` in `RAX` |
 
 Stage 18d Slice A adds `read` (nonblocking stdin, `sys_err` return with
 out-param count — see `docs/design/stage18d-abi.md` §A); numbers 4–8 are
-frozen by that document with handlers landing in later slices. Unknown
-and reserved numbers (`9..2^32-1`) die as `invalid_call` (existing kill
+frozen by that document with handlers in later slices. P1-A2/A3 add 9–13
+(`fcreate`/`fwrite`/`fstat`/`readdir`/`unlink` — see `p1a2-cpl3-abi.md`
+and `p1a3-lifecycle-abi.md`). Unknown
+and reserved numbers (`14..2^32-1`) die as `invalid_call` (existing kill
 path). `exit`/`yield` keep their 18a numbers and
 semantics; `EBX` still carries the exit code.
 
@@ -55,8 +67,10 @@ balance accounting). Never returns.
 `fd` must be `1` (stdout). Output goes to the kernel serial transcript
 as a `[LOAD] write` evidence row with exact hex bytes — explicitly the
 temporary 18b ABI contract, not a Unix descriptor model and not a
-claim about consoles or files. No `read`, no other fds, no blocking:
-the serial poll is bounded and the call never sleeps.
+claim about consoles or files. No blocking:
+the serial poll is bounded and the call never sleeps. (`read` on fd 0
+arrived in 18d Slice A; pipes and P1 files add further fds — see
+`stage18d-abi.md`, `p1a2-cpl3-abi.md`, `p1a3-lifecycle-abi.md`.)
 
 Validation order (all before any memory touch): `fd`, length cap
 (`4096`, else error), zero-length short-circuit (`0`), address wrap,
@@ -82,9 +96,10 @@ user reuses the 18a resume validation (`CS/SS/RIP/RSP/RFLAGS/CR3`
 principles); `sysret`/`iretq` never consume user-controlled values
 (frames are kernel-built).
 
-## Future (18c+, not implemented)
+## Future (not implemented)
 
-`read`, more fds, `sbrk`/arenas, richer errors, blocking waits. None of
-these exist; the namespace and the copyin primitives are designed to
+`sbrk`, blocking waits, `argv`/`env`, richer errors beyond `sys_err`.
+(`read`, more fds, and bounded arenas arrived in 18d/P1.) The namespace
+and the copyin primitives stay designed to
 extend without renumbering. (Full 64-bit pointers are already accepted
 and validated per §Registers above, so they are not future work.)

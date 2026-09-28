@@ -38,6 +38,12 @@ and completion status. Planned: reclamation and more capable loading when needed
 Stage 9 adds a version-2, 64-byte display handoff in the reserved page
 0x5000..0x6000, collected by the real-mode transition and mapped read-only/NX.
 No general boot-argument protocol exists yet.
+Since BOOT-A1 the loader is no longer confined to the `0x8000..0x70000`
+window: the sector loads a fixed 4 KiB boot part (LBA 1–8), the boot code
+chunk-reads the kernel file into low staging and copies it to its 8 MiB
+link base (16 MiB memory cap, checksummed, header-driven page-table
+sizing), and the raw image grows past its 1 MiB minimum for large
+kernels. See `docs/design/boot.md`.
 
 ## 2. CPU architecture
 
@@ -50,7 +56,9 @@ Stage 2 replaces the temporary boot GDT with null, ring-0 long-code (0x08), and
 ring-0 data/stack (0x10) descriptors. `LGDT`, far return/segment reloads, `SGDT`,
 and selector checks verify the switch. It then builds a 256-slot IDT, installs
 32 exception gates and 16 PIC IRQ gates, performs `LIDT`/`SIDT`, and checks gate
-addresses/attributes. The remaining 208 entries are non-present. Stage 18a adds
+addresses/attributes. INT-A1 additionally installs gates for vectors 48–127
+(dynamic pool, reserved for MSI/PCI use) and the 255 spurious vector, leaving
+the rest non-present. Stage 18a adds
 a 7-entry GDT (user data `0x1B`, user code `0x23`, TSS `0x28` with `RSP0`, no IST)
 and a DPL3 `int $0x80` gate; see `docs/design/userspace.md`.
 
@@ -78,7 +86,12 @@ frame allocation, virtual-memory, bounded kernel heap and kernel scheduling APIs
 Stage 18a adds CPL0↔CPL3 transitions for a static two-context userspace
 foundation; Stage 18b adds the RYNX loader and frozen exit/write/yield
 syscalls over it; Stage 18c adds the CPL3 native runtime library
-(`user/lib/rt/`) over those syscalls.
+(`user/lib/rt/`) over those syscalls. Stage 18d adds processes, pipes,
+the CPL3 shell/REPL and syscalls 3–8; P1-A1/A2/A3 add durable files
+via syscalls 9–13; PCI-A1 adds PCI discovery with BAR mapping; DMA-A1
+adds DMA buffers; BOOT-A1 moves the kernel to its 8 MiB link base;
+INT-A1 adds ACPI/APIC discovery with a unified IRQ core over a retained
+PIC fallback.
 
 Plan: an original, small monolithic Rynorkernel owns CPU state, memory,
 interrupts, scheduling, devices, and filesystem services. Early milestones run
@@ -90,8 +103,10 @@ this is a language/toolchain dependency, not an imported OS implementation.
 ## 4. Memory management
 
 Unchanged required boot state: three zeroed page-table pages at
-0x1000–0x3fff identity-map the first 2 MiB using one writable/executable 2 MiB
-page; the fixed kernel stack spans 0x7c000–0x7ffff. Stage 4 inspects/reserves these
+0x1000–0x3fff identity-map low RAM plus the kernel extent using
+header-sized writable/executable 2 MiB pages (one page pre-BOOT-A1;
+`pd_count` 1–12 now, covering up to the 16 MiB cap); the fixed kernel
+stack spans 0x7c000–0x7ffff. Stage 4 inspects/reserves these
 tables but adds no mappings. Stage 5 replaces them completely with PMM-owned
 four-level tables and 4 KiB leaves; no user-space isolation is claimed.
 
@@ -182,7 +197,12 @@ The 8259 PIC uses manual EOI (slave before master); ISR readback distinguishes
 spurious IRQ7/15. Only IRQ0 is enabled during the timer test; Stage 8 enables
 IRQ1 (keyboard) and Stage 10 re-enables IRQ0 (scheduler/runtime) for their
 bounded test phases; every line is masked again before the next phase and on the
-final halt. No APIC/SMP complexity is introduced.
+final halt. INT-A1 adds ACPI RSDP/MADT discovery, LAPIC/IOAPIC drivers with
+source overrides, a vector allocator (32–47 legacy, 48–127 dynamic, 255
+spurious), and a unified IRQ core with APIC EOI; the kernel switches the
+same IRQ0/IRQ1 sources onto the IOAPIC after proving them, keeps the PIC
+as the verified fallback, and proves PIT delivery plus an 8042 ECHO byte
+on the APIC path. No SMP complexity is introduced.
 PIT channel 0 mode 2 uses divisor 11932 with QEMU's 1193182 Hz clock, giving
 1193182/11932 Hz (about 99.9984914516 Hz). The non-blocking IRQ handler alone
 increments a static 64-bit tick counter and records three samples. Foreground
@@ -199,7 +219,8 @@ triple-fault: there is no IST/emergency stack or general fault recovery
 
 Plan: introduce input interrupts only at their milestone. Handlers must remain
 bounded and non-blocking; deferred work belongs outside interrupt context.
-APIC/multicore choices remain future work. Preemption requires safe context
+Multicore choices remain future work; MSI/MSI-X message-signaled delivery is
+the next interrupt slice after INT-A1. Preemption requires safe context
 switching; the separately audited Stage 7 scheduler supplies that mechanism.
 
 ## 6. Device drivers
@@ -219,7 +240,11 @@ PCI/BGA state, maps the whole frame uncached supervisor RW/NX at
 bounds-checked rect/pixel/text API over BGRX. Host pixel evidence is captured
 independently via full QEMU HMP `pmemsave` and actual `screendump` scanout,
 including every supported glyph. See `docs/design/framebuffer.md`.
-No general driver framework exists beyond that layout.
+PCI-A1 adds generic PCI discovery (bridge-aware enumeration, static registry)
+with safe BAR sizing and MMIO mapping, kernel-internal only. DMA-A1 adds DMA
+buffers over physically contiguous PMM frames with a `bus == phys` model (no
+IOMMU) and never enables bus mastering. See `docs/design/pci.md` and
+`docs/design/dma.md`. No general driver framework exists beyond that layout.
 
 The official icon at `assets/branding/icon.png` is an original-byte-preserving
 project resource. Host builds package it and a manifest in a separate deterministic
@@ -234,8 +259,9 @@ and a controller-independent `BlockDevice` API (`kernel/storage/blk.c`,
 and bounded timeouts — no DMA, no interrupts, no filesystem. Drivers
 validate device inputs and expose narrow internal interfaces. Polling can
 precede interrupts where it simplifies bring-up, with limitations
-documented. DMA requires reserved buffers
-and address/lifetime rules before use. Real hardware, USB, networking, and broad
+documented. DMA-A1 now provides the reserved buffers with
+address/lifetime rules (`bus == phys`, driver-owned bus mastering).
+Real hardware, USB, networking, and broad
 driver coverage are deferred. Future device models and register contracts remain
 open; the current keyboard, framebuffer, and block contracts are documented above.
 See `docs/design/block-storage.md`.
@@ -253,7 +279,9 @@ overwrite-in-extent `fs_write` (explicit `FS_RANGE` beyond EOF, partial
 writes reported with completed-prefix counts, single-sector atomic unit,
 no metadata changes so torn metadata is impossible, armed fault injection
 for failure tests). No journaling, no atomicity, no durability claims.
-Specify versioning, allocation, directories, file lengths, and corruption checks
+P1-A1/A2/A3 add durable CPL3 files over this base (create/write/stat/
+enumerate/unlink via syscalls 9–13 with rollback proofs). Specify
+versioning, allocation, directories, file lengths, and corruption checks
 before enabling writes. Begin read-only; add writable images with recovery tests
 on disposable disks. Experimental: disk format and recovery mechanism. Do not
 promise crash consistency until its guarantees are specified and tested.
@@ -263,8 +291,9 @@ See `docs/design/filesystem.md`.
 
 Implemented: bounded cooperative and preemptive kernel threads in one shared
 address space, plus static protected user contexts with separate address
-spaces and a validated system-call boundary (18a), RYNX loading (18b), and
-the CPL3 native runtime library (18c).
+spaces and a validated system-call boundary (18a), RYNX loading (18b),
+the CPL3 native runtime library (18c), processes/pipes with syscalls 3–8
+and the CPL3 shell (18d), and durable files via syscalls 9–13 (P1-A1/A2/A3).
 An initial in-kernel monitor and trusted test programs are not protected userspace.
 Task lifecycle, stacks, resource ownership, and cancellation/exit behavior must
 be explicit. Preemptive scheduling follows tested save/restore and synchronization.
@@ -287,7 +316,7 @@ subset is ASCII and 1 MiB bounded, uses exact keyword/operator tables, attaches
 one-based line/column and zero-based byte spans, and stops at the first lexical
 diagnostic. The implementation is Python 3.10+ standard library bootstrap
 tooling and is not linked into Rynorkernel. See `rynorlang/README.md` and
-`docs/design/rynorlang-lexer.md` for the exact contract. Stage 13 adds a host-side parser at `tools/rynorlang/parse.py`. It enforces colon return types, rejects trailing commas, implements the documented precedence including unary `!`, and produces a frozen temporary syntax tree with exact lexer spans and depth-bounded diagnostics. See `docs/design/rynorlang-parser.md`. Stage 14 adds a host-side semantic analyzer at `tools/rynorlang/analyze.py` that lowers the temporary tree to a stable, JSON-compatible AST schema (`Program, Function, Param, Block, Let, If, While, Return, ExprStmt, BinOp, UnOp, IntLit, BoolLit, StrLit, Var, Call`) with exact spans, deterministic symbol indices, and type checking (no implicit conversions, `unit` for missing return, forward function references allowed, no shadowing). Returned dictionaries/lists are caller-owned and mutable; “stable” describes the schema. See `docs/design/rynorlang-ast.md`. Stage 15a adds the typed IR, verifier, native emitter, and test-oracle execution described in §11 below. Stage 15b adds an edition-gated shell surface (`Pipeline`/`Cmd`/`Flag`/`Redirect` AST kinds behind `edition="shell"`, default v1 byte-identical): precedence-0 `|>` pipelines with `str`-only stages and the extended `unit` rule, zero-new-token commands with a stub registry, and a TEST-ONLY bounded host evaluator. No shell codegen, no userspace execution, no kernel evaluation. See `docs/design/rynorlang-shell-language.md`.
+`docs/design/rynorlang-lexer.md` for the exact contract. Stage 13 adds a host-side parser at `tools/rynorlang/parse.py`. It enforces colon return types, rejects trailing commas, implements the documented precedence including unary `!`, and produces a frozen temporary syntax tree with exact lexer spans and depth-bounded diagnostics. See `docs/design/rynorlang-parser.md`. Stage 14 adds a host-side semantic analyzer at `tools/rynorlang/analyze.py` that lowers the temporary tree to a stable, JSON-compatible AST schema (`Program, Function, Param, Block, Let, If, While, Return, ExprStmt, BinOp, UnOp, IntLit, BoolLit, StrLit, Var, Call`) with exact spans, deterministic symbol indices, and type checking (no implicit conversions, `unit` for missing return, forward function references allowed, no shadowing). Returned dictionaries/lists are caller-owned and mutable; “stable” describes the schema. See `docs/design/rynorlang-ast.md`. Stage 15a adds the typed IR, verifier, native emitter, and test-oracle execution described in §11 below. Stage 15b adds an edition-gated shell surface (`Pipeline`/`Cmd`/`Flag`/`Redirect` AST kinds behind `edition="shell"`, default v1 byte-identical): precedence-0 `|>` pipelines with `str`-only stages and the extended `unit` rule, zero-new-token commands with a stub registry, and a TEST-ONLY bounded host evaluator. No shell codegen, no userspace execution, no kernel evaluation. See `docs/design/rynorlang-shell-language.md`. Stages 19a–19d grow the language (aggregates, match/control, modules, conformance); 19e closes feature development (M8 string returns, compiler freeze); the 18d resident evaluator runs the bounded subset in-OS.
 
 ## 11. Compiler
 
@@ -319,18 +348,20 @@ writers, static-only, no heap), and a deterministic program pipeline
 (`tools/rynorlang/program.py`: `.rl` to NASM to object to ELF, low-8-bit
 exit, no argv yet). Host-native test executables only: no RynorOS syscalls,
 no userspace, no self-hosting. See `docs/design/rynorlang-program-model.md`.
+The 19a–19e backend work extends codegen (aggregates, self-host emission);
+full compiler self-hosting stays deferred per the 19e close-out.
 
 ## 12. Userspace
 
-Plan, in four independently testable steps (see `ROADMAP.md` stages
+Implemented, in four independently tested steps (see `ROADMAP.md` stages
 18a–18d): (a) protected-userspace foundation — CPL3 entry, per-process
 address-space isolation, fault containment, clean exit; (b) native
 executable loader plus a small explicit syscall boundary, turning Stage 16
 host-native programs into loadable RynorOS userspace programs; (c) a native
-runtime library over those syscalls (implemented: `user/lib/rt/`, see
+runtime library over those syscalls (`user/lib/rt/`, see
 `docs/design/native-runtime.md`); (d) the native RynorLang shell and REPL
-in CPL3. Initial trusted programs may execute in
-kernel mode as an explicit intermediate milestone. Protected userspace requires
+in CPL3, with processes, pipes, and syscalls 3–8. P1-A1/A2/A3 extend the
+boundary with durable files (syscalls 9–13). Protected userspace requires
 user-mode entry, validated memory access, syscalls, process exit, and loading.
 Runtime I/O such as `print` binds to real OS services (`rt_write`) for in-OS
 targets since 18c; host-native targets keep host bindings.
@@ -344,9 +375,10 @@ heterogeneity comes from explicit closed unions (`record`, `list<T,N>`,
 
 ### 12b. Future native subsystems (Stages 20c–20e, planned)
 
-One shared device model, not per-class bus abstractions: PCI/firmware
-discovery feeds a small device manager with classes for input, audio,
-storage, network, and graphics, with DMA/IOMMU readiness for containment.
+One shared device model, not per-class bus abstractions: the PCI-A1
+discovery/registry and DMA-A1 buffer layer feed a future small device
+manager with classes for input, audio, storage, network, and graphics,
+with DMA/IOMMU readiness for containment.
 Graphics grows a display abstraction, buffers, presentation/sync, a software
 fallback, and a first hardware backend on top of Stage 9 discovery — the
 Stage 9 framebuffer alone never counts as GPU support. Networking grows a
@@ -365,11 +397,13 @@ the original boot prefix plus ordered CPU initialization, real state diagnostics
 real E820/PMM initialization/full-pool tests, VM mapping/permission/fault/OOM tests,
 then heap, timer setup/three real ticks, Stage 7 execution tests, Stage 8
 keyboard `sendkey` handshake, Stage 9 framebuffer pixel evidence, the Stage 10
-runtime worker-fold evidence, and Stage 11 shell evidence, then
-post-IRQ accounting, Stage 17a/b/c block-storage and filesystem sections
+runtime worker-fold evidence, and Stage 11 shell evidence, then PCI
+discovery, the INT-A1 APIC self-test section, post-IRQ accounting,
+Stage 17a/b/c block-storage and filesystem sections
 with host-recomputed digests and image readback, and the Stage 18a
 protected-userspace section (isolated CR3 entries, gate exits, a pinned
-fault matrix, deterministic preemption counts) within their configured
+fault matrix, deterministic preemption counts) plus the 18b/c/d and P1
+lifecycle sections within their configured
 deadlines. RynorLang stages add host-side lexer/parser/semantics/RIR/
 compiler checks with native differential execution where an ELF runner
 exists. Six required exception vectors are
@@ -394,8 +428,11 @@ These checks prove neither general hardware support nor production language
 or Windows execution environments. Current evidence is in
 `docs/reports/stage11.md`, `stage15a.md`, `stage15b.md`, `stage16.md`,
 `stage17a.md`, `stage17b.md`, `stage17c.md`, `stage18a.md`, `stage18b.md`,
-and `stage18c.md` (plus `docs/design/native-runtime.md`);
-the Stage 7, 8, 9, and 10 audits retain their historical findings.
+`stage18c.md`, `stage18d.md`, `stage19a.md`–`stage19e.md`, and `boot-a1.md`
+(plus `docs/design/native-runtime.md`, `pci.md`, `dma.md`, `boot.md`, and
+`acpi-apic.md`); the Stage 7, 8, 9, and 10 audits retain their historical
+findings. The reviewed inventory holds 1110 repository and 495 integration
+test methods.
 
 Stage 10 services are allocation-free foreground calls (IF preserved, IRQ
 context rejected), not syscalls. Strings/rings rely on trusted live extents and
@@ -465,7 +502,7 @@ Two honest implementations satisfy this without false ring claims:
 * **Native isolated subsystem** (preferred, matches Stage 18a): Rynorkernel stays sole Ring 0; Windows code is deprivileged to Ring 3 behind a validated syscall gate + `U/S` paging (`vm_create` activation, `TSS.RSP0`, `syscall/sysret`). No VT-x required. This is OS-level isolation, not virtualization.
 * **Type-1 hypervisor** (alternative): Rynorkernel in VMX Root Ring 0; an unmodified Windows kernel runs in VMX Non-Root Ring 0 with EPT/NPT, vAPIC/vPIC, vPCI and IOMMU isolation. Requires `VT-x + EPT + VPID + IOMMU` and a full device model. Both are described as *architectural trust boundary ≠ CPU privilege level*.
 
-**Windows execution environment — what must be reproduced vs. virtualized.** User-mode: PE/COFF loader, `ntdll` syscall thunks, PEB/TEB, handle/object manager, `VirtualAlloc` (reserve/commit/`PAGE_GUARD`), dispatcher objects (`Event`/`Mutex`/`Semaphore`/`WaitableTimer` with blocking `THREAD_WAITING` queues), registry hives (fake or host-backed), TLS/FSBASE/GSBASE, SEH/VEH/`KiUserExceptionDispatcher` with x64 `pdata/xdata` unwind. Kernel/driver: WDM/WDF `DriverEntry`, `IRP`/`MDL`, DMA/scatter-gather via IOMMU, PnP, NDIS, `DxgKrnl`/`VidMm`/`VidSch`. Current RynorOS has none of this — only supervisor `PMM/VM/heap/kstack` and `FNV-1a` ring-0 services plus the static Stage 18a userspace foundation; CPL3-supplied pointers are never trusted (validated before any use).
+**Windows execution environment — what must be reproduced vs. virtualized.** User-mode: PE/COFF loader, `ntdll` syscall thunks, PEB/TEB, handle/object manager, `VirtualAlloc` (reserve/commit/`PAGE_GUARD`), dispatcher objects (`Event`/`Mutex`/`Semaphore`/`WaitableTimer` with blocking `THREAD_WAITING` queues), registry hives (fake or host-backed), TLS/FSBASE/GSBASE, SEH/VEH/`KiUserExceptionDispatcher` with x64 `pdata/xdata` unwind. Kernel/driver: WDM/WDF `DriverEntry`, `IRP`/`MDL`, DMA/scatter-gather via IOMMU, PnP, NDIS, `DxgKrnl`/`VidMm`/`VidSch`. Current RynorOS has none of this — only supervisor `PMM/VM/heap/kstack`, `FNV-1a` ring-0 services, PCI/DMA discovery primitives, and the 18a–18d/P1 userspace stack (loader, syscalls 0–13, shell, files); CPL3-supplied pointers are never trusted (validated before any use).
 
 **Isolation.** `PMM` frames and `VM` tables are per-address-space, never shared writable host↔guest; `IOMMU` isolates DMA; `SMEP/SMAP/PKE` (future) and `W^X` (`NX` already enforced) block `U→K` access; handle tables and `PML4 509/510/511` (MMIO/window) are kernel-private. No `vm_frame_access` to userspace, no `W+X` leaves.
 

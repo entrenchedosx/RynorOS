@@ -10,17 +10,18 @@ Host tools are not guest RynorOS functionality.
 
 `python tools/build/build.py COMMAND`:
 
-- `validate`: required paths, nonempty files, exact Stage 10/schema-10 metadata,
+- `validate`: required paths, nonempty files, exact frozen Stage 14/schema-14 metadata,
   canonical icon header/hash and `.rl` recognition. Python only; not execution proof.
 - `build`: validate, compile all host/test Python to temporary bytecode, assemble
   NASM sources, compile freestanding C with Clang, link ELF and flat payload with
-  LLD, assemble the BIOS sector, construct a zero-padded 1 MiB raw image, and
+  LLD, assemble the BIOS sector, construct a minimum-1 MiB raw image (grown for
+  large kernels since BOOT-A1), and
   publish a separate `rynoros-resources.zip` icon package.
 - `test`: repository/layout/parser/CLI/resource tests, including real build failures; requires
   native build tools but not QEMU.
 - `boot-test`: build then verify boot prefix, breakpoint diagnostics, real E820/PMM,
-  VM, kernel-heap and scheduler tests and three real timer ticks with post-IRQ PMM/VM/SCHED checking; the timer and scheduler phases are additionally
-  supplemented by the QEMU `pic_interrupt irq 0` trace (all 75 early IRQ0
+  VM, kernel-heap and scheduler tests and three real timer ticks with post-IRQ PMM/VM/SCHED checking, then the keyboard, display, runtime, PCI, APIC, shell, userspace and lifecycle phases; the timer and scheduler phases are additionally
+  supplemented by the QEMU CPU-vector trace (early IRQ0
   deliveries must precede the first IRQ1 delivery, so canned timer/scheduler
   transcripts cannot replace the expected interrupt source). Stage 7's
   frame/RIP/stack checks, not this count alone, establish preemption;
@@ -55,7 +56,7 @@ QEMU uses a headless host display backend with an emulated standard VGA device,
 no network or parallel port, a snapshot disk, and
 has serial output separate from monitor stdio. Each run truncates old logs,
 requires the exact legacy boot prefix, complete ordered Stage 2 diagnostics and
-Stage 4 E820/PMM, Stage 5 VM, Stage 6 kernel-heap, Stage 7 scheduler and Stage 3 IRQ/timer markers (fatal CPU variants stop before PMM),
+Stage 4 E820/PMM, Stage 5 VM, Stage 6 kernel-heap, Stage 7 scheduler, Stage 3 IRQ/timer, keyboard, display, runtime, PCI, APIC, shell, userspace and lifecycle markers (fatal CPU variants stop before PMM),
 checks register/error/flag values and completion state, and sends monitor `quit` in `finally`, with
 3-second normal shutdown then 2-second terminate/kill fallbacks. The owned PID is
 always waited for; forced cleanup fails a successful-boot claim. Interrupting the
@@ -64,7 +65,7 @@ guaranteed to do so. `run.json` records PID, command, exit, and cleanup.
 
 ## Implementation status and tests
 
-Implemented through Stage 18c (the status below is historical to Stage 10 unless noted). `host/repository.py` owns the schema; `host/image.py` the
+Implemented through INT-A1 (the status below is historical to Stage 10 unless noted). `host/repository.py` owns the schema; `host/image.py` the
 fixed-layout image build; `host/qemu.py` the execution harness and
 `host/exception_output.py`, `host/timer_output.py`, `host/pmm_output.py`,
 `host/vm_output.py`, `host/heap_output.py`, `host/sched_output.py` and `host/boot_output.py` the captured-output validators. The PMM parser independently
@@ -107,15 +108,16 @@ Stage 7 scheduler checks validate the thread/preemption transcript with
 `host/sched_output.py` and strict repository fixtures; the integration cases prove
 non-yielding preemption and hardware fault/state/ownership failures. These variants
 break implementations, not the truth value of assertions.
-Current counts and measured results are in `../docs/reports/stage9-audit.md`.
+Current counts live in `tools/build/build.py` (1110 repository / 495 integration
+methods); measured results are in the latest `../docs/reports/` audits.
 Audit-only QEMU options select `max` or `qemu64,-nx`, and a below-4G RAM limit
 to test real high physical addresses. Defaults are unchanged. These configure
 emulated hardware, not kernel success flags or substitute firmware maps.
-The loader reads a real payload larger than the original 32 KiB bound using
-one-sector BIOS requests; raw disk format and separate icon packaging are unchanged.
+Since BOOT-A1 the loader chunk-reads the kernel file into staging and copies
+it to its 8 MiB link base; raw disk format and separate icon packaging are unchanged.
 
 Stage 8 validates host-selected PS/2 input against serial events and QEMU device,
-PIC and port-read traces. Stage 9 additionally requires standard VGA and compares
+CPU-vector and port-read traces. Stage 9 additionally requires standard VGA and compares
 complete framebuffer bytes plus actual scanout (`pmemsave` / `screendump`) with
 an independent reference. Evidence is stored as display.pmem/display.ppm beside
 serial/cleanup logs. TCG cache is bounded to 32 MiB. All mutation sources live
@@ -129,7 +131,8 @@ RIP/RSP records (`-d int`). Accurate canned serial, absent physical records,
 missing CPU traces and worker service bypasses are negative tests. Full scope,
 mutation results and hardware limitations are in `docs/reports/stage10-audit.md`.
 
-No RynorLang compiler, incremental cache, package manager, filesystem builder,
-or general-purpose image format. Python 3.10+ is declared; verification used
+No incremental cache, package manager, filesystem builder,
+or general-purpose image format (a RynorLang native compiler and self-host
+emitter exist; see `rynorlang/README.md`). Python 3.10+ is declared; verification used
 Python 3.14.3 on Windows only. Tested native tool versions and firmware are pinned
 in the report; missing tools fail instead of skipping boot checks.

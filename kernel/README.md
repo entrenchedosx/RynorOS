@@ -8,7 +8,9 @@ based physical frame allocation, replace/test kernel paging, run a bounded kerne
 heap self-test, verify three PIC/PIT
 timer IRQs, verify kernel threads and preemption, receive/decode real PS/2
 keyboard input on IRQ1, validate and paint the framebuffer, run bounded
-strings/byte rings and ring-0 runtime services on worker threads, then run the
+strings/byte rings and ring-0 runtime services on worker threads, then bring up
+PCI discovery and ACPI/APIC interrupts, run the shell, userspace, load,
+filesystem and lifecycle phases, then run the
 final integrity gate, mask interrupts and halt. It is not
 built on another kernel or existing OS userspace.
 
@@ -18,7 +20,9 @@ Internal Stage 1 entry `rynorkernel_entry` in `arch/x86_64/entry.asm` requires
 ring-0 long mode, selectors and identity mapping from `../boot/README.md`, and
 disabled interrupts/NMI. It sets RSP=0x80000, clears linker-defined BSS, calls
 `core/main.c:kernel_main` using the SysV x86-64 ABI, then enters CLI/HLT forever.
-There is no public syscall or executable ABI.
+The public syscall ABI (frozen numbers 0–13) and the RYNX executable format are
+specified in `../docs/design/syscall-abi.md` and
+`../docs/design/executable-format.md`.
 
 Stage 2 `include/cpu.h` declares `cpu_initialize`, `cpu_exception_self_test`,
 `exception_dispatch`, and `cpu_halt`, all kernel-internal. The kernel replaces
@@ -45,7 +49,8 @@ PMM-backed mapping API. `mm/vm.c` owns table creation/destruction, range rollbac
 permissions, queries, CR3 replacement and INVLPG; `mm/vm-test.c` handles real
 page-fault diagnostics and narrowly controlled hardware tests. The canonical
 layout, frame-window lifetime and ownership rules are in
-`../docs/design/virtual-memory.md`. There are no process address spaces yet.
+`../docs/design/virtual-memory.md`. Process address spaces arrive later (Stage
+18a narrow exception, 18d/P1 process layer).
 
 Stage 6 `include/heap.h` and `mm/heap.c` define a small, bounded, boundary-tag
 first-fit kernel heap over a fixed 65536-byte arena of PMM frames mapped RW/NX
@@ -68,8 +73,9 @@ bounded drop-newest ring (no allocation/serial/blocking), and a set-1 decoder ma
 the documented subset to physical press/release events with prefix isolation.
 `drivers/keyboard-test.c` separately tests local queue instances, then eight
 host-selected keys (16 bytes, zero drops) while IRQ0 preempts a worker.
-The host checks independent QEMU device/PIC/data-read traces. Queue loss is
-explicit and public consumption saves/restores IF. See `../docs/design/keyboard.md`.
+The host checks independent QEMU device/CPU-vector/data-read traces. Queue loss is
+explicit and public consumption saves/restores IF. Since INT-A1 the same IRQ1
+source is proven again through the IOAPIC. See `../docs/design/keyboard.md`.
 
 Stage 9 `include/display.h` and `drivers/display.c` provide a validated Bochs VBE
 linear frame buffer: the real-mode handoff programs BGA registers (1024x768x32,
@@ -96,8 +102,8 @@ The host independently recomputes every worker fold, the total, the format
 outputs and the buffer wrap payload. Mandatory physical worker records also
 prove saved hardware IRQ RIP/RSP within service code/owned stacks; fixed
 serial values alone cannot reject canned output. `runtime_self_test` runs from `core/main.c` after display and before the
-final integrity gate. This is ring-0 runtime infrastructure only; there is no
-userspace or syscall (Stage 18). See `../docs/design/runtime.md`.
+final integrity gate. This is ring-0 runtime infrastructure only; userspace and
+syscalls live in later stages (18a–18d, P1). See `../docs/design/runtime.md`.
 
 `include/serial.h` declares `serial_init`, `serial_write`, and `serial_flush`.
 Implementation is `arch/x86_64/serial.c`: COM1 at 0x3f8, divisor 1 (115200), 8N1,
@@ -124,11 +130,13 @@ and fixed-layout linking; kernel GDT/IDT, 32 exception entry stubs, shared C
 diagnostics in `interrupts/exceptions.c`, and an assembly-controlled self-test;
 16 IRQ stubs, `interrupts/irq.c` dispatch, `arch/x86_64/pic.c` and `timer.c`.
 `mm/` implements map validation, real frame allocation, virtual memory, the
-bounded kernel heap and self-tests; `drivers/` holds the Stage 8 keyboard and
-Stage 9 framebuffer drivers; `runtime/` holds the Stage 10 bounded
-string/buffer/service sources;
-device code covers architecture-specific serial, PIC, PIT and keyboard support.
-No RynorLang implementation has been added.
+bounded kernel heap, DMA buffers and self-tests; `drivers/` holds the Stage 8
+keyboard, Stage 9 framebuffer and PCI discovery drivers; `runtime/` holds the
+Stage 10 bounded string/buffer/service sources; `interrupts/` holds the INT-A1
+LAPIC/IOAPIC drivers and unified IRQ core; `core/` adds the shell, userspace
+loader, processes, pipes and filesystem syscalls; `acpi/` holds RSDP/MADT
+discovery. RynorLang executes in-OS through the 18d resident evaluator, with
+the host toolchain through self-host emission.
 
 ## Tests
 
@@ -143,15 +151,20 @@ release/reuse, exact accounting and corrupted firmware-map rejection. All live
 linked boot/kernel ranges are checked against the reported final map.
 VM tests exercise real CR3 replacement, hardware writes/execution/faults, permission
 changes, high frames, unmapping/TLB behavior, range rollback, table zeroing and
-allocation failure, plus broken CR3/TLB/zeroing/fault-arm kernel variants.
+allocation failure, plus broken CR3/TLB/zeroing/fault-arm kernel variants. Later
+suites extend coverage to the shell, PCI, DMA, ACPI/APIC interrupts, userspace,
+processes, pipes, filesystem mutation, lifecycle persistence, and the resident
+evaluator (495 integration methods across 30 suites).
 
 ## Known limitations
 
 Only the documented QEMU PC configuration is verified. No
-filesystem, GUI or general graphics stack, userspace, privilege transitions, TSS/IST,
-or general external device support beyond IRQ0, the single PS/2 keyboard on
-IRQ1. No reliable stack-overflow recovery,
-process isolation or address-space switching. Invalid stacks, early boot faults,
+GUI or general graphics stack, no IST/SMP/IOMMU/MSI, no general external
+device drivers beyond PCI discovery, and no networking/USB/audio.
+TSS-based privilege transitions, process isolation and address-space
+switching exist (stages 18a–18d, P1) but remain bounded test phases, not a
+general multitasking service. No reliable stack-overflow recovery.
+Invalid stacks, early boot faults,
 or faults during diagnosis can still reset the CPU; `-no-reboot` makes the runner
 fail. Other exception stubs are best-effort/unexercised, not feature-enablement
 claims. See `../docs/design/cpu.md`, `../docs/design/irq-timer.md` and

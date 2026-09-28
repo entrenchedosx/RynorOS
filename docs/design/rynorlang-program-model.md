@@ -11,7 +11,8 @@ bootstrap ends and the future RynorOS ABI begins. See `rynorlang-rir.md`
 
 A Stage 16 program is a **host-native Linux x86-64 ELF executable** built
 from one `.rl` source file for testing. It is NOT a RynorOS userspace
-program: no RynorOS syscall interface exists yet (Stage 18a), so startup,
+program: no RynorOS syscall interface existed yet at Stage 16 (Stage 18a
+added it), so startup,
 output, and exit go through Linux syscalls in the labeled host runtime
 (`tools/rynorlang/runtime/rt_linux.asm`). Nothing here ships in any RynorOS
 image. The honest name is always "host-native RynorLang program".

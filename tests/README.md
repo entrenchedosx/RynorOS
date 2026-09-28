@@ -30,7 +30,7 @@ command exits, native compile/link failures, strict diagnostic/timer/heap parsin
 canonical PNG integrity, deterministic resource package contents and PMM map/
 accounting/ownership transcript validation.
 Parser fixtures are explicitly synthetic test data, never kernel execution evidence.
-The original 26 tests remain with the metadata assertion advanced to Stage 10/schema 10.
+The original 26 tests remain with the metadata assertion advanced to the frozen Stage 14/schema 14 contract (inventory now 1110 repository methods).
 
 The `integration/` suite retains the five Stage 1 regression cases and adds
 real #DE/#DB/#UD/#GP/#PF execution and an unarmed-breakpoint negative case.
@@ -97,7 +97,7 @@ overflow retention/reuse and loss boundaries; decoder tests check supported keys
 and prefix isolation. Real boots report eight host-selected keys, including
 reordered/repeated keys, shifts and an explicitly UNKNOWN key. The same image is
 used for different sequences; no expected key order is compiled into the guest.
-Independent QEMU device, PIC IRQ1 and port-read traces must match every byte.
+Independent QEMU device, CPU-vector IRQ and port-read traces must match every byte.
 IRQ0 schedules a busy worker concurrently, and resource accounting must balance.
 Actual masked/discard/no-read/counter/ring/decoder/loss/initialization and replay
 mutations must fail. Some failures are intentionally detected by the HOST despite
@@ -144,13 +144,20 @@ map is fabricated for that test. Historical Stage 9 results remain in
 `../docs/reports/stage9-audit.md`; current run counts belong in the active
 stabilization report. Audit logs are under `build/audit-tests/`.
 
+Later suites follow the same evidence discipline through the ring-0 shell,
+block/filesystem storage, protected userspace (loader, syscalls, runtime,
+processes, pipes, CPL3 shell), durable P1 files with lifecycle persistence,
+the RynorLang toolchain and resident evaluator, PCI discovery, DMA buffers,
+BOOT-A1 high loading, and INT-A1 ACPI/APIC interrupts (495 integration
+methods across 30 suites; counts pinned in `tools/build/build.py`).
+
 ## Known limitations
 
-No physical-hardware tests or coverage of user-mode isolation, device IRQs beyond
-IRQ0 (timer), the single IRQ1 PS/2 keyboard, console, windowing, filesystem, userspace,
-or RynorLang execution. Serial success proves
-only this milestone. Other exception vectors, nested faults, TSS/IST, SIMD state,
-privilege transitions, BIOS disk-read error injection and forced-QEMU-cleanup fallbacks are
+No physical-hardware tests; console, windowing, networking, USB, audio, and
+general external device drivers remain uncovered, as do IST/SMP/IOMMU/MSI.
+Serial success proves
+only this milestone. Other exception vectors, nested faults, SIMD state,
+BIOS disk-read error injection and forced-QEMU-cleanup fallbacks are
 not separately exercised; normal monitor cleanup is asserted on success/timeout.
 Slave PIC delivery is not independently hardware-injected. Stage 7's software
 INT probes exercise the spurious IRQ7/15 return paths, not external delivery.

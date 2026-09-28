@@ -1,13 +1,15 @@
 <h1><img src="assets/branding/icon.png" width="56" height="56" alt="RynorOS icon"> RynorOS</h1>
 
 An original operating-system project: **Rynorkernel**, with **RynorLang** (`.rl`)
-planned as its native language — a statically typed shell and scripting
+as its native language — a statically typed shell and scripting
 language (interactive REPL, scripts, structured `|>` pipelines over typed
 values) filling a PowerShell-like *role* with an original design, not a clone.
-Inspired by the simplicity of TempleOS, not based
-on its implementation, Linux, BSD, or an existing userspace.
+The host toolchain runs through native programs and self-host emission, and a
+bounded RynorLang evaluator runs in-OS. Inspired by the simplicity of
+TempleOS, not based on its implementation, Linux, BSD, or an existing
+userspace.
 
-## Current state — Stage 18d native shell and REPL (verified within limits, QEMU TCG)
+## Current state — INT-A1 modern interrupts (verified within limits, QEMU TCG)
 
 This is a single-CPU kernel development platform plus a **host-side RynorLang toolchain through native programs**, **not a usable or
 production-ready OS**. The independently [audited Stage 7 scheduler](docs/reports/stage7-audit.md)
@@ -18,13 +20,21 @@ services driven from real worker threads; see [docs/reports/stage10-audit.md](do
 and [docs/design/runtime.md](docs/design/runtime.md). Stage 11 adds a verified
 ring-0 kernel monitor (`kernel/shell/`) with real `IRQ1` input; see
 [docs/reports/stage11.md](docs/reports/stage11.md) and [docs/design/shell.md](docs/design/shell.md). **Stage 12 freezes the RynorLang lexical subset** and provides one host-side `tools/rynorlang/lex.py` implementation with precise spans, first-error diagnostics, and deterministic output; see [docs/reports/stage12.md](docs/reports/stage12.md) and [docs/design/rynorlang-lexer.md](docs/design/rynorlang-lexer.md). **Stage 13 parses that token stream** into a documented temporary syntax tree with exact spans, precedence, associativity, dangling-else, and depth-bounded diagnostics; see [docs/reports/stage13.md](docs/reports/stage13.md) and [docs/design/rynorlang-parser.md](docs/design/rynorlang-parser.md). **Stage 14 lowers that tree** into a stable JSON-compatible AST and performs name resolution and type checking with exact `SEM_*` diagnostics; see [docs/reports/stage14.md](docs/reports/stage14.md) and [docs/design/rynorlang-ast.md](docs/design/rynorlang-ast.md). **Stage 15a adds a typed IR, verifier, and native backend** with real dominance and a SysV-subset ABI; see [docs/reports/stage15a.md](docs/reports/stage15a.md). **Stage 15b adds an edition-gated shell surface** (`|>` pipelines, commands); see [docs/reports/stage15b.md](docs/reports/stage15b.md). **Stage 16 turns verified sources into real host-native ELF programs**
-with exact-bytes `print`; see [docs/reports/stage16.md](docs/reports/stage16.md). **Stage 17a adds IDE block storage** (PIO discovery, reads, test-device writes, host-recomputed digests); see [docs/reports/stage17a.md](docs/reports/stage17a.md). **Stage 17b adds a read-only native filesystem** (versioned format, validated metadata, path lookup, cross-block reads, corruption rejection); see [docs/reports/stage17b.md](docs/reports/stage17b.md). **Stage 17c adds overwrite-in-extent writes** (explicit partial-write reporting, torn-data-possible/metadata-always-valid, armed fault injection, remount readback); see [docs/reports/stage17c.md](docs/reports/stage17c.md). **Stage 18a adds a static protected-userspace foundation** (CPL3 entry, isolated address spaces, exit/yield gate, fault kills, timer preemption); see [docs/reports/stage18a.md](docs/reports/stage18a.md) and [docs/design/userspace.md](docs/design/userspace.md). **Stage 18b adds executable loading and syscalls** (RYNX envelopes from RYNORFS, fixed code/data/stack reuse, `int $0x80` exit/write/yield, validated copyin, real compiled programs in CPL3); see [docs/reports/stage18b.md](docs/reports/stage18b.md), [docs/design/executable-format.md](docs/design/executable-format.md) and [docs/design/syscall-abi.md](docs/design/syscall-abi.md). **Stage 18c adds a native runtime library in CPL3** (validated exit/write/yield wrappers, transactional formatting, bounded arena, cooperative sync, honest `RT_NOSYS` stubs; RynorLang print rebinds to the library for in-OS targets); see [docs/design/native-runtime.md](docs/design/native-runtime.md). **Stage 18d adds a native shell and REPL in CPL3** (syscalls 3–8, processes/pipes, filesystem scripts, streaming pipelines with backpressure, bounded resident evaluator with transactional commits plus `len(expr)`); see [docs/reports/stage18d.md](docs/reports/stage18d.md) and [docs/design/stage18d-abi.md](docs/design/stage18d-abi.md). The [roadmap](ROADMAP.md) stages 0–18d as implemented milestones (not production readiness); Stage 19 onward remains planned.
+with exact-bytes `print`; see [docs/reports/stage16.md](docs/reports/stage16.md). **Stage 17a adds IDE block storage** (PIO discovery, reads, test-device writes, host-recomputed digests); see [docs/reports/stage17a.md](docs/reports/stage17a.md). **Stage 17b adds a read-only native filesystem** (versioned format, validated metadata, path lookup, cross-block reads, corruption rejection); see [docs/reports/stage17b.md](docs/reports/stage17b.md). **Stage 17c adds overwrite-in-extent writes** (explicit partial-write reporting, torn-data-possible/metadata-always-valid, armed fault injection, remount readback); see [docs/reports/stage17c.md](docs/reports/stage17c.md). **Stage 18a adds a static protected-userspace foundation** (CPL3 entry, isolated address spaces, exit/yield gate, fault kills, timer preemption); see [docs/reports/stage18a.md](docs/reports/stage18a.md) and [docs/design/userspace.md](docs/design/userspace.md). **Stage 18b adds executable loading and syscalls** (RYNX envelopes from RYNORFS, fixed code/data/stack reuse, `int $0x80` exit/write/yield, validated copyin, real compiled programs in CPL3); see [docs/reports/stage18b.md](docs/reports/stage18b.md), [docs/design/executable-format.md](docs/design/executable-format.md) and [docs/design/syscall-abi.md](docs/design/syscall-abi.md). **Stage 18c adds a native runtime library in CPL3** (validated exit/write/yield wrappers, transactional formatting, bounded arena, cooperative sync, honest `RT_NOSYS` stubs; RynorLang print rebinds to the library for in-OS targets); see [docs/design/native-runtime.md](docs/design/native-runtime.md). **Stage 18d adds a native shell and REPL in CPL3** (syscalls 3–8, processes/pipes, filesystem scripts, streaming pipelines with backpressure, bounded resident evaluator with transactional commits plus `len(expr)`); see [docs/reports/stage18d.md](docs/reports/stage18d.md) and [docs/design/stage18d-abi.md](docs/design/stage18d-abi.md). **Stages 19a–19d grow the language** (aggregates, match/control, modules, conformance); see [docs/reports/stage19a.md](docs/reports/stage19a.md) through [docs/reports/stage19d.md](docs/reports/stage19d.md). **Stage 19e closes RynorLang feature development** (M8 string returns, compiler freeze; full self-host scaling deferred); see [docs/reports/stage19e.md](docs/reports/stage19e.md). **P1-A1/A2/A3 add durable userspace files** (create/write/stat/enumerate/unlink via syscalls 9–13). **PCI-A1 adds PCI discovery with BAR mapping**; see [docs/design/pci.md](docs/design/pci.md). **DMA-A1 adds DMA buffers** over contiguous PMM frames; see [docs/design/dma.md](docs/design/dma.md). **BOOT-A1 removes the load ceiling** (8 MiB high-load kernel); see [docs/design/boot.md](docs/design/boot.md). **INT-A1 adds ACPI/APIC interrupts** (RSDP/MADT discovery, LAPIC/IOAPIC, unified IRQ core, PIC fallback); see [docs/design/acpi-apic.md](docs/design/acpi-apic.md). The [roadmap](ROADMAP.md) stages 0–19e plus the P1/PCI/DMA/BOOT/INT tracks as implemented milestones (not production readiness).
 
 Implemented and exercised in QEMU:
 
-- Original BIOS/SeaBIOS boot, x86-64 entry, COM1 serial, kernel GDT/IDT and real
-  exception diagnostics.
-- PIC/PIT IRQs, real E820 memory discovery, 4096-byte physical-frame allocation.
+- Original BIOS/SeaBIOS boot with BOOT-A1 high loading (4 KiB boot part, 8 MiB
+  file / 16 MiB memory kernel caps), x86-64 entry, COM1 serial, kernel GDT/IDT
+  and real exception diagnostics.
+- ACPI RSDP/MADT discovery, LAPIC/IOAPIC with a unified IRQ core (vectors
+  32–127, 255 spurious), PIC/PIT retained as the verified fallback, real E820
+  memory discovery, 4096-byte physical-frame allocation.
+- PCI discovery with BAR sizing/mapping, and DMA buffers over physically
+  contiguous PMM frames (no IOMMU; `bus == phys`).
+- Durable userspace files: create/write/stat/enumerate/unlink via syscalls
+  9–13, plus processes, pipes, and the CPL3 native shell with scripts and a
+  bounded resident evaluator.
 - PMM-owned four-level paging, mapping/unmapping/translation, RO/NX enforcement,
   real page faults and TLB invalidation.
 - A fixed 64 KiB kernel heap.
@@ -48,13 +58,15 @@ Implemented and exercised in QEMU:
 There is no demand paging, GUI/desktop, networking, or SMP/SIMD thread context.
 A subset of host-native sources rebuilds as RYNX and runs as RynorOS
 userspace programs through the Stage 18b loader (fixed code/data/stack
-windows, ≤4 KiB segments, no argv/env, exit/write/yield only, files via
+windows, ≤4 KiB segments, no argv/env, frozen syscalls, files via
 RYNORFS images); Linux ELFs never load directly.
-No COW, swap or new large-page support exists. The shell is a
-`Ring 0` trusted monitor; CPL3 runs compiled programs, not the shell
-(the native shell is `Stage 18d`). `rt_wait_flag`/`rt_nap` are
-caller-bounded cooperative yields only (no kernel sleep/wait-queue);
-an unbounded `max_yields` can starve the single CPU by design.
+No COW, swap or new large-page support exists. The `Ring 0` trusted monitor
+stays frozen with no evaluation; the native shell (Stage 18d: REPL, scripts,
+pipelines, resident evaluator) runs in CPL3 alongside compiled programs.
+`rt_wait_flag`/`rt_nap` are caller-bounded cooperative yields only (no kernel
+sleep/wait-queue); an unbounded `max_yields` can starve the single CPU by
+design. RynorLang feature development is closed (Stage 19e M8); full compiler
+self-hosting remains deferred.
 
 ## What the image actually does
 
@@ -80,15 +92,18 @@ reports eight host-selected keys (16 raw bytes, zero drops), and exercises IRQ1
 while IRQ0 schedules another worker. Stage 9 validates its boot-time display
 handoff, exercises MMIO rollback and guarded drawing/text tests, then paints a
 1024x768 pattern/font atlas. Stage 10 runs bounded string/buffer/service
-self-tests and drives the runtime services from seven worker threads before the
-final PMM/VM/heap/scheduler integrity check passes (keyboard, display, timer and
-runtime each verify their own accounting inside their own phase) and the
-bootstrap context halts with interrupts masked.
+self-tests and drives the runtime services from seven worker threads. Later
+phases verify PCI discovery, ACPI/APIC interrupt bring-up (with the PIT and
+keyboard proofs re-run through the IOAPIC), the ring-0 shell session, and the
+userspace/load/runtime/proc/pipe/filesystem/storage lifecycle before the final
+accounting check passes (each phase verifies its own accounting inside its own
+phase) and the bootstrap context halts with interrupts masked.
 This is an explicit bounded test boot, not an interactive session or uptime service.
 
 PIT configuration is 1193182/11932 Hz (about 99.99849 Hz); serviced IRQs are not
 a wall-clock guarantee. Final retained memory in the normal display configuration
-is fifteen page-table frames plus sixteen heap frames: 126976 allocated bytes.
+is sixteen page-table frames plus sixteen heap frames: 131072 allocated bytes
+(the APIC window adds one frame plus one table over the pre-INT-A1 126976).
 The extra four table pages map foreign device VRAM, not PMM RAM. Worker stack frames and their
 temporary table branch are reclaimed after join.
 
@@ -110,7 +125,8 @@ python tools/build/build.py check
 ```
 
 `validate` checks metadata/assets/structure, not CPU execution. `build` compiles
-and links original guest code, creates the 1 MiB raw boot image and packages
+and links original guest code, creates the minimum-1 MiB raw boot image (it
+grows past 1 MiB for large kernels) and packages
 resources separately. `test` runs repository/parser/build-failure checks.
 `boot-test` builds and captures actual serial output with a default 10-second
 guest-completion deadline (`--timeout` can override it); completed boots may
@@ -132,7 +148,8 @@ Runtime execution evidence is `runtime.pmem` plus CPU interrupt records in
 All evidence lives only in the git-ignored `build/` tree; a clean checkout
 contains no runtime evidence and must regenerate it with the pinned tools.
 Full verification expectations: `integration-test`/`check` take roughly
-approximately 18-20 minutes on the reference host and run QEMU under TCG with the translation
+80–100 minutes on the reference host (495 integration methods across 30
+suites, measured INT-A1-era) and run QEMU under TCG with the translation
 cache bounded to 32 MiB per emulator (see
 [Stage 10 audit](docs/reports/stage10-audit.md) timing records).
 
@@ -147,11 +164,11 @@ uses the same OS identity in text, not an invented icon conversion.
 
 | Path | Responsibility |
 | --- | --- |
-| `boot/` | Original BIOS loader, E820 handoff, long-mode transition |
-| `kernel/` | CPU/IRQs, PMM/VM/heap, stacks and kernel execution |
+| `boot/` | Original BIOS loader, E820 handoff, BOOT-A1 high loading, long-mode transition |
+| `kernel/` | CPU/IRQs, ACPI/APIC, PMM/VM/heap/DMA, PCI, stacks, shell, userspace, filesystem |
 | `assets/` | Canonical identity resource, packaged separately |
 | `tools/`, `tests/` | Host builds and explicit repository/hardware verification |
-| `rynorlang/`, `tools/rynorlang/`, `user/` | Language docs/reserved native tree, implemented host lexer/parser/semantics, and future userspace |
+| `rynorlang/`, `tools/rynorlang/`, `user/` | Language docs/native tree, host toolchain through self-host emission, CPL3 shell/runtime/userspace |
 | `docs/design/`, `docs/reports/` | Contracts, limitations and audit evidence |
 
 Start with [architecture](ARCHITECTURE.md), [roadmap](ROADMAP.md),

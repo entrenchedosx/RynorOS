@@ -13,7 +13,8 @@ stage RFCs. Conflicts resolve in favor of the older freeze.
 
 ## G1. Numbers are append-only, allocated one RFC at a time
 
-- Syscall numbers extend upward from 9 (`SYSCALL_NEXT_FREE = 9`).
+- Syscall numbers extend upward from 14 (`SYSCALL_NEXT_FREE = 14`:
+  Stage 18d took 3–8, P1-A2/A3 took 9–13).
   No RFC may renumber, reuse, or retire a number.
 - No range reservations: ranges rot into false promises. Each RFC
   takes the next free number(s) and records the new free value.

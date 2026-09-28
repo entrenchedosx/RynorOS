@@ -307,10 +307,9 @@ turning into a hang: tripping it fails the exact counts loudly.
 
 ## Static limits (admission control, tested)
 
-* `USER_MAX_CONTEXTS = 2`: two static 4 KiB exit stacks in `.bss`.
-  Creation beyond that fails cleanly with evidence; still two static
-  contexts in 18c (sequential reuse) — a process table is deferred
-  beyond 18c.
+* `USER_MAX_CONTEXTS = 3`: three static 4 KiB exit stacks in `.bss`.
+  Creation beyond that fails cleanly with evidence. A bounded process
+  table arrived in 18d/P1 (`SPAWN`/`WAIT`/`TERMINATE`, `UAPI_MAX_PROCS`).
 * One code, one data, one stack frame per context (PMM-owned, released
   on destroy). Guard page stays unmapped.
 * No FPU/SSE in userspace (blobs use GPRs only); no user `AC`.

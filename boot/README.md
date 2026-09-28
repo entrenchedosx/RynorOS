@@ -6,21 +6,26 @@ Implemented Stage 1: original `sector.asm` BIOS bootstrap and `transition.asm`
 CPU-mode transition load and enter original Rynorkernel under QEMU/SeaBIOS.
 Stage 4 extends the real-mode transition with standard BIOS E820 collection.
 Stage 5 extends disk loading with bounded single-sector requests and replaces
-the temporary boot mappings later in the kernel.
+the temporary boot mappings later in the kernel. BOOT-A1 extends the path
+with a fixed 4 KiB boot part, a checksummed boot header, and chunk-loaded
+high kernel at its 8 MiB link base.
 BIOS fixed-sector loading is chosen to avoid third-party loaders, filesystem
-parsers, ISO utilities, and UEFI packaging for this tiny milestone. It trades
+parsers, ISO utilities, and UEFI packaging. It trades
 portability/expandability for a small, auditable path; it is not a general loader.
 
 ## Public interfaces
 
-The generated 1 MiB raw IDE image contains a 512-byte sector with signature
-55 aa, then a flat linked payload beginning at LBA 1, then zero padding. There
-is no partition table or filesystem. NASM receives `PAYLOAD_SECTORS` from the
-actual linked payload length; counts outside 1..832 fail the build.
+The generated raw IDE image (minimum 1 MiB, grows for large kernels) contains
+a 512-byte sector with signature 55 aa, then the fixed 8-sector boot part
+(LBA 1–8), then the 512-byte boot header (LBA 9), then the kernel file
+(LBA 10+), then zero padding. There
+is no partition table or filesystem. The sector never learns the kernel
+size; out-of-range header sizes fail the build or halt before paging.
 
 SeaBIOS enters the boot sector at physical 0x7c00 with the drive in DL. The
 sector normalizes CS/data segments, initializes a temporary stack, checks BIOS
-extended disk support, and uses INT 13h AH=42h to load into 0800:0000 (physical
+extended disk support, and uses INT 13h AH=42h to load the fixed 8-sector boot
+part into 0800:0000 (physical
 0x8000), one sector per call. Each successful read increments LBA and destination
 segment by 0x20, with offset zero, so no request crosses a 64 KiB boundary.
 Disk errors print `Rynor boot: BIOS disk read failed.` to COM1 and halt.

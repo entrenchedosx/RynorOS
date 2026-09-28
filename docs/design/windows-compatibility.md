@@ -142,9 +142,9 @@ Never claim “hello.exe launched” as completeness. Never weaken a test to hid
 
 ## Known limitations / bare-metal horizons
 
-* **Single CPU, PIC/PIT only** — no `APIC`/`HPET`, no `SMP`, no `IOMMU`, no PCIe enumeration beyond hardcoded `00:02.0`, no `DMA` API, no `PCID` shootdown.
-* **No user isolation beyond the static foundation** — Stage 18a provides two static CPL3 contexts (`TSS`/`RSP0`, `DPL3` gate, per-context address spaces), but no general processes, no `syscall` gate, no `SMEP`/`SMAP`, no `FSBASE`/`GSBASE`, no dynamic per-process `CR3` activation.
-* **No general filesystem** — Stage 17 provides IDE block storage plus read-only RYNORFS v1 with overwrite-in-extent writes; there is still no file creation, enumeration, or directories-as-workspace for `PE` images (an 18b+ concern, not BIOS LBA).
+* **Single CPU, PIC/PIT + APIC** — INT-A1 LAPIC/IOAPIC discovery present, still no `HPET`, no `SMP`, no `IOMMU`; PCI-A1 full enumeration and a DMA-A1 buffer API (`bus == phys`), but no `PCID` shootdown and no APIC timer use.
+* **Bounded user isolation, no Windows process model** — Stage 18a provides static CPL3 contexts (`TSS`/`RSP0`, `DPL3` gate, per-context address spaces), extended by 18b–18d/P1 with an `int $0x80` gate, processes, pipes, and files — but no `SYSCALL`/`SYSRET`, no `SMEP`/`SMAP`, no `FSBASE`/`GSBASE`, no dynamic per-process `CR3` activation.
+* **No general workspace filesystem** — Stage 17 provides IDE block storage plus RYNORFS v1 with P1 file creation/enumeration/unlink; there are still no directories-as-workspace for `PE` images.
 * **Graphics** — only `UC` LFB; `WC`/`WT` `PAT` reprogramming, `GPU` `VRAM`/`GTT`/`PPGTT`, `KMS` atomic modeset, `virtio-gpu`/`Vulkan`/`VFIO` are all future.
 * **Security** — no `TPM`/`Secure Boot`/`VBS`/`HVCI`/`PatchGuard` — see certification program for `A–E` classification.
 

@@ -184,8 +184,9 @@ only, fixed VA). v1-size outputs are still wrapped as v2
 
 ## 10. Filesystem/output publication
 
-No guest file write exists (RYNORFS v1: no create/extend; no
-new syscalls in 19e). Publication = the hex protocol over
+No guest file write existed in 19e scope (RYNORFS v1: no create/extend;
+no new syscalls in 19e — P1 later added 9–13). Publication = the hex
+protocol over
 serial: `S191-BEGIN <nbytes>` line, hex chunks (≤4096
 print each), `S191-END <fnv1a64-hex-of-binary>` line, then
 exit status. Host collects bytes ONLY from the boot serial

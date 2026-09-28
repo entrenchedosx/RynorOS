@@ -1,10 +1,13 @@
 # RynorLang
 
-RynorLang is the planned native language of RynorOS and uses the `.rl` source
+RynorLang is the native language of RynorOS and uses the `.rl` source
 extension. Stages 12-14 provide deterministic host-side bootstrap tooling:
 a lexer, parser, and semantic analyzer. Stage 15a adds a typed IR, verifier,
-and native backend plus a test-only oracle. Kernel execution remains a later
-stage.
+and native backend plus a test-only oracle; 15b adds the shell surface;
+16 adds host-native programs; 19a-19d grow aggregates, match/control,
+modules, and conformance; 19e closes feature development (M8 string
+returns, compiler freeze). A bounded resident evaluator executes RynorLang
+in-OS (Stage 18d); full compiler self-hosting stays deferred.
 
 ## Lexical subset
 
@@ -81,12 +84,12 @@ deterministic JSON on success and a diagnostic on stderr on failure
 (`--edition v1|shell` on lex/parse/analyze; analyze in shell edition resolves
 commands against an explicit stub registry — `DEMO_COMMANDS` for the CLI —
 never a fake OS database). The lexer
-has 49 repository tests with 16 valid and 19 invalid fixtures. The parser has 54
+has 49 repository tests with 16 valid and 19 invalid fixtures. The parser has 55
 repository tests with 14 valid and 21 invalid fixtures, including five live
 mutation checks. The semantics has 63 repository tests with 12 valid and 20 invalid fixtures, including twenty-one live behavioral mutation checks.
-The RIR layer has 48 repository tests with golden text, verifier units,
+The RIR layer has 49 repository tests with golden text, verifier units,
 slot-soundness probes, a branch-dominance test, and builder mutations. The
-compiler layer has 39 repository tests with golden ASM, determinism, negative
+compiler layer has 40 repository tests with golden ASM, determinism, negative
 pre-emit checks, `check_asm` abuse flagging, native differential runs (17 good
 + 3 trap fixtures), and 21 mutation-focused RIR/backend tests. The shell
 surface has 47 repository tests with 12 good + 11 bad `shell-edition/`
@@ -122,10 +125,12 @@ with dominance verifier and shared slot allocator, NASM backend for the
 SysV-subset ABI (`int`/`bool`/`str`/`unit`, spill-everything homes, `ud2`/`int3`
 traps), disclosed host harness, and a test-only oracle.
 
-Not implemented: modules/imports, runtime services beyond exact-bytes
-`print`, OS bindings, native RynorOS applications, argv, heap allocation,
+Not implemented: OS bindings, native RynorOS applications, argv,
 self-hosting, or in-kernel execution. No type inference, no all-paths
-return checking, no shadowing, no builtins beyond `print`.
+return checking, no shadowing. Modules/imports, aggregates, match/control,
+`len`/`byte_at`/bitwise builtins, and bounded in-OS heap allocation arrived
+in Stages 19a-19d and 18d (see the stage reports); this page freezes the
+12-16 bootstrap contract.
 
 ## Stage 16 host-native programs
 

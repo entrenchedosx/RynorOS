@@ -38,8 +38,9 @@ map/unmap page/range, query/translate, protect, frame access and integrity check
 exact armed page-fault recovery and real hardware self-tests. Tables come only
 from PMM and are zeroed; data leaves borrow caller-owned frames. Calls require
 IF=0, and temporary pointers expire on the next VM operation. The active kernel
-space cannot be destroyed. No user processes, COW, swap, demand paging or large
-pages are implemented. See [VM design](../../docs/design/virtual-memory.md) for
+space cannot be destroyed. No COW, swap, demand paging or large
+pages are implemented (user processes consume the Stage 18a narrow exception
+and the 18d/P1 process layer). See [VM design](../../docs/design/virtual-memory.md) for
 API errors, layout, permissions, invariants, rollback and verification.
 
 ### Kernel heap (Stage 6)
@@ -58,3 +59,12 @@ VM and before the PIC/PIT timer; the scheduler follows the timer (
 requires one CPU and IF=0, and no IRQ handler may call it. See
 [heap design](../../docs/design/heap.md) for block layout, context and corruption
 checks. This is an internal kernel allocator, not a libc `malloc` or user allocator.
+
+### DMA buffers (DMA-A1)
+
+`dma.h`/`dma.c` allocate physically contiguous PMM frames for device DMA with
+a `bus == phys` model (no IOMMU): a dedicated write-back arena, zero-on-alloc,
+alignment/power-of-two validation, and sync-barrier primitives. Bus mastering
+is never enabled here; future drivers own it. `dma-test.c` proves determinism
+(first-fit base, exact reuse identities) and rollback. See
+[DMA design](../../docs/design/dma.md).
