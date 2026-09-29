@@ -122,6 +122,8 @@ COMMAND after enumeration and requires bit equality (`restore` rows).
 PCI-A1 never sets `BUS_MASTER`, never enables decoding globally,
 never writes device MMIO, and never touches interrupt modes: sizing
 is the only config-space write path, and it is fully restored.
+MSI/MSI-X programming (INTX_DISABLE, message registers) lives in
+INT-A2's `msi.c` on top of this transport (see `msi.md`).
 
 ## MMIO mapping
 

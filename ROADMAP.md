@@ -2,7 +2,7 @@
 
 Stages 0–19e are implemented within their documented scopes, as are the
 P1-A1/A2/A3 filesystem, PCI-A1 discovery, DMA-A1 buffer, BOOT-A1 high-load,
-and INT-A1 interrupt tracks. Full compiler self-hosting and Stage 20 onward
+and INT-A1/INT-A2 interrupt tracks. Full compiler self-hosting and Stage 20 onward
 remain **planned**. Stage labels are milestone boundaries, not claims of
 production readiness. Each row has an observable exit condition, not a claim
 of functionality. Stages may be split further. Numbering is a working
@@ -53,6 +53,7 @@ defects and repaired them. Current evidence is in `docs/reports/stage7-audit.md`
 | DMA-A1 | DMA buffers — implemented | Physically contiguous PMM frames with `bus == phys` (no IOMMU), dedicated WB arena, zero-on-alloc, sync-barrier API; bus mastering never enabled. See `docs/design/dma.md`. |
 | BOOT-A1 | High-load kernel — implemented | 4 KiB boot part + checksummed header + chunk-loaded kernel at its 8 MiB link base (16 MiB memory cap); oversized-matrix and loader-mutant gates. See `docs/design/boot.md`. |
 | INT-A1 | ACPI/APIC interrupts — implemented | RSDP/RSDT-XSDT/MADT discovery, LAPIC/IOAPIC drivers, unified IRQ core (vectors 32–127, 255 spurious), PIT + keyboard proofs on the APIC path, retained PIC fallback. See `docs/design/acpi-apic.md`. |
+| INT-A2 | PCI MSI/MSI-X delivery — implemented | Capability-list walker, MSI + MSI-X transports, x86 message builder, generic `pci_irq` API over vectors 48–127; live edu/xHCI/e1000e proofs with INTx defense, testdev negative, 4-mutant gate; zero net frame growth. See `docs/design/msi.md` and `docs/reports/int-a2.md`. |
 | 20a | Native system tools | Native build/link/image tools replace documented host dependencies; audited reproducible outputs. |
 | 20b | Self-hosting RynorOS | Rebuild kernel, libraries, shell, applications, and boot artifacts inside RynorOS from source, with reproducibility evidence. Headless/serial scope: no GPU, network, or audio drivers required (those land in 20c–20e). |
 | 20c | Native graphics subsystem | Display abstraction over Stage 9 discovery (no raw-LFB pokes by clients): buffers, presentation, vsync/fence synchronization, software rasterizer fallback, a command-submission abstraction, capability query, and a first hardware backend; GPU/device discovery with explicit bare-metal limits. Exit: native API demo (composited rect/text via the API with pixel evidence), backend matrix incl. fallback-only QEMU, no-silently-dropped-frames proof. No Windows API here. |

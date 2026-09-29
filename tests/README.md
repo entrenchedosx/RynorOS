@@ -30,7 +30,7 @@ command exits, native compile/link failures, strict diagnostic/timer/heap parsin
 canonical PNG integrity, deterministic resource package contents and PMM map/
 accounting/ownership transcript validation.
 Parser fixtures are explicitly synthetic test data, never kernel execution evidence.
-The original 26 tests remain with the metadata assertion advanced to the frozen Stage 14/schema 14 contract (inventory now 1110 repository methods).
+The original 26 tests remain with the metadata assertion advanced to the frozen Stage 14/schema 14 contract (inventory now 1127 repository methods).
 
 The `integration/` suite retains the five Stage 1 regression cases and adds
 real #DE/#DB/#UD/#GP/#PF execution and an unarmed-breakpoint negative case.
@@ -148,8 +148,9 @@ Later suites follow the same evidence discipline through the ring-0 shell,
 block/filesystem storage, protected userspace (loader, syscalls, runtime,
 processes, pipes, CPL3 shell), durable P1 files with lifecycle persistence,
 the RynorLang toolchain and resident evaluator, PCI discovery, DMA buffers,
-BOOT-A1 high loading, and INT-A1 ACPI/APIC interrupts (495 integration
-methods across 30 suites; counts pinned in `tools/build/build.py`).
+BOOT-A1 high loading, INT-A1 ACPI/APIC interrupts, and INT-A2 PCI MSI/MSI-X
+delivery (505 integration methods across 31 suites; counts pinned in
+`tools/build/build.py`).
 
 ## Known limitations
 

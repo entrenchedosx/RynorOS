@@ -3,7 +3,7 @@
 ## Scope and honesty
 
 The current scope includes boot with high loading, serial, CPU
-descriptors/exceptions, ACPI/APIC interrupts over a retained PIC/PIT fallback,
+descriptors/exceptions, ACPI/APIC/MSI interrupts over a retained PIC/PIT fallback,
 real E820/physical frames, four-level virtual memory, a bounded kernel heap,
 DMA buffers, PCI discovery, single-CPU kernel threads/preemption, PS/2
 keyboard input, the validated framebuffer, bounded strings/byte rings and

@@ -135,7 +135,8 @@ Arithmetic flags, DF, IF and RF are preserved; TF, IOPL, NT and VM are rejected.
 RF must be accepted in actual hardware frames, not confused with an invalid bit.
 NMI remains masked and no nested scheduling is supported.
 
-Frame validation accepts the entire PIC vector range 32..47, not only IRQ0.
+Frame validation accepts IRQ vectors 32..127 (legacy 32..47 plus the
+INT-A1/INT-A2 dynamic MSI/GSI pool 48..127), not only IRQ0.
 Only IRQ0 drives selection; other IRQs retain their interrupted context. The
 self-test executes INT 39/47 with the PIC masked and ISR clear to exercise real
 CPU frame creation and IRETQ through the spurious IRQ7/15 paths. This is not a

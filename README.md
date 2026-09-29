@@ -148,11 +148,14 @@ Runtime execution evidence is `runtime.pmem` plus CPU interrupt records in
 
 All evidence lives only in the git-ignored `build/` tree; a clean checkout
 contains no runtime evidence and must regenerate it with the pinned tools.
-Full verification expectations: `integration-test`/`check` take roughly
+Full verification expectations: `integration-test` takes roughly
 80–110 minutes on the reference host (505 integration methods across 31
-suites, measured INT-A2-era) and run QEMU under TCG with the translation
-cache bounded to 32 MiB per emulator (see
+suites; 103 minutes measured INT-A2-era) and runs QEMU under TCG with the
+translation cache bounded to 32 MiB per emulator (see
 [Stage 10 audit](docs/reports/stage10-audit.md) timing records).
+The repository suite adds about 4 hours on the same host (RynorLang
+selfhost modules dominate; 237 minutes measured INT-A2-era), so a full
+`check` is roughly 5–6 hours wall time.
 
 ## Identity and layout
 

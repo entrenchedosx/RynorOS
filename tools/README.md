@@ -108,7 +108,7 @@ Stage 7 scheduler checks validate the thread/preemption transcript with
 `host/sched_output.py` and strict repository fixtures; the integration cases prove
 non-yielding preemption and hardware fault/state/ownership failures. These variants
 break implementations, not the truth value of assertions.
-Current counts live in `tools/build/build.py` (1110 repository / 495 integration
+Current counts live in `tools/build/build.py` (1127 repository / 505 integration
 methods); measured results are in the latest `../docs/reports/` audits.
 Audit-only QEMU options select `max` or `qemu64,-nx`, and a below-4G RAM limit
 to test real high physical addresses. Defaults are unchanged. These configure

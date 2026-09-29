@@ -152,9 +152,9 @@ linked boot/kernel ranges are checked against the reported final map.
 VM tests exercise real CR3 replacement, hardware writes/execution/faults, permission
 changes, high frames, unmapping/TLB behavior, range rollback, table zeroing and
 allocation failure, plus broken CR3/TLB/zeroing/fault-arm kernel variants. Later
-suites extend coverage to the shell, PCI, DMA, ACPI/APIC interrupts, userspace,
-processes, pipes, filesystem mutation, lifecycle persistence, and the resident
-evaluator (495 integration methods across 30 suites).
+suites extend coverage to the shell, PCI, DMA, ACPI/APIC/MSI interrupts,
+userspace, processes, pipes, filesystem mutation, lifecycle persistence,
+and the resident evaluator (505 integration methods across 31 suites).
 
 ## Known limitations
 

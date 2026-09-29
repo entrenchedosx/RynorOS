@@ -142,7 +142,7 @@ Never claim “hello.exe launched” as completeness. Never weaken a test to hid
 
 ## Known limitations / bare-metal horizons
 
-* **Single CPU, PIC/PIT + APIC** — INT-A1 LAPIC/IOAPIC discovery present, still no `HPET`, no `SMP`, no `IOMMU`; PCI-A1 full enumeration and a DMA-A1 buffer API (`bus == phys`), but no `PCID` shootdown and no APIC timer use.
+* **Single CPU, PIC/PIT + APIC** — INT-A1 LAPIC/IOAPIC discovery and INT-A2 PCI MSI/MSI-X delivery present, still no `HPET`, no `SMP`, no `IOMMU`; PCI-A1 full enumeration and a DMA-A1 buffer API (`bus == phys`), but no `PCID` shootdown and no APIC timer use.
 * **Bounded user isolation, no Windows process model** — Stage 18a provides static CPL3 contexts (`TSS`/`RSP0`, `DPL3` gate, per-context address spaces), extended by 18b–18d/P1 with an `int $0x80` gate, processes, pipes, and files — but no `SYSCALL`/`SYSRET`, no `SMEP`/`SMAP`, no `FSBASE`/`GSBASE`, no dynamic per-process `CR3` activation.
 * **No general workspace filesystem** — Stage 17 provides IDE block storage plus RYNORFS v1 with P1 file creation/enumeration/unlink; there are still no directories-as-workspace for `PE` images.
 * **Graphics** — only `UC` LFB; `WC`/`WT` `PAT` reprogramming, `GPU` `VRAM`/`GTT`/`PPGTT`, `KMS` atomic modeset, `virtio-gpu`/`Vulkan`/`VFIO` are all future.
