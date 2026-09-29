@@ -138,6 +138,13 @@ REQUIRED_FILES = (
     "kernel/interrupts/msi-test.c", "tools/host/msi_output.py",
     "tests/integration/test_msi.py", "tests/repository/test_msi_output.py",
     "docs/design/msi.md", "docs/reports/int-a2.md",
+    # xHCI-A1 first real driver: command + event engine, gated
+    # self-test, host validator, tests, docs.
+    "kernel/include/xhci.h", "kernel/drivers/xhci.c",
+    "kernel/drivers/xhci-test.c", "tools/host/xhci_output.py",
+    "tests/integration/test_xhci.py",
+    "tests/repository/test_xhci_output.py",
+    "docs/design/xhci.md", "docs/reports/xhci-a1.md",
     "kernel/include/kstring.h", "kernel/include/kbuf.h", "kernel/include/krst.h",
     "kernel/runtime/kstring.c", "kernel/runtime/kbuf.c", "kernel/runtime/krst.c",
     "kernel/runtime/runtime-test.c", "kernel/runtime/README.md",
