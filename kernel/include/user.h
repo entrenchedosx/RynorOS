@@ -144,6 +144,9 @@ enum user_blob {
     USER_BLOB_MOVSS, USER_BLOB_DIVZERO, USER_BLOB_SYSCALL,
     USER_BLOB_SS_RSP, USER_BLOB_KERN_RSP,
     USER_BLOB_IRETQ_KCS, USER_BLOB_RETFQ_KCS, USER_BLOB_RDMSR,
+    /* xHCI-A1 CPL3 workload: counter + accumulator + yields. Completes
+       via exit (not a fault payload); driven only by xhci_self_test. */
+    USER_BLOB_XWORK,
 };
 
 int user_initialize(void); /* probe + static checks, once, foreground */

@@ -1,5 +1,6 @@
 #include "user.h"
 #include "ksched.h"
+#include "apic.h"
 #include "irq.h"
 #include "io.h"
 #include "serial.h"
@@ -50,6 +51,7 @@ extern const char user_blob_kern_rsp[], user_blob_kern_rsp_end[];
 extern const char user_blob_iretq_kcs[], user_blob_iretq_kcs_end[];
 extern const char user_blob_retfq_kcs[], user_blob_retfq_kcs_end[];
 extern const char user_blob_rdmsr[], user_blob_rdmsr_end[];
+extern const char user_blob_xwork[], user_blob_xwork_end[];
 extern cpu_u64 user_enter_asm(struct exception_frame *, struct exception_frame *, cpu_u64);
 
 static void panic(const char *why) __attribute__((noreturn));
@@ -168,6 +170,7 @@ static const struct { const char *start, *end; } blobs[] = {
     {user_blob_iretq_kcs, user_blob_iretq_kcs_end},
     {user_blob_retfq_kcs, user_blob_retfq_kcs_end},
     {user_blob_rdmsr, user_blob_rdmsr_end},
+    {user_blob_xwork, user_blob_xwork_end},
 };
 #define USER_BLOB_COUNT ((unsigned int)(sizeof(blobs) / sizeof(blobs[0])))
 
@@ -249,7 +252,11 @@ int user_save_state(struct user_context *c, struct exception_frame *f)
        space, so every pure check runs first and failure returns with
        the entry stack still valid for a clean diagnostic halt. */
     if (!user_origin_ok(c, f)) return 0;
-    if (f->vector < IRQ_BASE || f->vector >= IRQ_BASE + IRQ_COUNT || f->error != 0)
+    /* Parkable vectors mirror irq_dispatch exactly: legacy 32-47 plus the
+       INT-A2 MSI-owned dynamic pool 48-127. MSI/MSI-X delivery to a live
+       CPL3 thread is a real external interrupt and must park like one. */
+    if (f->vector < APIC_VECTOR_IRQ_BASE ||
+        f->vector > APIC_VECTOR_DYNAMIC_END || f->error != 0)
         return 0;
     /* The CPU loaded RSP0 on entry; it must be this context's exit top.
        Anything else means a desynced TSS and an untrusted stack. */

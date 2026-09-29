@@ -17,6 +17,10 @@ int irq_set_enabled(unsigned int irq, int enabled);
    non-cascade IRQ; never changes the enabled state. */
 int irq_set_handler(unsigned int irq, irq_handler handler, void *opaque);
 int irq_in_context(void);
+/* Last dispatched frame origin (xHCI-A1 CPL3-preemption proof): nonzero
+   when the most recent IRQ arrived from CPL3, plus its RIP. */
+int irq_last_frame_user(void);
+cpu_u64 irq_last_frame_rip(void);
 /* Dispatch a hardware IRQ and return the frame to resume from. Returns the same
    frame unless the scheduler preempted, in which case it returns a pointer to
    the next thread's saved context. Never returns NULL. */

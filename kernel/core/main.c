@@ -12,6 +12,7 @@
 #include "dma.h"
 #include "krst.h"
 #include "msi.h"
+#include "xhci.h"
 #include "shell.h"
 #include "blk.h"
 #include "fs.h"
@@ -122,6 +123,15 @@ void kernel_main(void)
        Disabled prints nothing, so default transcripts stay
        byte-identical. */
     if (RYNOR_MSI_TEST) msi_self_test();
+    serial_flush();
+    /* xHCI-A1 gated self-test (test images only): its [XHCI]
+       section becomes the transcript terminator when enabled.
+       Compile-gated (not runtime-gated) so the objects stay out
+       of default images entirely: default transcripts AND the
+       default kernel layout stay byte-identical. */
+#if RYNOR_XHCI_TEST
+    xhci_self_test();
+#endif
     serial_flush();
     /* Stage 18d Slice E shell boot (shell images only): mounts the
        filesystem, enters /bin/sh on the bootstrap thread, and never

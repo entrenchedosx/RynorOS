@@ -6,7 +6,7 @@
 
 /* INT-A1 interrupt core: LAPIC + IOAPIC + vector allocator + route table.
    Legacy ISA IRQs keep vectors 32-47 on both backends; the dynamic pool
-   48-127 is reserved for future MSI/PCI use (INT-A2). No SMP startup. */
+   48-127 is MSI-owned since INT-A2. No SMP startup. */
 
 enum apic_result {
     APIC_OK = 0,
@@ -163,6 +163,12 @@ void apic_redir_bits(unsigned int vector, unsigned int dest, int level, int low,
 /* Synthetic core fixtures (no hardware); count pinned by the host. */
 void apic_test_synthetic(void);
 unsigned int apic_test_cases(void);
+
+/* IRQ-context kernel-CR3 guard for MMIO (xHCI-A1: shared with the xHCI
+   handler for controller MMIO + event-ring access on CPL3 frames).
+   Returns the previous CR3; exit restores it. No-op on kernel CR3. */
+cpu_u64 apic_mmio_enter(void);
+void apic_mmio_exit(cpu_u64 saved);
 
 /* Backend switch + self-test driver. */
 enum apic_result apic_activate(void);

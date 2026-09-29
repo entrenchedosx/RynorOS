@@ -68,7 +68,7 @@ static void write_cr3(cpu_u64 v)
    Safe: IF=0 throughout dispatch and all foreground callers (no
    reentrancy), and stack/code/data are shared-high mappings present on
    both roots. No-op on the kernel CR3. */
-static cpu_u64 mmio_enter(void)
+cpu_u64 apic_mmio_enter(void)
 {
     struct vm_space *k = vm_kernel_space();
     cpu_u64 kroot = k ? k->root : 0;
@@ -77,43 +77,43 @@ static cpu_u64 mmio_enter(void)
     return now;
 }
 
-static void mmio_exit(cpu_u64 saved)
+void apic_mmio_exit(cpu_u64 saved)
 {
     if (saved != read_cr3()) write_cr3(saved);
 }
 
 static cpu_u32 lapic_read(cpu_u32 reg)
 {
-    cpu_u64 saved = mmio_enter();
+    cpu_u64 saved = apic_mmio_enter();
     cpu_u32 v = *(volatile cpu_u32 *)(lapic_va + reg);
-    mmio_exit(saved);
+    apic_mmio_exit(saved);
     return v;
 }
 
 static void lapic_write(cpu_u32 reg, cpu_u32 value)
 {
-    cpu_u64 saved = mmio_enter();
+    cpu_u64 saved = apic_mmio_enter();
     *(volatile cpu_u32 *)(lapic_va + reg) = value;
-    mmio_exit(saved);
+    apic_mmio_exit(saved);
 }
 
 static cpu_u32 ioapic_read(unsigned int index, cpu_u8 reg)
 {
     cpu_u64 base = APIC_IOAPIC_VA(index);
-    cpu_u64 saved = mmio_enter();
+    cpu_u64 saved = apic_mmio_enter();
     *(volatile cpu_u32 *)(base + IOAPIC_SEL) = reg;
     cpu_u32 v = *(volatile cpu_u32 *)(base + IOAPIC_WIN);
-    mmio_exit(saved);
+    apic_mmio_exit(saved);
     return v;
 }
 
 static void ioapic_write(unsigned int index, cpu_u8 reg, cpu_u32 value)
 {
     cpu_u64 base = APIC_IOAPIC_VA(index);
-    cpu_u64 saved = mmio_enter();
+    cpu_u64 saved = apic_mmio_enter();
     *(volatile cpu_u32 *)(base + IOAPIC_SEL) = reg;
     *(volatile cpu_u32 *)(base + IOAPIC_WIN) = value;
-    mmio_exit(saved);
+    apic_mmio_exit(saved);
 }
 
 /* --- LAPIC ------------------------------------------------------------- */

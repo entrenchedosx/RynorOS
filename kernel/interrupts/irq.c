@@ -61,6 +61,13 @@ int irq_set_handler(unsigned int irq, irq_handler handler, void *opaque)
 
 int irq_in_context(void) { return dispatching != 0; }
 
+/* Last dispatched frame origin (xHCI-A1 CPL3-preemption proof). */
+static cpu_u64 last_frame_cs;
+static cpu_u64 last_frame_rip;
+
+int irq_last_frame_user(void) { return (last_frame_cs & 3u) == 3u; }
+cpu_u64 irq_last_frame_rip(void) { return last_frame_rip; }
+
 static void write_vector(unsigned int vector)
 {
     char buffer[4];
@@ -82,6 +89,8 @@ struct exception_frame *irq_dispatch(struct exception_frame *frame)
     cpu_u64 vector = frame->vector;
     if (vector < APIC_VECTOR_IRQ_BASE || vector > APIC_VECTOR_DYNAMIC_END) cpu_halt();
     if (dispatching) cpu_halt();
+    last_frame_cs = frame->cs;
+    last_frame_rip = frame->rip;
     dispatching = 1;
     struct exception_frame *resume = 0;
     /* Spurious PIC vectors park silently BEFORE route lookup (HEAD order):

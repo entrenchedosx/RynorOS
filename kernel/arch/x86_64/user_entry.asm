@@ -157,6 +157,49 @@ user_blob_yield:
     ud2
 user_blob_yield_end:
 
+; xHCI-A1 CPL3 workload: 8192-iteration counter with register-sensitive
+; accumulator, yielding every 1024 iterations (8 yields). Kernel unmasks
+; a pending xHCI MSI-X mid-run; the completion must preempt this loop
+; and resume with exact final state (counter + r12-r15/rbx dumps).
+global user_blob_xwork
+global user_blob_xwork_end
+user_blob_xwork:
+    mov r11, 0x600000
+    mov qword [r11 + 0x08], 0
+    mov r12, 0xC0DE000000000000
+    mov r13, 0xC0DE000000000001
+    mov r14, 0xC0DE000000000002
+    mov r15, 0xC0DE000000000003
+    mov rbx, 0xC0DE000000000004
+.xloop:
+    inc qword [r11 + 0x08]
+    mov rax, [r11 + 0x08]
+    add r12, rax
+    xor r13, r12
+    add r14, r13
+    xor r15, r14
+    add rbx, r15
+    test rax, 0x3FF
+    jnz .xnoyield
+    mov eax, 1
+    int 0x80
+    mov r11, 0x600000
+    mov rax, [r11 + 0x08]
+.xnoyield:
+    cmp rax, 8192
+    jl .xloop
+    mov r11, 0x600000
+    mov [r11 + 0x10], r12
+    mov [r11 + 0x18], r13
+    mov [r11 + 0x20], r14
+    mov [r11 + 0x28], r15
+    mov [r11 + 0x30], rbx
+    mov eax, 0
+    mov ebx, 77
+    int 0x80
+    ud2
+user_blob_xwork_end:
+
 global user_blob_ud2
 global user_blob_ud2_end
 user_blob_ud2:

@@ -55,7 +55,7 @@ def build_image(root: Path, destination: Path | None = None, *,
                 shell_interactive: bool = False, input_test: bool = False,
                 proc_test: bool = False, pipe_test: bool = False,
                 pci_test: bool = False, dma_test: bool = False,
-                msi_test: bool = False,
+                msi_test: bool = False, xhci_test: bool = False,
                 shell_boot: bool = False, shell_script=None) -> dict:
     if type(test_vector) is not int or test_vector not in (0, 1, 3, 6, 13, 14):
         raise ValueError("Unsupported CPU self-test vector")
@@ -73,6 +73,8 @@ def build_image(root: Path, destination: Path | None = None, *,
         raise ValueError("dma_test must be boolean")
     if type(msi_test) is not bool:
         raise ValueError("msi_test must be boolean")
+    if type(xhci_test) is not bool:
+        raise ValueError("xhci_test must be boolean")
     if type(shell_boot) is not bool:
         raise ValueError("shell_boot must be boolean")
     if shell_script is not None and (type(shell_script) is not str or not
@@ -112,6 +114,7 @@ def build_image(root: Path, destination: Path | None = None, *,
         "kernel/mm/heap-test.c", "kernel/mm/dma-test.c",
         "kernel/interrupts/apic-test.c", "kernel/acpi/acpi-test.c",
         "kernel/interrupts/msi-test.c",
+        "kernel/drivers/xhci-test.c",
     })
     if version != "0.1.0":
         raise ValueError("Unexpected boot banner version; update metadata and boot tests together")
@@ -151,6 +154,12 @@ def build_image(root: Path, destination: Path | None = None, *,
             ("kernel/drivers/display-test.c", "display-test.o"),
             ("kernel/drivers/pci.c", "pci.o"),
             ("kernel/drivers/pci-test.c", "pci-test.o"),
+            # xHCI objects join only xHCI test images: test-gated code
+            # must not perturb the default kernel layout (stale-TLB
+            # negative tests are layout-sensitive).
+            *((("kernel/drivers/xhci.c", "xhci.o"),
+               ("kernel/drivers/xhci-test.c", "xhci-test.o"))
+              if xhci_test else ()),
             ("kernel/runtime/kstring.c", "kstring.o"),
             ("kernel/runtime/kbuf.c", "kbuf.o"),
             ("kernel/runtime/krst.c", "krst.o"),
@@ -202,6 +211,7 @@ def build_image(root: Path, destination: Path | None = None, *,
                            f"-DRYNOR_PCI_TEST={int(pci_test)}",
                            f"-DRYNOR_DMA_TEST={int(dma_test)}",
                            f"-DRYNOR_MSI_TEST={int(msi_test)}",
+                           f"-DRYNOR_XHCI_TEST={int(xhci_test)}",
                            f"-DRYNOR_SHELL_BOOT={int(shell_boot)}",
                            f'-DSHELL_SCRIPT_PATH="{shell_script or ""}"']
             run_tool([
@@ -250,6 +260,7 @@ def build_image(root: Path, destination: Path | None = None, *,
             "experimental_proc_test": proc_test,
             "experimental_pipe_test": pipe_test,
             "experimental_msi_test": msi_test,
+            "experimental_xhci_test": xhci_test,
             "experimental_shell_boot": shell_boot,
             "experimental_shell_script": shell_script or "",
             "target": "x86_64-none-elf",
