@@ -132,6 +132,12 @@ REQUIRED_FILES = (
     "tools/host/apic_output.py",
     "tests/integration/test_apic.py", "tests/repository/test_apic_output.py",
     "docs/design/acpi-apic.md",
+    # INT-A2 PCI MSI/MSI-X: capability walker, transports, message
+    # builder, generic PCI IRQ API, host validator, tests, docs.
+    "kernel/include/msi.h", "kernel/interrupts/msi.c",
+    "kernel/interrupts/msi-test.c", "tools/host/msi_output.py",
+    "tests/integration/test_msi.py", "tests/repository/test_msi_output.py",
+    "docs/design/msi.md", "docs/reports/int-a2.md",
     "kernel/include/kstring.h", "kernel/include/kbuf.h", "kernel/include/krst.h",
     "kernel/runtime/kstring.c", "kernel/runtime/kbuf.c", "kernel/runtime/krst.c",
     "kernel/runtime/runtime-test.c", "kernel/runtime/README.md",

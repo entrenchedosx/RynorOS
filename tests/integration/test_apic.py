@@ -182,9 +182,14 @@ class ApicTests(unittest.TestCase):
                     "[APIC] failure=prove_unmask", APIC_VERIFIED.decode("ascii").strip())
 
     def test_mutant_release_always_fails(self):
+        # Anchored on the release guard (INT-A2's MSI route register
+        # repeats the same one-line guard; the APIC_INVALID context
+        # keeps this mutant aimed at apic_vector_release).
         self.mutant("i8-release", "kernel/interrupts/apic.c",
-                    "if (vector_state[vector] != VEC_IRQ) return APIC_STATE;",
-                    "if (vector_state[vector] == VEC_IRQ) return APIC_STATE;",
+                    "return APIC_INVALID;\n"
+                    "    if (vector_state[vector] != VEC_IRQ) return APIC_STATE;",
+                    "return APIC_INVALID;\n"
+                    "    if (vector_state[vector] == VEC_IRQ) return APIC_STATE;",
                     "[APIC] failure=vec_release", APIC_VERIFIED.decode("ascii").strip())
 
     def test_mutant_trigger_polarity_dropped(self):

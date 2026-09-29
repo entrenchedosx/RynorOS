@@ -205,8 +205,10 @@ class SchedulerTests(unittest.TestCase):
                     "[SCHED] failure=restore_with_lock")
 
     def test_non_timer_irq_return_must_remain_supported(self):
+        # INT-A2 widened the handoff window to 32-127 (dynamic MSI/GSI
+        # pool); the mutant still narrows it to timer-only.
         self.broken("timer-only-handoff", "kernel/core/thread.c",
-                    "(f->vector >= IRQ_BASE && f->vector < IRQ_BASE + IRQ_COUNT)",
+                    "(f->vector >= IRQ_BASE && f->vector < 128)",
                     "f->vector == IRQ_BASE",
                     "[SCHED] failure=handoff_frame")
 
