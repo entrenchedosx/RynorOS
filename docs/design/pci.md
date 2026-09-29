@@ -1,9 +1,10 @@
 # PCI-A1: PCI discovery + BAR resource mapping
 
 Status: **complete (verified).** Internal kernel infrastructure only:
-no CPL3 surface, no drivers, no ACPI. DMA buffers landed as DMA-A1
-(see `dma.md`); MSI/MSI-X delivery landed as INT-A2 (see `msi.md`).
-Future USB, storage,
+no CPL3 surface, no ACPI. DMA buffers landed as DMA-A1
+(see `dma.md`); MSI/MSI-X delivery landed as INT-A2 (see `msi.md`);
+the first driver (xHCI command engine) landed as xHCI-A1
+(see `xhci.md`). Future USB enumeration, storage,
 NIC, audio, and GPU drivers bind through the registry and mapping
 API defined here.
 
@@ -180,7 +181,7 @@ fully valid device. No device-name database.
 
 ## Non-goals (explicit)
 
-USB/xHCI, AHCI, NVMe, NIC/GPU/audio drivers,
+USB enumeration, AHCI, NVMe, NIC/GPU/audio drivers,
 IOMMU, hotplug, power management, ACPI (including MCFG
 discovery for a future ECAM transport), PCIe extended
 capabilities, SR-IOV, interrupt routing. BAR entry/device bounds

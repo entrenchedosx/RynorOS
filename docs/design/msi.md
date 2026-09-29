@@ -443,7 +443,10 @@ observes it, the hygiene rows enforce ours.
   and its golden matrix change (single point).
 - Scheduler `frame_valid` (`thread.c`) widened to vectors < 128
   (was < 48): dynamic-vector IRQs must preempt ring-0 self-test
-  code. The user-exit validator (`user.c`, CPL3 tick frames) keeps
-  the legacy range — MSI preempting live CPL3 threads is future
-  work for the driver slice (§90 audit item), unreachable in these
-  proofs (no user threads live during the MSI phase).
+  code. The user-exit validator (`user.c`, CPL3 tick frames) kept
+  the legacy range in INT-A2 — MSI preempting live CPL3 threads
+  was the §90 audit item. xHCI-A1 closed it: `user_save_state`
+  now parks the full dispatch range 32–127, and an MSI-X
+  completion preempting a live XWORK thread is proven
+  (`user=1`, park-recorded, exact register state; see
+  `xhci.md` D27).

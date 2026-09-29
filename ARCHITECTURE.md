@@ -224,7 +224,9 @@ Plan: introduce input interrupts only at their milestone. Handlers must remain
 bounded and non-blocking; deferred work belongs outside interrupt context.
 Multicore choices remain future work; MSI/MSI-X message-signaled delivery
 landed as INT-A2 (see `docs/design/msi.md`). Preemption requires safe context
-switching; the separately audited Stage 7 scheduler supplies that mechanism.
+switching; the separately audited Stage 7 scheduler supplies that mechanism,
+and xHCI-A1 proves an MSI-X completion preempting a live CPL3 workload
+thread with exact register integrity (see `docs/design/xhci.md`).
 
 ## 6. Device drivers
 
@@ -247,7 +249,13 @@ PCI-A1 adds generic PCI discovery (bridge-aware enumeration, static registry)
 with safe BAR sizing and MMIO mapping, kernel-internal only. DMA-A1 adds DMA
 buffers over physically contiguous PMM frames with a `bus == phys` model (no
 IOMMU) and never enables bus mastering. See `docs/design/pci.md` and
-`docs/design/dma.md`. No general driver framework exists beyond that layout.
+`docs/design/dma.md`. xHCI-A1 adds the first real modern driver: an xHCI
+host-controller command + event engine (PCI claim, BAR map, legacy
+handoff, halt/reset, DMA DCBAA/command/event rings/ERST, interrupter
+0, single-vector MSI-X, 66 NOOPs with ring wraps, an MSI-X completion
+preempting a live CPL3 thread, teardown with zero net allocation).
+See `docs/design/xhci.md`. No general driver framework exists beyond
+that layout; USB enumeration stays future work.
 
 The official icon at `assets/branding/icon.png` is an original-byte-preserving
 project resource. Host builds package it and a manifest in a separate deterministic
@@ -306,7 +314,7 @@ No multicore execution, binary compatibility, or multi-user security is promised
 
 ## 9. Shell
 
-Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `1127` repository and `505` integration test methods (Stage 18d Slices A/B: input path + syscall substrate; Slice C: processes + loader; Slice D: files + pipes; Slice E: CPL3 shell + scripts; Slice F: resident evaluator; Slice G: len builtin; Stage 19a: aggregates; Stage 19b: match/control; Stage 19 selfhost emit split; P1-A1/A2/A3: durable CPL3 file create/write/stat/enumerate/unlink; PCI-A1: PCI discovery + BAR resources; BOOT-A1: 8 MiB high-load kernel + oversized matrix + loader mutants; INT-A1: ACPI/APIC discovery + unified IRQ + mutants; INT-A2: PCI MSI/MSI-X + live proofs + mutants), plus deterministic raw-artifact and manifest comparison. The 8-configuration QEMU matrix covers the Stage 11-era shell sessions and the default-image skip paths; per-stage VERIFIED runs (including 18c) use a single pinned QEMU config with exact-byte validators. Stage 18a provides the static `CPL3` foundation (fixed user layout, two contexts, exit/yield gate); Stage 18b loads real compiled programs into it (RYNX envelopes, `int $0x80` exit/write/yield) with files from RYNORFS images. Stage 18d implements the native shell and
+Implemented and verified — ring-0 kernel monitor (`kernel/shell/`): reads real `IRQ1` keyboard input via `kbd_poll` (Set-1 `0x00/0xff` overrun and `AUX`/`ERROR` counted as `epoch` loss, `E0`/`E1` prefix isolation preserved), translates `a–z`/`0–9`/`space` via bounded table plus `Enter` (`0x1c`) and `Backspace` (`0x0e`), accumulates a bounded `64`-byte `data[65]` line with `len`/`NUL` invariant and `line_insert` overflow rejection, tokenizes with `shell_tokenize` (`kstr_nlen` bounded, `SHELL_TOO_MANY=-3` distinct from valid counts `0..12`, `SHELL_INVALID=-1` for unterminated input), and dispatches with strict argument counts. It exposes the implemented `KRST_SVC_UPPER`/`COUNT_DIGITS`/`DIGEST` plus `help`/`version`/`echo` and an honest serial-only `clear` redraw-request stub. `upper` rejects arguments longer than the 40-byte service bound instead of truncating and checks the returned length before adding a NUL; `count` decodes the complete 64-bit little-endian result; `count` and `digest` require eight result bytes. `wait_key` sleeps with `sti;hlt;cli`, validates `E0`/`E1` tails with immediate malformed-sequence recovery, and drains matching break events. Interactive images consume exactly `39` keys. The default script is `upper hello | count a1b2 | digest ab | bogus`; a different host-selected 39-key script is independently passed to both injection and transcript validation so a fixed default transcript cannot satisfy both positive runs. Per-key `scan`/`ascii`/`line`, per-command `exec`/`result`, and `keys=39 received_scan_bytes=78` are checked. The reviewed inventory contains `1161` repository and `513` integration test methods (Stage 18d Slices A/B: input path + syscall substrate; Slice C: processes + loader; Slice D: files + pipes; Slice E: CPL3 shell + scripts; Slice F: resident evaluator; Slice G: len builtin; Stage 19a: aggregates; Stage 19b: match/control; Stage 19 selfhost emit split; P1-A1/A2/A3: durable CPL3 file create/write/stat/enumerate/unlink; PCI-A1: PCI discovery + BAR resources; BOOT-A1: 8 MiB high-load kernel + oversized matrix + loader mutants; INT-A1: ACPI/APIC discovery + unified IRQ + mutants; INT-A2: PCI MSI/MSI-X + live proofs + mutants; xHCI-A1: command/event engine + CPL3 proof + mutants), plus deterministic raw-artifact and manifest comparison. The 8-configuration QEMU matrix covers the Stage 11-era shell sessions and the default-image skip paths; per-stage VERIFIED runs (including 18c) use a single pinned QEMU config with exact-byte validators. Stage 18a provides the static `CPL3` foundation (fixed user layout, two contexts, exit/yield gate); Stage 18b loads real compiled programs into it (RYNX envelopes, `int $0x80` exit/write/yield) with files from RYNORFS images. Stage 18d implements the native shell and
 REPL in `CPL3` (`user/shell/`: shell, filesystem scripts, streaming
 pipelines, bounded resident evaluator with `len(expr)`); the ring-0
 monitor stays frozen with no evaluation. See `docs/reports/stage18d.md`
@@ -434,7 +442,7 @@ or Windows execution environments. Current evidence is in
 `stage18c.md`, `stage18d.md`, `stage19a.md`–`stage19e.md`, and `boot-a1.md`
 (plus `docs/design/native-runtime.md`, `pci.md`, `dma.md`, `boot.md`, and
 `acpi-apic.md`); the Stage 7, 8, 9, and 10 audits retain their historical
-findings. The reviewed inventory holds 1127 repository and 505 integration
+findings. The reviewed inventory holds 1161 repository and 513 integration
 test methods.
 
 Stage 10 services are allocation-free foreground calls (IF preserved, IRQ
