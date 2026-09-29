@@ -4,8 +4,9 @@ Status: **complete (verified).** Modern interrupt foundation on the
 BIOS/QEMU target: firmware discovery (RSDP → RSDT/XSDT → MADT), LAPIC
 and IOAPIC drivers, a unified ISA/vector IRQ layer, and a verified
 PIC-to-APIC transition with PIT + keyboard proofs. Internal kernel
-infrastructure only: no CPL3 surface, no MSI/MSI-X (INT-A2), no SMP
-startup, no AML, no power management.
+infrastructure only: no CPL3 surface, no SMP
+startup, no AML, no power management. MSI/MSI-X landed separately
+as INT-A2 (see `msi.md`).
 
 ## Discovery pipeline
 
@@ -95,7 +96,7 @@ readback of vector/dest/trigger/polarity/mask. Mask flips go through
 ## IRQ core
 
 Vectors: 0-31 exceptions, 32-47 legacy ISA (both backends), 48-127
-dynamic (APIC only; reserved for INT-A2 MSI), 128 syscall, 255
+dynamic (APIC only; the INT-A2 MSI pool), 128 syscall, 255
 spurious (bare `IRETQ`, never dispatches). The allocator owns 48-127
 first-fit with release/reuse; legacy vectors are claimed at route
 registration.
@@ -198,10 +199,11 @@ and halts on both backends. Stuck delivery (ISR set after EOI) halts.
 Unknown hardware (missing APIC, x2APIC, GSI overlap, base mismatch)
 falls back, never guesses.
 
-## INT-A2 and beyond (explicitly deferred)
+## Beyond INT-A2 (explicitly deferred)
 
-MSI/MSI-X (dynamic vectors 48-127, PCI capability walk), SMP
+MSI/MSI-X landed as INT-A2 (dynamic vectors 48-127, PCI
+capability walk; see `msi.md`). Still deferred: SMP
 secondary startup, AML/_PRT, power management, and all device
 drivers (xHCI/NVMe/NIC/HDA/GPU). xHCI supports PCI INTx for
 interrupter 0, so MSI is the preferred path, not a bring-up blocker.
-The dynamic-route exercise above is the seam INT-A2 builds on.
+The dynamic-route exercise above was the seam INT-A2 built on.

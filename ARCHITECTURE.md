@@ -57,7 +57,7 @@ ring-0 data/stack (0x10) descriptors. `LGDT`, far return/segment reloads, `SGDT`
 and selector checks verify the switch. It then builds a 256-slot IDT, installs
 32 exception gates and 16 PIC IRQ gates, performs `LIDT`/`SIDT`, and checks gate
 addresses/attributes. INT-A1 additionally installs gates for vectors 48–127
-(dynamic pool, reserved for MSI/PCI use) and the 255 spurious vector, leaving
+(dynamic pool, MSI-owned since INT-A2) and the 255 spurious vector, leaving
 the rest non-present. Stage 18a adds
 a 7-entry GDT (user data `0x1B`, user code `0x23`, TSS `0x28` with `RSP0`, no IST)
 and a DPL3 `int $0x80` gate; see `docs/design/userspace.md`.
@@ -219,8 +219,8 @@ triple-fault: there is no IST/emergency stack or general fault recovery
 
 Plan: introduce input interrupts only at their milestone. Handlers must remain
 bounded and non-blocking; deferred work belongs outside interrupt context.
-Multicore choices remain future work; MSI/MSI-X message-signaled delivery is
-the next interrupt slice after INT-A1. Preemption requires safe context
+Multicore choices remain future work; MSI/MSI-X message-signaled delivery
+landed as INT-A2 (see `docs/design/msi.md`). Preemption requires safe context
 switching; the separately audited Stage 7 scheduler supplies that mechanism.
 
 ## 6. Device drivers
@@ -431,7 +431,7 @@ or Windows execution environments. Current evidence is in
 `stage18c.md`, `stage18d.md`, `stage19a.md`–`stage19e.md`, and `boot-a1.md`
 (plus `docs/design/native-runtime.md`, `pci.md`, `dma.md`, `boot.md`, and
 `acpi-apic.md`); the Stage 7, 8, 9, and 10 audits retain their historical
-findings. The reviewed inventory holds 1110 repository and 495 integration
+findings. The reviewed inventory holds 1127 repository and 505 integration
 test methods.
 
 Stage 10 services are allocation-free foreground calls (IF preserved, IRQ

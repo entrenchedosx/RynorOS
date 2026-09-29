@@ -12,7 +12,8 @@ INT-A1 supersedes the backend (see `acpi-apic.md`): the kernel still boots
 on the PIC exactly as below, then discovers ACPI, programs the LAPIC/IOAPIC,
 and switches the same IRQ0/IRQ1 sources to interrupt vectors 32/33 via the
 IOAPIC (IRQ0 through the MADT override to GSI 2). Gates now cover vectors
-32-127 plus the spurious vector 255; 48-127 are reserved for INT-A2 MSI.
+32-127 plus the spurious vector 255; 48-127 are the INT-A2 MSI
+dynamic pool (see `msi.md`).
 The PIC path below is retained forever as the verified fallback.
 
 ## Controller and timer choice
