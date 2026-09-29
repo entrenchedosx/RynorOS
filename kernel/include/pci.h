@@ -30,6 +30,10 @@
 #define PCI_CFG_IRQ_LINE 0x3Cu
 #define PCI_CFG_IRQ_PIN 0x3Du
 #define PCI_CFG_SPACE_BYTES 256u
+/* INT-A2: capability list head + control bits (Linux pci_regs.h). */
+#define PCI_CFG_CAPABILITY_LIST 0x34u
+#define PCI_STATUS_CAP_LIST 0x0010u
+#define PCI_COMMAND_INTX_DISABLE 0x0400u
 
 #define PCI_VENDOR_ABSENT 0xFFFFu
 #define PCI_COMMAND_IO 0x0001u

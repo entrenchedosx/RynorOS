@@ -11,6 +11,7 @@
 #include "pci.h"
 #include "dma.h"
 #include "krst.h"
+#include "msi.h"
 #include "shell.h"
 #include "blk.h"
 #include "fs.h"
@@ -115,6 +116,12 @@ void kernel_main(void)
        Disabled prints nothing, so default transcripts stay
        byte-identical. */
     if (RYNOR_DMA_TEST) dma_self_test();
+    serial_flush();
+    /* INT-A2 gated self-test (test images only): its [MSI]
+       section becomes the transcript terminator when enabled.
+       Disabled prints nothing, so default transcripts stay
+       byte-identical. */
+    if (RYNOR_MSI_TEST) msi_self_test();
     serial_flush();
     /* Stage 18d Slice E shell boot (shell images only): mounts the
        filesystem, enters /bin/sh on the bootstrap thread, and never

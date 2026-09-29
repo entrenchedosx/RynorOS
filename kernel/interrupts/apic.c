@@ -359,6 +359,23 @@ int apic_vector_alloc(void)
     return -1;
 }
 
+int apic_vector_alloc_aligned(unsigned int n)
+{
+    if (!cpu_interrupts_disabled() || irq_in_context()) return -1;
+    if (n == 0 || n > 32 || (n & (n - 1)) != 0) return -1;
+    for (unsigned int base = APIC_VECTOR_DYNAMIC_BASE;
+         base + n - 1 <= APIC_VECTOR_DYNAMIC_END; ++base) {
+        unsigned int i;
+        if (base % n != 0) continue;
+        for (i = 0; i < n; ++i)
+            if (vector_state[base + i] != VEC_FREE) break;
+        if (i != n) continue;
+        for (i = 0; i < n; ++i) vector_state[base + i] = VEC_IRQ;
+        return (int)base;
+    }
+    return -1;
+}
+
 enum apic_result apic_vector_claim(unsigned int vector, unsigned int owner)
 {
     if (!cpu_interrupts_disabled()) return APIC_CONTEXT;
@@ -481,6 +498,9 @@ enum apic_result apic_route_register(unsigned int irq, irq_handler handler, void
     route->programmed = 0;
     route->handler = handler;
     route->opaque = opaque;
+    route->msi = APIC_ROUTE_NONE;
+    route->msi_bdf = 0;
+    route->msi_index = 0;
     if (apic_vector_claim(route->vector, irq) != APIC_OK) {
         route->used = 0;
         return APIC_STATE;
@@ -568,6 +588,9 @@ enum apic_result apic_route_gsi_register(cpu_u32 gsi, int level, int low,
     route->masked = 1;
     route->handler = handler;
     route->opaque = opaque;
+    route->msi = APIC_ROUTE_NONE;
+    route->msi_bdf = 0;
+    route->msi_index = 0;
     vector_owner[route->vector] = 0x100 + slot;
     if (apic_program_route(index, pin, route->vector, bsp_id, level, low, 1) != APIC_OK) {
         route->used = 0;
@@ -587,6 +610,10 @@ enum apic_result apic_route_gsi_unregister(unsigned int vector)
     for (unsigned int i = 0; i < APIC_DYNAMIC_ROUTES; ++i) {
         struct apic_route *route = &dyn_routes[i];
         if (!route->used || route->vector != vector) continue;
+        /* MSI routes have no IOAPIC pin: masking pin 0 here would
+           silence the timer. They unregister through the MSI path,
+           whose caller masked the device first. */
+        if (route->msi != APIC_ROUTE_NONE) return APIC_INVALID;
         /* Mask before teardown so hardware can never deliver into a
            half-freed route (mirrors the DMA ownership discipline). */
         if (route->programmed &&
@@ -596,6 +623,73 @@ enum apic_result apic_route_gsi_unregister(unsigned int vector)
         route->used = 0;
         route->handler = 0;
         route->opaque = 0;
+        route->msi = APIC_ROUTE_NONE;
+        route->msi_bdf = 0;
+        route->msi_index = 0;
+        return apic_vector_release(vector);
+    }
+    return APIC_NOT_FOUND;
+}
+
+enum apic_result apic_route_msi_register(unsigned int kind, cpu_u32 bdf,
+                                          unsigned int index,
+                                          unsigned int vector,
+                                          irq_handler handler, void *opaque)
+{
+    if ((kind != APIC_ROUTE_MSI && kind != APIC_ROUTE_MSIX) || !handler)
+        return APIC_INVALID;
+    if (vector < APIC_VECTOR_DYNAMIC_BASE || vector > APIC_VECTOR_DYNAMIC_END)
+        return APIC_INVALID;
+    if (!cpu_interrupts_disabled() || irq_in_context()) return APIC_CONTEXT;
+    if (!active) return APIC_NOT_READY;
+    if (vector_state[vector] != VEC_IRQ) return APIC_STATE;
+    if (apic_route_for_vector(vector)) return APIC_STATE;
+    unsigned int slot = APIC_DYNAMIC_ROUTES;
+    for (unsigned int i = 0; i < APIC_DYNAMIC_ROUTES; ++i)
+        if (!dyn_routes[i].used) {
+            slot = i;
+            break;
+        }
+    if (slot == APIC_DYNAMIC_ROUTES) return APIC_EXHAUSTED;
+    struct apic_route *route = &dyn_routes[slot];
+    route->used = 1;
+    route->legacy = 0;
+    route->irq = 0;
+    route->gsi = 0;
+    route->vector = vector;
+    route->ioapic = 0;
+    route->pin = 0;
+    route->level = 0;
+    route->low = 0;
+    route->masked = 1;
+    route->programmed = 1;
+    route->handler = handler;
+    route->opaque = opaque;
+    route->msi = kind;
+    route->msi_bdf = bdf;
+    route->msi_index = index;
+    vector_owner[vector] = 0x200 + slot;
+    return APIC_OK;
+}
+
+enum apic_result apic_route_msi_unregister(unsigned int vector)
+{
+    if (vector < APIC_VECTOR_DYNAMIC_BASE || vector > APIC_VECTOR_DYNAMIC_END)
+        return APIC_INVALID;
+    if (!cpu_interrupts_disabled() || irq_in_context()) return APIC_CONTEXT;
+    for (unsigned int i = 0; i < APIC_DYNAMIC_ROUTES; ++i) {
+        struct apic_route *route = &dyn_routes[i];
+        if (!route->used || route->vector != vector) continue;
+        if (route->msi == APIC_ROUTE_NONE) return APIC_INVALID;
+        /* No IOAPIC mask arm: the MSI caller masked the device-side
+           vector first (its teardown order guarantees it). */
+        route->programmed = 0;
+        route->used = 0;
+        route->handler = 0;
+        route->opaque = 0;
+        route->msi = APIC_ROUTE_NONE;
+        route->msi_bdf = 0;
+        route->msi_index = 0;
         return apic_vector_release(vector);
     }
     return APIC_NOT_FOUND;

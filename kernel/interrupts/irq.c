@@ -3,6 +3,7 @@
 #include "io.h"
 #include "irq.h"
 #include "ksched.h"
+#include "msi.h"
 #include "serial.h"
 
 /* Unified dispatch: legacy ISA vectors 32-47 on either backend (PIC ISR
@@ -107,10 +108,16 @@ struct exception_frame *irq_dispatch(struct exception_frame *frame)
            injection attack, not a surprise device. */
         write_vector((unsigned int)vector);
         if (route) {
-            if (apic_active())
-                (void)apic_set_route_mask(route->ioapic, route->pin, 1);
-            else if (route->legacy)
+            if (apic_active()) {
+                /* Quiet-by-kind: MSI routes have no IOAPIC pin. */
+                if (route->msi != APIC_ROUTE_NONE)
+                    msi_quiet_route(route->msi, route->msi_bdf,
+                                    route->msi_index);
+                else
+                    (void)apic_set_route_mask(route->ioapic, route->pin, 1);
+            } else if (route->legacy) {
                 (void)pic_set_enabled(route->irq, 0);
+            }
         }
         resume = sched_park_cpl3(frame);
         dispatching = 0;

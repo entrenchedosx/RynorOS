@@ -71,7 +71,9 @@ static int frame_valid(struct thread *t, const struct exception_frame *f)
            executable(f->rip) && f->cs == CPU_CODE_SELECTOR && f->ss == CPU_DATA_SELECTOR &&
            (f->rflags & 2) && !(f->rflags & ~0x10ed7ULL) &&
            f->error == 0 && (f->vector == 0 ||
-           (f->vector >= IRQ_BASE && f->vector < IRQ_BASE + IRQ_COUNT));
+           /* INT-A2: IRQ stubs cover 32-127 (legacy 32-47 plus the
+              dynamic MSI/GSI pool 48-127); all may preempt here. */
+           (f->vector >= IRQ_BASE && f->vector < 128));
 }
 int scheduler_check(void)
 {

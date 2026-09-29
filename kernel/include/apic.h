@@ -88,6 +88,12 @@ enum apic_result apic_set_route_mask(unsigned int ioapic, unsigned int pin, int 
    resets the pool; call only during init/self-test, never after activation. */
 void apic_vector_init(void);
 int apic_vector_alloc(void);
+/* INT-A2: first-fit n-contiguous n-aligned block (n a power of two,
+   1..32); the base is returned, or -1 when no aligned block fits.
+   Same IF=0/foreground guards as apic_vector_alloc. Multi-vector MSI
+   delivery replaces DATA low bits (QEMU msi_prepare_message), so the
+   block must be aligned for the device's vectors to land on ours. */
+int apic_vector_alloc_aligned(unsigned int n);
 enum apic_result apic_vector_claim(unsigned int vector, unsigned int owner);
 enum apic_result apic_vector_release(unsigned int vector);
 unsigned int apic_vector_owner(unsigned int vector);
@@ -102,6 +108,9 @@ void apic_vector_restore(const cpu_u8 *state, const unsigned int *owner);
 enum apic_result apic_irq_gsi(unsigned int irq, cpu_u32 *gsi, int *level, int *low);
 
 /* Route table (owned here; irq.c dispatches through it). */
+#define APIC_ROUTE_NONE 0
+#define APIC_ROUTE_MSI 1
+#define APIC_ROUTE_MSIX 2
 struct apic_route {
     int used;
     int legacy;
@@ -116,6 +125,11 @@ struct apic_route {
     int programmed;
     irq_handler handler;
     void *opaque;
+    /* INT-A2: MSI/MSI-X routes (0 for legacy/GSI paths). The
+       dispatcher masks quiet-by-kind; msi.c owns device state. */
+    unsigned int msi;
+    cpu_u32 msi_bdf; /* bus<<16 | dev<<8 | fn */
+    unsigned int msi_index;
 };
 enum apic_result apic_route_register(unsigned int irq, irq_handler handler, void *opaque);
 enum apic_result apic_route_set_handler(unsigned int irq, irq_handler handler, void *opaque);
@@ -126,6 +140,16 @@ enum apic_result apic_route_gsi_register(cpu_u32 gsi, int level, int low,
                                            irq_handler handler, void *opaque,
                                            unsigned int *vector);
 enum apic_result apic_route_gsi_unregister(unsigned int vector);
+/* INT-A2: MSI/MSI-X route over a caller-allocated vector. kind is
+   APIC_ROUTE_MSI/MSIX; bdf packs bus/dev/fn; index is the device
+   vector. The device must already be programmed and masked (msi.c
+   owns that order); unregister skips the IOAPIC mask arm for these
+   routes and refuses kind mismatches. */
+enum apic_result apic_route_msi_register(unsigned int kind, cpu_u32 bdf,
+                                          unsigned int index,
+                                          unsigned int vector,
+                                          irq_handler handler, void *opaque);
+enum apic_result apic_route_msi_unregister(unsigned int vector);
 
 /* Pure cores shared by the live wrappers and the synthetic fixtures. */
 enum apic_result apic_gsi_owner_at(cpu_u32 gsi, const cpu_u32 *bases,
