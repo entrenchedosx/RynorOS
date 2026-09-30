@@ -65,6 +65,18 @@ vectors 32-47, so no MSI/MSI-X (dynamic pool 48-127) could ever
 preempt a CPL3 thread; it now mirrors `irq_dispatch`'s exact
 range (`APIC_VECTOR_IRQ_BASE..APIC_VECTOR_DYNAMIC_END`).
 
+USB-A1 shared-engine surface (added on `usb-a1`, xHCI-A1
+behavior unchanged): `xhci_ring_emit` (one producer for
+command + transfer rings, Link skip + PCS latch),
+`xfer_submit/wait/release` (8 records matched by exact
+Transfer-Event TRB pointer, CC + resid + epid latched),
+`port_change_claim` (port-bitmap for Port Status Change
+Events), `op_write` + doorbell helper (explicit writes,
+no RMW), Setup/Data/Status/Link transfer-TRB encoders,
+and slot/EP0 context + PORTSC + Supported-Protocol
+defines. One controller, one ISR, one hcd: USB adds
+records, never a second engine. See `docs/design/usb.md`.
+
 ## 3. Frozen layouts (D-register)
 
 Conventions: all offsets bytes from BAR0 unless noted; `u32`

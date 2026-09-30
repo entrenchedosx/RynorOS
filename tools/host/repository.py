@@ -145,6 +145,14 @@ REQUIRED_FILES = (
     "tests/integration/test_xhci.py",
     "tests/repository/test_xhci_output.py",
     "docs/design/xhci.md", "docs/reports/xhci-a1.md",
+    # USB-A1 first device descriptor: USB core, xHCI enumeration
+    # layer, gated self-test, host validator, tests, docs.
+    "kernel/include/usb.h", "kernel/drivers/usb.c",
+    "kernel/include/xhci-usb.h", "kernel/drivers/xhci-usb.c",
+    "kernel/drivers/usb-test.c", "tools/host/usb_output.py",
+    "tests/integration/test_usb.py",
+    "tests/repository/test_usb_output.py",
+    "docs/design/usb.md", "docs/reports/usb-a1.md",
     "kernel/include/kstring.h", "kernel/include/kbuf.h", "kernel/include/krst.h",
     "kernel/runtime/kstring.c", "kernel/runtime/kbuf.c", "kernel/runtime/krst.c",
     "kernel/runtime/runtime-test.c", "kernel/runtime/README.md",

@@ -59,6 +59,7 @@ REPOSITORY_TEST_INVENTORY = {
     "test_dma_abi": 9,
     "test_apic_output": 9, "test_msi_output": 17,
     "test_xhci_output": 34,
+    "test_usb_output": 49,
 }
 INTEGRATION_TEST_INVENTORY = {
     "test_audit": 5, "test_boot": 14, "test_boot_matrix": 4, "test_boot_mutants": 12,
@@ -72,6 +73,7 @@ INTEGRATION_TEST_INVENTORY = {
     "test_p1a": 8, "test_p1a2": 16, "test_p1a3": 14, "test_pci": 17,
     "test_dma": 17, "test_apic": 21, "test_msi": 10,
     "test_xhci": 8,
+    "test_usb": 11,
 }
 
 
