@@ -13,6 +13,7 @@
 #include "krst.h"
 #include "msi.h"
 #include "xhci.h"
+#include "xhci-usb.h"
 #include "shell.h"
 #include "blk.h"
 #include "fs.h"
@@ -131,6 +132,14 @@ void kernel_main(void)
        default kernel layout stay byte-identical. */
 #if RYNOR_XHCI_TEST
     xhci_self_test();
+#endif
+    serial_flush();
+    /* USB-A1 gated self-test (test images only): its [USB]
+       section becomes the transcript terminator when enabled.
+       Compile-gated like xHCI-A1: default images stay
+       byte-identical. */
+#if RYNOR_USB_TEST
+    usb_self_test();
 #endif
     serial_flush();
     /* Stage 18d Slice E shell boot (shell images only): mounts the
