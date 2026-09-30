@@ -134,6 +134,13 @@ enum xhci_result xhci_op_read(struct xhci_hcd *h, cpu_u32 reg, cpu_u32 *out)
     return xh_op_r(h, reg, out);
 }
 
+enum xhci_result xhci_op_write(struct xhci_hcd *h, cpu_u32 reg, cpu_u32 v)
+{
+    if (!h)
+        return XHCI_INVALID;
+    return xh_op_w(h, reg, v);
+}
+
 enum xhci_result xhci_rt_read(struct xhci_hcd *h, cpu_u32 reg, cpu_u32 *out)
 {
     if (!h || !out)
@@ -207,6 +214,7 @@ enum xhci_result xhci_claim(struct xhci_hcd *h)
         h->irq_vec = 0;
         h->irq_count = 0;
         h->cmpl_count = 0;
+        h->xfer_count = 0;
         h->port_events = 0;
         h->other_events = 0;
         h->hook = 0;
@@ -214,11 +222,23 @@ enum xhci_result xhci_claim(struct xhci_hcd *h)
         h->last_user = 0;
         h->last_rip = 0;
         h->last_isr = 0;
+        h->last_slot = 0;
+        h->last_xepid = 0;
+        h->last_xlen = 0;
         for (t = 0; t < XHCI_TOKENS; ++t) {
             h->tokens[t].state = XHCI_TOK_FREE;
             h->tokens[t].ccode = 0;
             h->tokens[t].trb_bus = 0;
         }
+        for (t = 0; t < XHCI_XFERS; ++t) {
+            h->xfers[t].state = XHCI_TOK_FREE;
+            h->xfers[t].ccode = 0;
+            h->xfers[t].slot = 0;
+            h->xfers[t].epid = 0;
+            h->xfers[t].resid = 0;
+            h->xfers[t].trb_bus = 0;
+        }
+        h->port_chg[0] = 0;
     }
     h->claimed = 1;
     xhci_claimed = 1;
@@ -566,6 +586,71 @@ int xhci_decode_event(const struct xhci_trb *t, cpu_u8 ccs, cpu_u8 *type,
     return 1;
 }
 
+int xhci_decode_xfer(const struct xhci_trb *t, cpu_u8 ccs, cpu_u8 *cc,
+                     cpu_u64 *ptr, cpu_u8 *slot, cpu_u8 *epid, cpu_u32 *len)
+{
+    cpu_u8 c;
+    if (!t || !cc || !ptr || !slot || !epid || !len)
+        return 0;
+    c = (t->control & XHCI_TRB_C) ? 1 : 0;
+    if (c != (ccs ? 1 : 0))
+        return 0;
+    *cc = (cpu_u8)((t->status >> 24) & 0xFFu);
+    *ptr = ((cpu_u64)t->param_hi << 32) | t->param_lo;
+    *slot = (cpu_u8)((t->control >> 24) & 0xFFu);
+    *epid = (cpu_u8)((t->control >> 16) & 0x1Fu);
+    *len = t->status & 0xFFFFFFu;
+    return 1;
+}
+
+/* Setup Stage TRB (Linux xhci_queue_ctrl_tx): Immediate Data + TRT,
+   chained; parameter carries the 8 setup bytes little-endian. */
+cpu_u32 xhci_encode_setup(struct xhci_trb *t, const cpu_u8 setup[8],
+                          cpu_u8 pcs, cpu_u8 trt)
+{
+    if (!t || !setup || trt > 3 || trt == 1)
+        return 0;
+    t->param_lo = (cpu_u32)setup[0] | ((cpu_u32)setup[1] << 8) |
+                  ((cpu_u32)setup[2] << 16) | ((cpu_u32)setup[3] << 24);
+    t->param_hi = (cpu_u32)setup[4] | ((cpu_u32)setup[5] << 8) |
+                  ((cpu_u32)setup[6] << 16) | ((cpu_u32)setup[7] << 24);
+    t->status = 8u;
+    t->control = ((cpu_u32)XHCI_TRB_SETUP << XHCI_TRB_TYPE_SHIFT) |
+                 XHCI_TRB_CH | XHCI_TRB_IDT |
+                 ((cpu_u32)trt << XHCI_TRB_TRT_SHIFT) |
+                 (pcs ? XHCI_TRB_C : 0u);
+    return 1;
+}
+
+/* Data Stage TRB: single-packet data (TD_SIZE 0), chained, DMA pointer. */
+cpu_u32 xhci_encode_data(struct xhci_trb *t, cpu_u64 buf_bus, cpu_u32 len,
+                         cpu_u8 pcs, int dir_in)
+{
+    if (!t || !buf_bus || !len || len > XHCI_TRB_LEN_MASK)
+        return 0;
+    t->param_lo = (cpu_u32)buf_bus;
+    t->param_hi = (cpu_u32)(buf_bus >> 32);
+    t->status = len;
+    t->control = ((cpu_u32)XHCI_TRB_DATA << XHCI_TRB_TYPE_SHIFT) |
+                 XHCI_TRB_CH | (dir_in ? (XHCI_TRB_DIR_IN | XHCI_TRB_ISP) : 0u) |
+                 (pcs ? XHCI_TRB_C : 0u);
+    return 1;
+}
+
+/* Status Stage TRB: opposite direction of data, IOC, terminates the TD. */
+cpu_u32 xhci_encode_status(struct xhci_trb *t, cpu_u8 pcs, int dir_in)
+{
+    if (!t)
+        return 0;
+    t->param_lo = 0;
+    t->param_hi = 0;
+    t->status = 0;
+    t->control = ((cpu_u32)XHCI_TRB_STATUS << XHCI_TRB_TYPE_SHIFT) |
+                 XHCI_TRB_IOC | (dir_in ? XHCI_TRB_DIR_IN : 0u) |
+                 (pcs ? XHCI_TRB_C : 0u);
+    return 1;
+}
+
 /* --- DMA structures -------------------------------------------------------------- */
 
 /* Test-only fault injection (§48); xhci_init sets, clears on exit. */
@@ -732,6 +817,7 @@ static unsigned int xhci_consume(struct xhci_hcd *h)
             break;
         if (type == XHCI_TRB_EV_CMPL) {
             h->cmpl_count++;
+            h->last_slot = slot;
             for (i = 0; i < XHCI_TOKENS; ++i) {
                 if (h->tokens[i].state == XHCI_TOK_SUBMITTED &&
                     h->tokens[i].trb_bus == ptr) {
@@ -743,8 +829,44 @@ static unsigned int xhci_consume(struct xhci_hcd *h)
             }
             if (i == XHCI_TOKENS)
                 h->failed = 1;
+        } else if (type == XHCI_TRB_EV_XFER) {
+            cpu_u8 xcc, xslot, xepid;
+            cpu_u64 xptr;
+            cpu_u32 xlen;
+            h->xfer_count++;
+            if (xhci_decode_xfer(t, h->evt.ccs, &xcc, &xptr, &xslot,
+                                 &xepid, &xlen)) {
+                for (i = 0; i < XHCI_XFERS; ++i) {
+                    if (h->xfers[i].state == XHCI_TOK_SUBMITTED &&
+                        h->xfers[i].trb_bus == xptr) {
+                        if (h->xfers[i].slot != xslot ||
+                            h->xfers[i].epid != xepid) {
+                            h->failed = 1;
+                            break;
+                        }
+                        h->xfers[i].state =
+                            (xcc == XHCI_CC_SUCCESS ||
+                             xcc == XHCI_CC_SHORT) ? XHCI_TOK_COMPLETED :
+                                                     XHCI_TOK_ERROR;
+                        h->xfers[i].ccode = xcc;
+                        h->xfers[i].resid = xlen;
+                        h->last_xepid = xepid;
+                        h->last_xlen = xlen;
+                        break;
+                    }
+                }
+                if (i == XHCI_XFERS)
+                    h->failed = 1;
+            } else {
+                h->failed = 1;
+            }
         } else if (type == XHCI_TRB_EV_PORT) {
+            cpu_u32 port = (cpu_u32)((ptr >> 24) & 0xFFu);
             h->port_events++;
+            if (port >= 1 && port <= XHCI_PORTS_MAX)
+                h->port_chg[0] |= (1u << (port - 1));
+            else
+                h->other_events++;
         } else {
             h->other_events++;
         }
@@ -849,11 +971,50 @@ enum xhci_result xhci_start(struct xhci_hcd *h)
 
 /* --- NO-OP submit / wait ------------------------------------------------------------- */
 
-enum xhci_result xhci_submit_noop(struct xhci_hcd *h, cpu_u8 *tok_out)
+/* Emit one TRB onto a producer ring (command or transfer): the
+   template is copied verbatim (caller stamps the ring PCS), the bus
+   address returned, and the Link slot skipped with the old-PCS latch.
+   The caller owns sync + doorbell. */
+enum xhci_result xhci_ring_emit(struct xhci_ring *r,
+                                const struct xhci_trb *t, cpu_u64 *bus_out)
+{
+    struct xhci_trb *ring;
+    if (!r || !t || !bus_out || !r->dma.virt || r->count < 2 ||
+        r->enq >= r->count - 1)
+        return XHCI_INVALID;
+    ring = (struct xhci_trb *)r->dma.virt;
+    ring[r->enq] = *t;
+    *bus_out = r->dma.bus + (cpu_u64)r->enq * XHCI_TRB_SIZE;
+    r->enq++;
+    if (r->enq == r->count - 1) {
+        /* Latch the Link cycle to the lap just completed, then wrap. */
+        struct xhci_trb *link = &ring[r->count - 1];
+        if (r->pcs)
+            link->control |= XHCI_TRB_C;
+        else
+            link->control &= ~XHCI_TRB_C;
+        dma_wmb();
+        r->enq = 0;
+        r->pcs = r->pcs ? 0 : 1;
+        r->wraps++;
+    }
+    return XHCI_OK;
+}
+
+enum xhci_result xhci_doorbell(struct xhci_hcd *h, cpu_u32 n, cpu_u32 v)
+{
+    if (!h || n > 255)
+        return XHCI_INVALID;
+    return xh_db_w(h, n, v);
+}
+
+enum xhci_result xhci_submit_cmd(struct xhci_hcd *h, cpu_u32 plo,
+                                 cpu_u32 phi, cpu_u32 status, cpu_u32 control,
+                                 cpu_u8 *tok_out)
 {
     unsigned int i;
     cpu_u8 tok = 0xFFu;
-    struct xhci_trb *cmd;
+    struct xhci_trb t;
     cpu_u64 bus;
     if (!h || !h->started || !h->cmd.dma.virt || !tok_out)
         return XHCI_INVALID;
@@ -867,37 +1028,34 @@ enum xhci_result xhci_submit_noop(struct xhci_hcd *h, cpu_u8 *tok_out)
     }
     if (tok == 0xFFu)
         return XHCI_BUSY;
-    cmd = (struct xhci_trb *)h->cmd.dma.virt;
     /* Ring-full is impossible by construction: 8 tokens < 31 usable
        TRBs, so any slot reuse implies >= 23 completions, which (in the
-       in-order NOOP stream) include that slot's own command — hardware
-       has consumed past it. Transfer rings (A2+) need explicit
-       slot-ownership; the token bound suffices for A1. */
-    bus = h->cmd.dma.bus + (cpu_u64)h->cmd.enq * XHCI_TRB_SIZE;
-    if (!xhci_encode_noop(&cmd[h->cmd.enq], h->cmd.pcs, 0))
-        return XHCI_INVALID;
+       in-order command stream) include that slot's own command —
+       hardware has consumed past it. EP0 transfer rings submit one TD
+       per doorbell and wait for its completion before reuse. */
+    t.param_lo = plo;
+    t.param_hi = phi;
+    t.status = status;
+    t.control = control | (h->cmd.pcs ? XHCI_TRB_C : 0u);
+    if (xhci_ring_emit(&h->cmd, &t, &bus) != XHCI_OK)
+        return XHCI_STATE;
     h->tokens[tok].state = XHCI_TOK_SUBMITTED;
     h->tokens[tok].ccode = 0;
     h->tokens[tok].trb_bus = bus;
     dma_sync_for_device(&h->cmd.dma);
     dma_wmb();
-    h->cmd.enq++;
-    if (h->cmd.enq == h->cmd.count - 1) {
-        /* Latch the Link cycle to the lap just completed, then wrap. */
-        struct xhci_trb *link = &cmd[h->cmd.count - 1];
-        if (h->cmd.pcs)
-            link->control |= XHCI_TRB_C;
-        else
-            link->control &= ~XHCI_TRB_C;
-        dma_wmb();
-        h->cmd.enq = 0;
-        h->cmd.pcs = h->cmd.pcs ? 0 : 1;
-        h->cmd.wraps++;
-    }
     if (xh_db_w(h, 0, 0) != XHCI_OK)
         return XHCI_HW;
     *tok_out = tok;
     return XHCI_OK;
+}
+
+enum xhci_result xhci_submit_noop(struct xhci_hcd *h, cpu_u8 *tok_out)
+{
+    if (!h || !tok_out)
+        return XHCI_INVALID;
+    return xhci_submit_cmd(h, 0, 0, 0,
+        (cpu_u32)XHCI_TRB_NOOP_CMD << XHCI_TRB_TYPE_SHIFT, tok_out);
 }
 
 enum xhci_token_state xhci_token_state(struct xhci_hcd *h, cpu_u8 tok)
@@ -932,6 +1090,74 @@ enum xhci_result xhci_wait_token(struct xhci_hcd *h, cpu_u8 tok)
     if (*(volatile cpu_u8 *)&h->tokens[tok].state != XHCI_TOK_COMPLETED)
         return XHCI_TIMEOUT;
     return XHCI_OK;
+}
+
+enum xhci_result xhci_xfer_submit(struct xhci_hcd *h, cpu_u8 slot,
+                                  cpu_u8 epid, cpu_u64 trb_bus, cpu_u8 *x_out)
+{
+    unsigned int i;
+    if (!h || !h->started || !trb_bus || !x_out || !slot || !epid ||
+        epid > 31)
+        return XHCI_INVALID;
+    for (i = 0; i < XHCI_XFERS; ++i) {
+        if (h->xfers[i].state == XHCI_TOK_FREE) {
+            h->xfers[i].state = XHCI_TOK_SUBMITTED;
+            h->xfers[i].ccode = 0;
+            h->xfers[i].slot = slot;
+            h->xfers[i].epid = epid;
+            h->xfers[i].resid = 0;
+            h->xfers[i].trb_bus = trb_bus;
+            *x_out = (cpu_u8)i;
+            return XHCI_OK;
+        }
+    }
+    return XHCI_BUSY;
+}
+
+enum xhci_result xhci_xfer_wait(struct xhci_hcd *h, cpu_u8 x)
+{
+    cpu_u64 spin;
+    if (!h || x >= XHCI_XFERS)
+        return XHCI_INVALID;
+    if (h->xfers[x].state != XHCI_TOK_SUBMITTED)
+        return XHCI_STATE;
+    __asm__ volatile ("sti" : : : "memory");
+    for (spin = 0; spin < XHCI_SPIN_BUDGET; ++spin) {
+        cpu_u8 st = *(volatile cpu_u8 *)&h->xfers[x].state;
+        if (*(volatile cpu_u8 *)&h->desync) {
+            __asm__ volatile ("cli" : : : "memory");
+            return XHCI_HW;
+        }
+        if (st == XHCI_TOK_COMPLETED)
+            break;
+        if (st == XHCI_TOK_ERROR) {
+            __asm__ volatile ("cli" : : : "memory");
+            return XHCI_HW;
+        }
+    }
+    __asm__ volatile ("cli" : : : "memory");
+    if (*(volatile cpu_u8 *)&h->xfers[x].state != XHCI_TOK_COMPLETED)
+        return XHCI_TIMEOUT;
+    return XHCI_OK;
+}
+
+void xhci_xfer_release(struct xhci_hcd *h, cpu_u8 x)
+{
+    if (!h || x >= XHCI_XFERS)
+        return;
+    h->xfers[x].state = XHCI_TOK_FREE;
+}
+
+int xhci_port_change_claim(struct xhci_hcd *h, cpu_u32 port)
+{
+    cpu_u32 bit;
+    if (!h || port < 1 || port > XHCI_PORTS_MAX)
+        return 0;
+    bit = 1u << (port - 1);
+    if (!(h->port_chg[0] & bit))
+        return 0;
+    h->port_chg[0] &= ~bit;
+    return 1;
 }
 
 /* --- Teardown (ordered unwind; fail-safe on unquiesced hardware) ------------------- */
