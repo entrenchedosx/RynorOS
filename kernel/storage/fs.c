@@ -589,9 +589,9 @@ static int alloc_first_fit(cpu_u64 nblocks, cpu_u64 *first_out)
 
 /* Persist one 64-byte directory entry: read its disk block, patch the
    slot, write the block back through the fault-counted path, and only
-   then update the RAM copy. On failure the RAM entry still shows the
-   old bytes (a free slot for creates, the old extent for switches),
-   so RAM and disk agree no new state was published. */
+   then update the RAM copy. On failure RAM retains the old bytes (a free
+   slot for creates, the old extent for switches), but an issued PIO write
+   may complete late after a timeout; disk state is then indeterminate. */
 static int dir_write_slot(cpu_u32 slot, const cpu_u8 *entry)
 {
     cpu_u64 blk;

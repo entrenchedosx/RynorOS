@@ -89,6 +89,13 @@ alias a recycled object. Partial edge blocks stage through one static
 buffer (which must be 2-byte aligned, like `blk`). Per-read cap is
 16384 bytes. Block errors translate to `FS_IOERR` with a stage detail
 string (`fs_stage_detail`), mirroring the `blk` diagnostic pattern.
+For directory mutations, a failed block write leaves this mount's RAM
+directory unchanged, but `FS_IOERR` after issuing the directory PIO write
+is not an absent-on-disk guarantee: ATA PIO writes can complete after a timeout.
+The block layer quarantines that shared channel until platform restart; the
+current driver has no in-place reset/recovery path. Once storage is available
+again, callers must remount and revalidate the path before retrying a failed
+create/unlink or metadata update.
 
 ## 6. What is NOT in v1
 

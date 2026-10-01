@@ -348,7 +348,10 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                sh_keys=None, sh_burst: tuple | list = (), require_sh: bool = False,
                sh_done: bytes | None = None,
                extra_drives: tuple = (),
-               extra_args: tuple = ()) -> bytes:
+               extra_args: tuple = (),
+               qemu_trace_events: tuple = (),
+               qemu_trace_log: Path | None = None,
+               completion_markers: tuple[bytes, ...] = ()) -> bytes:
     # Entries are paths (snapshot overlay on) or (path, snapshot_on)
     # tuples for tests that own a private image copy.
     # Invalidate stale evidence before any validation failure can leave
@@ -377,6 +380,12 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     sh_keys = tuple(sh_keys) if sh_keys is not None else ()
     if require_sh and sh_done is None:
         raise ValueError("require_sh needs sh_done")
+    completion_markers = tuple(completion_markers)
+    if completion_markers and (test_vector != 3 or any(
+            not isinstance(marker, bytes) or not marker.endswith(b"\r\n") or
+            b"\r" in marker[:-2] or b"\n" in marker[:-2]
+            for marker in completion_markers)):
+        raise ValueError("completion_markers must be complete CRLF rows on normal boots")
     if not math.isfinite(timeout) or not 0 < timeout <= 60:
         raise ValueError("Boot timeout must be finite and in (0, 60] seconds")
     if type(test_vector) is not int or test_vector not in VECTOR_NAMES:
@@ -398,6 +407,10 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     for arg in extra_args:
         if type(arg) is not str or not arg:
             raise ValueError("extra_args must be non-empty strings")
+    qemu_trace_events = tuple(qemu_trace_events)
+    if any(type(event) is not str or not re.fullmatch(r"[A-Za-z0-9_]+", event)
+           for event in qemu_trace_events):
+        raise ValueError("qemu_trace_events must be event names")
     qemu = find_tool("qemu-system-x86_64", "RYNOR_QEMU")
     qemu_path = Path(qemu).resolve()
     bios = _locate_firmware(qemu_path)
@@ -439,9 +452,14 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
     # -device, appended verbatim after the fixed product topology.
     # Empty by default, so normal boots are byte-identical.
     command += list(extra_args)
+    debug_flags = ["guest_errors"]
+    if not qemu_trace_events:
+        debug_flags.append("int")
+    debug_flags.extend(f"trace:{event}" for event in qemu_trace_events)
     command += [
         "-serial", f"file:{serial}", "-monitor", "stdio", "-no-reboot",
-        "-d", "guest_errors,int", "-D", str(debug),
+        "-d", ",".join(debug_flags),
+        "-D", str(Path(qemu_trace_log).resolve() if qemu_trace_log else debug),
         "-trace", "enable=pckbd_kbd_read_data",
         "-trace", "enable=ps2_keyboard_event",
         "-trace", "enable=pic_interrupt",
@@ -489,6 +507,7 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                                            b"[SHD] failure=",
                                                            b"[PCI] failure=",
                                                            b"[DMA] failure=",
+                                                           b"[XHCI] failure=",
                                                            b"[APIC] failure=",
                                                            b"[ACPI] failure="))), None)
                 if driver_failure is not None:
@@ -512,14 +531,26 @@ def boot_image(image: Path, logs: Path, timeout: float = 10.0, *, test_vector: i
                                          list(input_keys), input_index,
                                          window_seen, list(sh_keys), sh_sent,
                                          sh_burst, burst_sent)
-                if boot_complete(observed, test_vector, keys,
-                                 require_shell=shell_interactive,
-                                 shell_script=shell_keys,
-                                 require_input=require_input,
-                                 require_proc=require_proc,
-                                 require_pipe=require_pipe,
-                                 require_sh=require_sh,
-                                 sh_done=sh_done, boot=boot):
+                # Fault-injection tests may need to let a fully terminated
+                # guest reach normal QEMU cleanup even when the strict output
+                # oracle is expected to reject one policy row.  These exact,
+                # complete rows only relax the wait predicate; the unchanged
+                # post-exit validators below still decide pass/fail.
+                if completion_markers:
+                    complete_rows = observed.splitlines(keepends=True)
+                    transcript_complete = all(marker in complete_rows
+                                               for marker in completion_markers)
+                else:
+                    transcript_complete = boot_complete(
+                        observed, test_vector, keys,
+                        require_shell=shell_interactive,
+                        shell_script=shell_keys,
+                        require_input=require_input,
+                        require_proc=require_proc,
+                        require_pipe=require_pipe,
+                        require_sh=require_sh,
+                        sh_done=sh_done, boot=boot)
+                if transcript_complete:
                     # The input stream is sized for worst-case retries; only
                     # consumed keys are asserted (by the input validator from
                     # transcript markers), so leftover tuple entries are fine.

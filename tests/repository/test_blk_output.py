@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/host"))
 from blk_image import BLOCK, MAGIC, block_sum, block_wsum, create, create_zeroed, pattern, read_block, writeback_pattern
-from blk_output import file_block_sums, parse_serial, validate
+from blk_output import file_block_sums, parse_serial, validate, validate_blk_section
 
 
 class BlkImageTests(unittest.TestCase):
@@ -170,6 +170,30 @@ class BlkOutputTests(unittest.TestCase):
         self.assertEqual(len(set(codes.values())), len(codes))
         self.assertEqual(codes["ok"], 0)
         self.assertTrue(all(v < 0 for k, v in codes.items() if k != "ok"))
+
+    def test_13_timeout_quarantine_record_is_strict_optional_row(self):
+        row = (b"[BLK] timeout quarantine=primary-channel mate=no-io "
+               b"late-write=DRDY ready=DRQ-refused secondary=ok\r\n")
+        good = (b"[BLK] devices=2 test=1 blocks=2048\r\n" + row +
+                b"[BLK] storage verified\r\n")
+        self.assertEqual(validate_blk_section(good), [])
+        for bad in (row.replace(b"mate=no-io", b"mate=issued"),
+                    row.replace(b"secondary=ok", b"secondary=blocked")):
+            with self.subTest(row=bad):
+                transcript = good.replace(row, bad)
+                self.assertTrue(validate_blk_section(transcript))
+
+    def test_14_real_backend_late_pio_transcript_is_strict(self):
+        good = (b"[BLK] devices=2 test=2 blocks=2048\r\n"
+                b"[BLK] late-write lba=1024 result=timeout pending=1 quarantine=1\r\n"
+                b"[BLK] late-completion status=ready\r\n")
+        self.assertEqual(validate_blk_section(good), [])
+        for bad in (good.replace(b"lba=1024", b"lba=1025"),
+                    good.replace(b"pending=1", b"pending=0"),
+                    good.replace(b"test=2", b"test=1"),
+                    good + b"[BLK] storage verified\r\n"):
+            with self.subTest(transcript=bad):
+                self.assertTrue(validate_blk_section(bad))
 
 
 if __name__ == "__main__":

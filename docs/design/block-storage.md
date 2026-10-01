@@ -67,7 +67,8 @@ Error set (all negative except `BLK_OK = 0`, names via `blk_error_str`):
 `INVALID` (bad id/count/len/buffer), `RANGE` (outside capacity),
 `UNSUPPORTED` (non-LBA or >512-byte layout), `NODEV` (absent/unknown),
 `INIT_FAIL` (no working device / bad controller), `IOERR` (ERR/DF bits),
-`TIMEOUT` (status wait exhausted), `DENIED` (unauthorized write).
+`TIMEOUT` (status wait exhausted; an uncertain channel is quarantined),
+`DENIED` (unauthorized write).
 
 ## 3. Discovery and provenance
 
@@ -106,14 +107,31 @@ fails discovery).
 
 ## 5. Transfer, timeouts, interrupts, DMA
 
-- One command at a time; ready gate (BSY-clear and DRDY-set) before issue,
+- One command at a time; an already-quarantined channel is rejected before
+  any port access. On a usable channel, the target is selected and the
+  command issue gate requires `!BSY && DRDY && !DRQ`,
   BSY-clear then DRQ/ERR poll, each bounded by
   `BLK_POLL_LIMIT` (4M iterations); post-transfer status re-checked
   (cached writes complete here). No HLT wait loops; IRQ0 keeps ticking.
+- A timeout after command issue leaves the ATA host state machine unknown.
+  The driver has no reset-and-revalidate path, so it quarantines the whole
+  shared primary or secondary channel; neither master nor slave receives
+  further taskfile accesses until platform restart and fresh initialization.
+  Re-running discovery does not clear quarantine. A timeout before command
+  issue also quarantines if the readiness poll cannot establish an idle
+  channel. This deliberately
+  sacrifices channel availability instead of issuing into unknown state.
+- A timed-out PIO write may have reached the device and complete later.
+  `BLK_TIMEOUT` therefore does not imply that the addressed sector stayed
+  unchanged; callers must not blindly retry it. The filesystem RAM image
+  remains unchanged on a failed metadata write, but disk state may be
+  indeterminate until the channel has been reset and revalidated.
 - No interrupts consumed or required; no DMA engine exists in this path
   (CPU `rep insw/outsw` on mapped kernel buffers only).
-- Buffer lifetime is the call: completion is observed before return, so
-  no use-after-free or stale-completion path exists by construction.
+- PIO buffers are consumed synchronously by the CPU transfer; command
+  completion is observed before a successful return. After an issued-command
+  timeout, the operation result (especially a write) is indeterminate even
+  though the buffer is no longer used by the device.
 
 ## 6. Test model
 

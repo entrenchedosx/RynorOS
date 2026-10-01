@@ -127,6 +127,87 @@ static void read_evidence(cpu_u32 id, cpu_u64 blk)
     say("\r\n");
 }
 
+#if defined(RYNOR_BLK_LATE_TEST) && RYNOR_BLK_LATE_TEST
+/* Real-backend test image: the controlled NBD export is attached as the
+   secondary-master IDE device. The host captures the actual PIO payload and
+   leaves it uncommitted until after the driver's bounded timeout. */
+static void late_pio_write_test(cpu_u32 id, const struct blk_device *dev)
+{
+    require(id == 2u, "late-device-slot");
+    require(dev && dev->block_count == 2048u, "late-device-capacity");
+    require(blk_device(3u) != 0, "late-mate-device-absent");
+    const cpu_u64 lba = 1024u;
+    for (cpu_u64 i = 0; i < sizeof blk_scratch; ++i)
+        blk_scratch[i] = (cpu_u8)((lba * 131u + i * 17u + 0x5au) & 0xffu);
+
+    require(blk_write(id, lba, 1, blk_scratch, sizeof blk_scratch) == BLK_TIMEOUT,
+            "late-write-not-timeout");
+    require(blk_read(id, lba, 1, blk_scratch, sizeof blk_scratch) == BLK_TIMEOUT,
+            "late-channel-not-quarantined");
+    say("[BLK] mate-api-begin pending\r\n");
+    int mate_pending_rc = blk_read(3u, lba, 1, blk_scratch, sizeof blk_scratch);
+    say("[BLK] mate-api-end pending\r\n");
+    require(mate_pending_rc == BLK_TIMEOUT, "late-mate-not-quarantined");
+    say("[BLK] late-mate pending=timeout trace-window=1\r\n");
+
+    /* PIIX3 secondary-channel status. This raw test observation bypasses the
+       quarantined block API and proves QEMU still has the PIO write pending. */
+    cpu_u8 status = io_in8(0x177u);
+    require((status & 0x80u) != 0, "late-write-not-pending");
+    say("[BLK] late-write lba=1024 result=timeout pending=1 quarantine=1\r\n");
+    (void)serial_flush();
+
+    /* Bounded wait for the host-controlled NBD reply. Poll sparsely
+       so the test does not make QEMU spend millions of emulated I/O exits. */
+    int complete = 0;
+    for (cpu_u32 i = 0; i < 100000000u; ++i) {
+        if ((i & 0x3fffu) == 0) {
+            status = io_in8(0x177u);
+            if (!(status & 0x80u)) { complete = 1; break; }
+        }
+        __asm__ volatile ("pause");
+    }
+#if defined(RYNOR_BLK_LATE_ERROR_TEST) && RYNOR_BLK_LATE_ERROR_TEST
+    require(complete && (status & 0x40u) && (status & 0x01u) &&
+            !(status & (0x80u | 0x20u | 0x08u)), "late-completion-error-status");
+#else
+    require(complete && (status & 0x40u) && !(status & (0x80u | 0x20u | 0x08u | 0x01u)),
+            "late-completion-status");
+#endif
+    say("[BLK] mate-api-begin ready\r\n");
+    int mate_ready_rc = blk_read(3u, lba, 1, blk_scratch, sizeof blk_scratch);
+    say("[BLK] mate-api-end ready\r\n");
+    require(mate_ready_rc == BLK_TIMEOUT, "late-mate-not-quarantined-ready");
+    say("[BLK] late-mate ready=timeout trace-window=1\r\n");
+#if defined(RYNOR_BLK_LATE_ERROR_TEST) && RYNOR_BLK_LATE_ERROR_TEST
+    say("[BLK] late-completion status=error\r\n");
+#else
+    say("[BLK] late-completion status=ready\r\n");
+#endif
+}
+#endif
+
+#if defined(RYNOR_BLK_LATE_VERIFY_TEST) && RYNOR_BLK_LATE_VERIFY_TEST
+static void late_pio_readback_test(cpu_u32 id, const struct blk_device *dev)
+{
+    require(id == 1u, "late-readback-device-slot");
+    require(dev && dev->block_count == 2048u, "late-readback-capacity");
+    const cpu_u64 lba = 1024u;
+    require(blk_read(id, lba, 1, blk_scratch, sizeof blk_scratch) == BLK_OK,
+            "late-readback-read");
+    for (cpu_u64 i = 0; i < sizeof blk_scratch; ++i) {
+#if defined(RYNOR_BLK_LATE_VERIFY_ORIGINAL_TEST) && RYNOR_BLK_LATE_VERIFY_ORIGINAL_TEST
+        cpu_u8 tag = 0xa5u;
+#else
+        cpu_u8 tag = 0x5au;
+#endif
+        cpu_u8 expected = (cpu_u8)((lba * 131u + i * 17u + tag) & 0xffu);
+        require(blk_scratch[i] == expected, "late-readback-data");
+    }
+    say("[BLK] late-readback lba=1024 match=1 rediscovered=1\r\n");
+}
+#endif
+
 void blk_self_test(void)
 {
     require(cpu_interrupts_disabled(), "if0");
@@ -176,6 +257,30 @@ void blk_self_test(void)
     say(" blocks=");
     say_u64(dev->block_count);
     say("\r\n");
+#if (defined(RYNOR_FS_LATE_TEST) && RYNOR_FS_LATE_TEST) || \
+    (defined(RYNOR_FS_LATE_VERIFY_TEST) && RYNOR_FS_LATE_VERIFY_TEST)
+    /* The RLBLK1 mate is present for quarantine checks, but this scenario
+       delegates its only data write to the RYNORFS test hook. */
+    require(blk_count() == 3u && test_id == 3, "late-fs-topology");
+    return;
+#endif
+#if defined(RYNOR_BLK_LATE_TEST) && RYNOR_BLK_LATE_TEST
+    late_pio_write_test((cpu_u32)test_id, dev);
+    return;
+#endif
+#if defined(RYNOR_BLK_LATE_VERIFY_TEST) && RYNOR_BLK_LATE_VERIFY_TEST
+    late_pio_readback_test((cpu_u32)test_id, dev);
+    return;
+#endif
+#if defined(RYNOR_BLK_SCRIPT_TEST) && RYNOR_BLK_SCRIPT_TEST
+    cpu_u32 timeout_failures = (cpu_u32)blk_scripted_timeout_test();
+    require(!(timeout_failures & 1u), "timeout-quarantine-no-io");
+    require(!(timeout_failures & 2u), "ready-drq-command");
+    require(!(timeout_failures & 4u), "timeout-secondary-channel");
+    require(!(timeout_failures & 8u), "selection-order");
+    say("[BLK] timeout quarantine=primary-channel mate=no-io "
+        "late-write=DRDY ready=DRQ-refused secondary=ok\r\n");
+#endif
     /* Fixed evidence set: first blocks plus the last one. */
     read_evidence((cpu_u32)test_id, 0);
     read_evidence((cpu_u32)test_id, 1);

@@ -55,7 +55,16 @@ def build_image(root: Path, destination: Path | None = None, *,
                 shell_interactive: bool = False, input_test: bool = False,
                 proc_test: bool = False, pipe_test: bool = False,
                 pci_test: bool = False, dma_test: bool = False,
-                msi_test: bool = False, xhci_test: bool = False,
+                msi_test: bool = False, blk_script_test: bool = False,
+                blk_late_test: bool = False,
+                blk_late_error_test: bool = False,
+                blk_late_verify_test: bool = False,
+                blk_late_verify_original_test: bool = False,
+                fs_late_test: bool = False,
+                fs_late_error_test: bool = False,
+                fs_late_verify_test: bool = False,
+                fs_late_verify_original_test: bool = False,
+                xhci_test: bool = False,
                 usb_test: bool = False,
                 shell_boot: bool = False, shell_script=None) -> dict:
     if type(test_vector) is not int or test_vector not in (0, 1, 3, 6, 13, 14):
@@ -74,6 +83,34 @@ def build_image(root: Path, destination: Path | None = None, *,
         raise ValueError("dma_test must be boolean")
     if type(msi_test) is not bool:
         raise ValueError("msi_test must be boolean")
+    if type(blk_script_test) is not bool:
+        raise ValueError("blk_script_test must be boolean")
+    if type(blk_late_test) is not bool:
+        raise ValueError("blk_late_test must be boolean")
+    if type(blk_late_verify_test) is not bool:
+        raise ValueError("blk_late_verify_test must be boolean")
+    if type(blk_late_error_test) is not bool:
+        raise ValueError("blk_late_error_test must be boolean")
+    if blk_late_error_test and not blk_late_test:
+        raise ValueError("blk_late_error_test requires blk_late_test")
+    if type(blk_late_verify_original_test) is not bool:
+        raise ValueError("blk_late_verify_original_test must be boolean")
+    if blk_late_verify_original_test and not blk_late_verify_test:
+        raise ValueError("blk_late_verify_original_test requires blk_late_verify_test")
+    for name, value in (("fs_late_test", fs_late_test),
+                        ("fs_late_error_test", fs_late_error_test),
+                        ("fs_late_verify_test", fs_late_verify_test),
+                        ("fs_late_verify_original_test", fs_late_verify_original_test)):
+        if type(value) is not bool:
+            raise ValueError(f"{name} must be boolean")
+    if fs_late_error_test and not fs_late_test:
+        raise ValueError("fs_late_error_test requires fs_late_test")
+    if fs_late_verify_original_test and not fs_late_verify_test:
+        raise ValueError("fs_late_verify_original_test requires fs_late_verify_test")
+    if fs_late_test and fs_late_verify_test:
+        raise ValueError("filesystem late-write and remount test modes are mutually exclusive")
+    if sum((blk_script_test, blk_late_test, blk_late_verify_test)) > 1:
+        raise ValueError("block test modes are mutually exclusive")
     if type(xhci_test) is not bool:
         raise ValueError("xhci_test must be boolean")
     if type(usb_test) is not bool:
@@ -218,6 +255,15 @@ def build_image(root: Path, destination: Path | None = None, *,
                            f"-DRYNOR_PCI_TEST={int(pci_test)}",
                            f"-DRYNOR_DMA_TEST={int(dma_test)}",
                            f"-DRYNOR_MSI_TEST={int(msi_test)}",
+                           f"-DRYNOR_BLK_SCRIPT_TEST={int(blk_script_test)}",
+                           f"-DRYNOR_BLK_LATE_TEST={int(blk_late_test)}",
+                           f"-DRYNOR_BLK_LATE_ERROR_TEST={int(blk_late_error_test)}",
+                           f"-DRYNOR_BLK_LATE_VERIFY_TEST={int(blk_late_verify_test)}",
+                           f"-DRYNOR_BLK_LATE_VERIFY_ORIGINAL_TEST={int(blk_late_verify_original_test)}",
+                           f"-DRYNOR_FS_LATE_TEST={int(fs_late_test)}",
+                           f"-DRYNOR_FS_LATE_ERROR_TEST={int(fs_late_error_test)}",
+                           f"-DRYNOR_FS_LATE_VERIFY_TEST={int(fs_late_verify_test)}",
+                           f"-DRYNOR_FS_LATE_VERIFY_ORIGINAL_TEST={int(fs_late_verify_original_test)}",
                            f"-DRYNOR_XHCI_TEST={int(xhci_test)}",
                            f"-DRYNOR_USB_TEST={int(usb_test)}",
                            f"-DRYNOR_SHELL_BOOT={int(shell_boot)}",
@@ -268,6 +314,15 @@ def build_image(root: Path, destination: Path | None = None, *,
             "experimental_proc_test": proc_test,
             "experimental_pipe_test": pipe_test,
             "experimental_msi_test": msi_test,
+            "experimental_blk_script_test": blk_script_test,
+            "experimental_blk_late_test": blk_late_test,
+            "experimental_blk_late_error_test": blk_late_error_test,
+            "experimental_blk_late_verify_test": blk_late_verify_test,
+            "experimental_blk_late_verify_original_test": blk_late_verify_original_test,
+            "experimental_fs_late_test": fs_late_test,
+            "experimental_fs_late_error_test": fs_late_error_test,
+            "experimental_fs_late_verify_test": fs_late_verify_test,
+            "experimental_fs_late_verify_original_test": fs_late_verify_original_test,
             "experimental_xhci_test": xhci_test,
             "experimental_usb_test": usb_test,
             "experimental_shell_boot": shell_boot,

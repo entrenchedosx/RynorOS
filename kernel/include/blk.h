@@ -22,7 +22,7 @@ enum blk_result {
     BLK_NODEV = -4,       /* no usable device (or no test device selected) */
     BLK_INIT_FAIL = -5,   /* discovery found no working device at all */
     BLK_IOERR = -6,       /* controller reported an error */
-    BLK_TIMEOUT = -7,     /* status wait exhausted BLK_POLL_LIMIT */
+    BLK_TIMEOUT = -7,     /* bounded wait expired; uncertain IDE channel is quarantined */
     BLK_DENIED = -8,      /* 17a write policy: test device only */
 };
 
@@ -54,8 +54,12 @@ int blk_find_test(void);
    Single-sector commands internally; prior blocks of a multi-block call
    complete before any error aborts (no cross-block atomicity claimed).
    Writes are block-level readback primitives only: no durability, no
-   crash consistency, no journaling. Writes require an authorized device
-   (see blk_set_writable): the block self-test authorizes the RLBLK1 test
+   crash consistency, no journaling. If a timeout follows command issue,
+   the write outcome may be uncertain and the shared IDE channel is
+   quarantined until a new platform boot (the only current recovery path);
+   rediscovery does not clear it and retries are not attempted. Writes
+   require an authorized device (see blk_set_writable): the block self-test
+   authorizes the RLBLK1 test
    device, and fs_mount authorizes validated filesystems. Nothing else
    can be written, so the boot disk is never at risk. */
 int blk_read(cpu_u32 id, cpu_u64 start, cpu_u32 count, void *buf, cpu_u64 len);
@@ -78,4 +82,8 @@ const char *blk_stage_detail(void);
 /* Boot self-test: silent bounds checks every boot; device evidence only
    with a test device attached. Halts with [BLK] failure= on violation. */
 void blk_self_test(void);
+#if defined(RYNOR_BLK_SCRIPT_TEST) && RYNOR_BLK_SCRIPT_TEST
+/* Gated scripted-port regression; zero passes, bits 0..3 identify failures. */
+int blk_scripted_timeout_test(void);
+#endif
 #endif

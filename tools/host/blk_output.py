@@ -32,6 +32,12 @@ _READ_RE = re.compile(rb"^\[BLK\] read blk=(\d+) sum=(\d+) wsum=(\d+)$")
 _DISC_RE = re.compile(rb"^\[BLK\] devices=(\d+) test=(\d+) blocks=(\d+)$")
 _WB_RE = re.compile(rb"^\[BLK\] writeback blk=(\d+) sum=(\d+) wsum=(\d+)$")
 _NB_RE = re.compile(rb"^\[BLK\] neighbor blk=(\d+) sum=(\d+) wsum=(\d+)$")
+_TIMEOUT_QUARANTINE_RE = re.compile(
+    rb"^\[BLK\] timeout quarantine=primary-channel mate=no-io "
+    rb"late-write=DRDY ready=DRQ-refused secondary=ok$")
+_LATE_WRITE_RE = re.compile(
+    rb"^\[BLK\] late-write lba=1024 result=timeout pending=1 quarantine=1$")
+_LATE_COMPLETION = b"[BLK] late-completion status=ready"
 
 
 def parse_serial(observed: bytes) -> BlkEvidence:
@@ -83,7 +89,15 @@ def validate_blk_section(tail: bytes) -> list:
     if not lines or not _DISC_RE.match(lines[0].strip()):
         return [f"unexpected output after shell section: {lines[0][:60]!r}" if lines
                 else "unexpected output after shell section"]
-    allowed = (_DISC_RE, _READ_RE, _WB_RE, _NB_RE)
+    # Dedicated real-backend late-PIO image. Host-side NBD evidence proves
+    # durability/ordering; these guest rows prove timeout while BSY followed
+    # by the late IDE completion, without fabricating ordinary read/writeback
+    # evidence for a run that intentionally terminates the block self-test.
+    if len(lines) == 3 and lines[0].strip() == b"[BLK] devices=2 test=2 blocks=2048" and \
+            _LATE_WRITE_RE.match(lines[1].strip()) and \
+            lines[2].strip() == _LATE_COMPLETION:
+        return []
+    allowed = (_DISC_RE, _READ_RE, _WB_RE, _NB_RE, _TIMEOUT_QUARANTINE_RE)
     for line in lines[1:]:
         text = line.strip()
         if text == b"[BLK] bootsec aa55=1":

@@ -122,6 +122,91 @@ static void invalid_cases(void)
     require(fs_read(0xffffffu, 0, fsbuf, 1, &n) == FS_BADHANDLE, "read-huge");
 }
 
+#if defined(RYNOR_FS_LATE_TEST) && RYNOR_FS_LATE_TEST
+/* Test-only late-completion case. The fixture places /late.dat's sole
+   sector at LBA 1024 on the NBD-backed RYNORFS volume. This enters through
+   fs_write, so the stalled PIO write is a filesystem data write. */
+static void fs_late_pio_write_test(void)
+{
+    int mounted = -1;
+    for (cpu_u32 id = 0; id < 4u; ++id)
+        if (fs_mount(id) == FS_OK) { mounted = (int)id; break; }
+    require(mounted == 2, "late-fs-target-not-mounted");
+    say("[FS] late-mounted dev=2 blocks=2048\r\n");
+
+    cpu_u32 handle = 0;
+    cpu_u64 written = ~(cpu_u64)0;
+    require(fs_open("/late.dat", &handle) == FS_OK, "late-fs-open");
+    for (cpu_u64 i = 0; i < 512u; ++i)
+        fsbuf[i] = (cpu_u8)((1024u * 131u + i * 17u + 0x5au) & 0xffu);
+    int rc = fs_write(handle, 0, fsbuf, 512u, &written);
+    require(rc == FS_IOERR && written == 0, "late-fs-write-not-timeout");
+
+    say("[FS] mate-api-begin pending\r\n");
+    int mate_pending_rc = blk_read(3u, 1024u, 1u, fsbuf, 512u);
+    say("[FS] mate-api-end pending\r\n");
+    require(mate_pending_rc == BLK_TIMEOUT, "late-fs-mate-not-quarantined");
+    say("[FS] late-mate pending=timeout trace-window=1\r\n");
+    cpu_u8 status = io_in8(0x177u);
+    require((status & 0x80u) != 0, "late-fs-write-not-pending");
+    say("[FS] late-write path=/late.dat lba=1024 result=ioerr written=0 pending=1 quarantine=1\r\n");
+    (void)serial_flush();
+
+    int complete = 0;
+    for (cpu_u32 i = 0; i < 100000000u; ++i) {
+        if ((i & 0x3fffu) == 0) {
+            status = io_in8(0x177u);
+            if (!(status & 0x80u)) { complete = 1; break; }
+        }
+        __asm__ volatile ("pause");
+    }
+#if defined(RYNOR_FS_LATE_ERROR_TEST) && RYNOR_FS_LATE_ERROR_TEST
+    require(complete && (status & 0x40u) && (status & 0x01u) &&
+            !(status & (0x80u | 0x20u | 0x08u)), "late-fs-completion-error");
+#else
+    require(complete && (status & 0x40u) &&
+            !(status & (0x80u | 0x20u | 0x08u | 0x01u)), "late-fs-completion-ready");
+#endif
+    say("[FS] mate-api-begin ready\r\n");
+    int mate_ready_rc = blk_read(3u, 1024u, 1u, fsbuf, 512u);
+    say("[FS] mate-api-end ready\r\n");
+    require(mate_ready_rc == BLK_TIMEOUT, "late-fs-mate-not-quarantined-ready");
+    say("[FS] late-mate ready=timeout trace-window=1\r\n");
+#if defined(RYNOR_FS_LATE_ERROR_TEST) && RYNOR_FS_LATE_ERROR_TEST
+    say("[FS] late-completion status=error\r\n");
+#else
+    say("[FS] late-completion status=ready\r\n");
+#endif
+    require(fs_close(handle) == FS_OK, "late-fs-close");
+}
+#endif
+
+#if defined(RYNOR_FS_LATE_VERIFY_TEST) && RYNOR_FS_LATE_VERIFY_TEST
+static void fs_late_pio_remount_test(void)
+{
+    int mounted = -1;
+    for (cpu_u32 id = 0; id < 4u; ++id)
+        if (fs_mount(id) == FS_OK) { mounted = (int)id; break; }
+    require(mounted == 2, "late-fs-remount-device");
+    cpu_u32 handle = 0;
+    cpu_u64 n = 0;
+    require(fs_open("/late.dat", &handle) == FS_OK, "late-fs-remount-open");
+    require(fs_read(handle, 0, fsbuf, 512u, &n) == FS_OK && n == 512u,
+            "late-fs-remount-read");
+    for (cpu_u64 i = 0; i < 512u; ++i) {
+#if defined(RYNOR_FS_LATE_VERIFY_ORIGINAL_TEST) && RYNOR_FS_LATE_VERIFY_ORIGINAL_TEST
+        cpu_u8 tag = 0xa5u;
+#else
+        cpu_u8 tag = 0x5au;
+#endif
+        require(fsbuf[i] == (cpu_u8)((1024u * 131u + i * 17u + tag) & 0xffu),
+                "late-fs-remount-data");
+    }
+    require(fs_close(handle) == FS_OK, "late-fs-remount-close");
+    say("[FS] late-remount path=/late.dat lba=1024 match=1 rediscovered=1\r\n");
+}
+#endif
+
 static void file_evidence(const char *path, int show_parts)
 {
     cpu_u32 h = 0;
@@ -705,6 +790,13 @@ void fs_self_test(void)
 {
     require(cpu_interrupts_disabled(), "if0");
     invalid_cases();
+#if defined(RYNOR_FS_LATE_TEST) && RYNOR_FS_LATE_TEST
+    fs_late_pio_write_test();
+    return;
+#elif defined(RYNOR_FS_LATE_VERIFY_TEST) && RYNOR_FS_LATE_VERIFY_TEST
+    fs_late_pio_remount_test();
+    return;
+#endif
     int mounted_dev = -1;
     for (cpu_u32 id = 0; id < 4u; ++id) {
         if (!blk_device(id)) continue;
